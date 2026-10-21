@@ -1,0 +1,39 @@
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: yago-ai-mysql
+    restart: unless-stopped
+
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+
+    ports:
+      - "127.0.0.1:${DB_PORT}:3306"
+
+    command:
+      - --innodb-buffer-pool-size=128M
+      - --performance-schema=OFF
+
+    volumes:
+      - yago_mysql_data:/var/lib/mysql
+      - ./database/init/001-chat.sql:/docker-entrypoint-initdb.d/001-chat.sql:ro
+  
+  chroma:
+    image: chromadb/chroma
+    container_name: yago-ai-chroma
+    restart: unless-stopped
+
+    ports:
+      - "127.0.0.1:8000:8000"
+
+    volumes:
+      - yago_chroma_data:/data
+
+
+volumes:
+  yago_mysql_data:
+  yago_chroma_data:
