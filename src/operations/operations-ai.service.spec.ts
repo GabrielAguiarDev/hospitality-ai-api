@@ -1,6 +1,7 @@
 import {
   BadGatewayException,
   ForbiddenException,
+  InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -17,7 +18,7 @@ import type { FetchMock } from '../../test/support/ollama-fakes.js';
 import type { IntentDecision } from '../chat/chat-intent.types.js';
 
 import { OperationsAiService } from './operations-ai.service.js';
-import { ReservationsService } from './reservations.service.js';
+import { OperationsToolRegistryService } from './operations-tool-registry.service.js';
 import type { RestaurantReservation } from './reservations.service.js';
 
 const TRATTORIA: RestaurantReservation = {
@@ -46,12 +47,16 @@ function toolCall(name: string, args: Record<string, unknown> = {}) {
 
 describe('OperationsAiService', () => {
   let fetchMock: FetchMock;
-  let reservations: { listForDemoGuest: ReturnType<typeof vi.fn<ReservationsService['listForDemoGuest']>> };
+  let registry: { execute: ReturnType<typeof vi.fn<OperationsToolRegistryService['execute']>> };
   let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  function givenReservations(data: RestaurantReservation[]) {
+    registry.execute.mockResolvedValue({ tool: 'reservations.list', data });
+  }
 
   function createService(nodeEnv = 'development') {
     return new OperationsAiService(
-      reservations as unknown as ReservationsService,
+      registry as unknown as OperationsToolRegistryService,
       new ConfigService({
         NODE_ENV: nodeEnv,
         OLLAMA_BASE_URL: 'http://ollama.test:11434',
@@ -65,7 +70,7 @@ describe('OperationsAiService', () => {
     fetchMock.mockImplementation(async () =>
       toolCall('list_my_restaurant_reservations'),
     );
-    reservations = { listForDemoGuest: vi.fn() };
+    registry = { execute: vi.fn() };
     errorSpy = vi
       .spyOn(Logger.prototype, 'error')
       .mockImplementation(() => undefined);
@@ -79,15 +84,15 @@ describe('OperationsAiService', () => {
   });
 
   describe('data source', () => {
-    it('always reads reservations through ReservationsService, even if the model does not request the tool', async () => {
+    it('always reads reservations through the tool registry, even if the model does not request the tool', async () => {
       fetchMock.mockImplementation(async () =>
         ollamaChat('Você não possui reservas.'),
       );
-      reservations.listForDemoGuest.mockResolvedValue([TRATTORIA]);
+      givenReservations([TRATTORIA]);
 
       const result = await createService().ask('Tenho alguma reserva?');
 
-      expect(reservations.listForDemoGuest).toHaveBeenCalledExactlyOnceWith();
+      expect(registry.execute).toHaveBeenCalledExactlyOnceWith('reservations.list');
       expect(result).toMatchObject({
         toolUsed: true,
         toolRequestedByModel: false,
@@ -99,7 +104,7 @@ describe('OperationsAiService', () => {
     });
 
     it('reports when the model correctly requested the tool', async () => {
-      reservations.listForDemoGuest.mockResolvedValue([TRATTORIA]);
+      givenReservations([TRATTORIA]);
 
       const result = await createService().ask('Tenho alguma reserva?');
 
@@ -107,7 +112,7 @@ describe('OperationsAiService', () => {
     });
 
     it('skips Ollama when the orchestrator already supplied the decision', async () => {
-      reservations.listForDemoGuest.mockResolvedValue([TRATTORIA]);
+      givenReservations([TRATTORIA]);
 
       const result = await createService().ask('Tenho alguma reserva?', LIST);
 
@@ -124,19 +129,20 @@ describe('OperationsAiService', () => {
       ['SQL passed as tool arguments', () => toolCall('list_my_restaurant_reservations', { sql: 'SELECT * FROM chat_messages', guest_id: 'guest-999' })],
     ])('answers from the database, not the model, when it returns %s', async (_case, makeResponse) => {
       fetchMock.mockResolvedValue(makeResponse());
-      reservations.listForDemoGuest.mockResolvedValue([TRATTORIA]);
+      givenReservations([TRATTORIA]);
 
       const result = await createService().ask('Tenho alguma reserva?');
 
-      // listForDemoGuest takes no arguments, so the bound parameters
-      // (see reservations.service.spec.ts) cannot come from the model.
+      // The registry is called with the tool name only; model-supplied
+      // arguments never reach it.
+      expect(registry.execute).toHaveBeenCalledExactlyOnceWith('reservations.list');
       expect(result.toolRequestedByModel).toBe(_case === 'SQL passed as tool arguments');
       expect(result.reply).toContain('Trattoria Aurora');
       expect(result.reply).not.toMatch(/DROP|SELECT|guest-999/);
     });
 
     it('exposes a tool without parameters, so the model cannot supply SQL or identifiers', async () => {
-      reservations.listForDemoGuest.mockResolvedValue([]);
+      givenReservations([]);
 
       await createService().ask('Tenho alguma reserva?');
 
@@ -153,8 +159,16 @@ describe('OperationsAiService', () => {
       expect(fetchMock.mock.calls[0][0]).toBe('http://ollama.test:11434/api/chat');
     });
 
+    it('rejects a registry result for a different tool', async () => {
+      registry.execute.mockResolvedValue({ tool: 'requests.list', data: [] });
+
+      await expect(
+        createService().ask('Tenho alguma reserva?', LIST),
+      ).rejects.toBeInstanceOf(InternalServerErrorException);
+    });
+
     it('propagates database failures', async () => {
-      reservations.listForDemoGuest.mockRejectedValue(new Error('ER_ACCESS_DENIED_ERROR'));
+      registry.execute.mockRejectedValue(new Error('ER_ACCESS_DENIED_ERROR'));
 
       await expect(
         createService().ask('Tenho alguma reserva?', LIST),
@@ -168,7 +182,7 @@ describe('OperationsAiService', () => {
         createService('production').ask('Tenho alguma reserva?', LIST),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(fetchMock).not.toHaveBeenCalled();
-      expect(reservations.listForDemoGuest).not.toHaveBeenCalled();
+      expect(registry.execute).not.toHaveBeenCalled();
     });
   });
 
@@ -184,12 +198,12 @@ describe('OperationsAiService', () => {
       ['a response without message', () => fetchMock.mockResolvedValue(jsonResponse({ done: true }))],
     ])('throws BadGatewayException on %s (current contract)', async (_case, arrange) => {
       arrange();
-      reservations.listForDemoGuest.mockResolvedValue([TRATTORIA]);
+      givenReservations([TRATTORIA]);
 
       await expect(
         createService().ask('Tenho alguma reserva?'),
       ).rejects.toBeInstanceOf(BadGatewayException);
-      expect(reservations.listForDemoGuest).not.toHaveBeenCalled();
+      expect(registry.execute).not.toHaveBeenCalled();
     });
 
     it('logs the HTTP error details without exposing them to the guest', async () => {
@@ -211,7 +225,7 @@ describe('OperationsAiService', () => {
 
   describe('reply formatting', () => {
     it('answers that there are no reservations only when the query returns none', async () => {
-      reservations.listForDemoGuest.mockResolvedValue([]);
+      givenReservations([]);
 
       const result = await createService().ask('Tenho alguma reserva?', LIST);
 
@@ -226,7 +240,7 @@ describe('OperationsAiService', () => {
       { intent: 'reservation.details', detail: 'party_size' },
       { intent: 'reservation.status', detail: 'none' },
     ])('never says there are no reservations when records exist ($intent)', async (decision) => {
-      reservations.listForDemoGuest.mockResolvedValue([TRATTORIA]);
+      givenReservations([TRATTORIA]);
 
       const { reply } = await createService().ask('Tenho reserva?', decision);
 
@@ -234,7 +248,7 @@ describe('OperationsAiService', () => {
     });
 
     it('lists every reservation with date, time, party size and status from the database', async () => {
-      reservations.listForDemoGuest.mockResolvedValue([TRATTORIA, SABOR_DO_MAR]);
+      givenReservations([TRATTORIA, SABOR_DO_MAR]);
 
       const { reply } = await createService().ask('Quais são minhas reservas?', LIST);
 
@@ -251,7 +265,7 @@ describe('OperationsAiService', () => {
       [{ intent: 'reservation.status', detail: 'none' }, 'Sua reserva na Trattoria Aurora está confirmada.'],
       [{ intent: 'reservation.details', detail: 'none' }, 'Sua reserva na Trattoria Aurora:\nData: 24/10/2026 às 20:00\nPessoas: 4\nStatus: confirmada'],
     ])('answers $intent/$detail with the stored values', async (decision, expected) => {
-      reservations.listForDemoGuest.mockResolvedValue([TRATTORIA]);
+      givenReservations([TRATTORIA]);
 
       const { reply } = await createService().ask('pergunta', decision);
 
@@ -259,7 +273,7 @@ describe('OperationsAiService', () => {
     });
 
     it('uses the singular for a party of one', async () => {
-      reservations.listForDemoGuest.mockResolvedValue([SABOR_DO_MAR]);
+      givenReservations([SABOR_DO_MAR]);
 
       const { reply } = await createService().ask('Quantas pessoas?', {
         intent: 'reservation.details',
@@ -277,7 +291,7 @@ describe('OperationsAiService', () => {
       ['canceled', 'cancelada'],
       ['no_show', 'registrada com status "no_show"'],
     ])('translates status "%s" to "%s"', async (status, label) => {
-      reservations.listForDemoGuest.mockResolvedValue([{ ...TRATTORIA, status }]);
+      givenReservations([{ ...TRATTORIA, status }]);
 
       const { reply } = await createService().ask('Está confirmada?', {
         intent: 'reservation.status',
@@ -288,7 +302,7 @@ describe('OperationsAiService', () => {
     });
 
     it('selects the reservation whose restaurant is mentioned, ignoring accents and case', async () => {
-      reservations.listForDemoGuest.mockResolvedValue([
+      givenReservations([
         TRATTORIA,
         { ...SABOR_DO_MAR, restaurant: 'Café Jardim', partySize: 2 },
       ]);
@@ -302,7 +316,7 @@ describe('OperationsAiService', () => {
     });
 
     it('asks which reservation when several match and none is mentioned', async () => {
-      reservations.listForDemoGuest.mockResolvedValue([TRATTORIA, SABOR_DO_MAR]);
+      givenReservations([TRATTORIA, SABOR_DO_MAR]);
 
       const { reply } = await createService().ask('E para quantas pessoas?', {
         intent: 'reservation.details',

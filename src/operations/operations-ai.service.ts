@@ -1,13 +1,15 @@
+
 import {
   BadGatewayException,
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { IntentDecision } from '../chat/chat-intent.types.js';
-import { ReservationsService } from './reservations.service.js';
+import { OperationsToolRegistryService } from './operations-tool-registry.service.js';
 import type { RestaurantReservation } from './reservations.service.js';
 
 interface ToolCall {
@@ -43,8 +45,8 @@ const RESERVATIONS_TOOL = {
   function: {
     name: TOOL_NAME,
     description:
-      'Consulta as reservas de restaurante do hóspede atual diretamente ' +
-      'no banco de dados. Use quando o hóspede perguntar sobre suas reservas.',
+      'Consulta as reservas de restaurante do hóspede atual. ' +
+      'Use quando o hóspede perguntar sobre suas reservas.',
     parameters: {
       type: 'object',
       properties: {},
@@ -55,10 +57,12 @@ const RESERVATIONS_TOOL = {
 
 @Injectable()
 export class OperationsAiService {
-  private readonly logger = new Logger(OperationsAiService.name);
+  private readonly logger = new Logger(
+    OperationsAiService.name,
+  );
 
   constructor(
-    private readonly reservationsService: ReservationsService,
+    private readonly registry: OperationsToolRegistryService,
     private readonly configService: ConfigService,
   ) {}
 
@@ -79,46 +83,58 @@ export class OperationsAiService {
     let response: Response;
 
     try {
-      response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model,
-          messages,
-          tools,
-          stream: false,
-          think: false,
-          options: {
-            temperature: 0.1,
+      response = await fetch(
+        `${baseUrl.replace(/\/$/, '')}/api/chat`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
           },
-        }),
-        signal: AbortSignal.timeout(90_000),
-      });
+          body: JSON.stringify({
+            model,
+            messages,
+            tools,
+            stream: false,
+            think: false,
+            options: {
+              temperature: 0.1,
+            },
+          }),
+          signal: AbortSignal.timeout(90_000),
+        },
+      );
     } catch (error: unknown) {
       this.logger.error(
         'Erro de conexão com Ollama',
-        error instanceof Error ? error.stack : String(error),
+        error instanceof Error
+          ? error.stack
+          : String(error),
       );
 
-      throw new BadGatewayException('Não foi possível conectar ao Ollama.');
+      throw new BadGatewayException(
+        'Não foi possível conectar ao Ollama.',
+      );
     }
 
     if (!response.ok) {
       const details = await response.text();
 
-      this.logger.error(`Ollama HTTP ${response.status}: ${details}`);
+      this.logger.error(
+        `Ollama HTTP ${response.status}: ${details}`,
+      );
 
       throw new BadGatewayException(
         'O Ollama não conseguiu processar a solicitação.',
       );
     }
 
-    const data = (await response.json()) as OllamaResponse;
+    const data =
+      (await response.json()) as OllamaResponse;
 
     if (!data.message) {
-      throw new BadGatewayException('Resposta inválida recebida do Ollama.');
+      throw new BadGatewayException(
+        'Resposta inválida recebida do Ollama.',
+      );
     }
 
     return data;
@@ -128,8 +144,13 @@ export class OperationsAiService {
     message: string,
     decision?: IntentDecision,
   ): Promise<OperationsResponse> {
-    if (this.configService.get<string>('NODE_ENV') === 'production') {
-      throw new ForbiddenException('Consulta de demonstração desabilitada.');
+    if (
+      this.configService.get<string>('NODE_ENV') ===
+      'production'
+    ) {
+      throw new ForbiddenException(
+        'Consulta de demonstração desabilitada.',
+      );
     }
 
     const resolvedDecision: IntentDecision = decision ?? {
@@ -139,8 +160,8 @@ export class OperationsAiService {
 
     let toolRequestedByModel = false;
 
-    // Quando a intenção já foi identificada pelo
-    // ChatOrchestrator, não chamamos o Qwen novamente.
+    // Somente o endpoint independente precisa
+    // testar o Function Calling nativo.
     if (!decision) {
       const messages: OllamaMessage[] = [
         {
@@ -149,7 +170,7 @@ export class OperationsAiService {
             'Você é um concierge de resort.',
             'Para consultar reservas pessoais,',
             'solicite list_my_restaurant_reservations.',
-            'Não invente dados nem identificadores.',
+            'Não invente informações nem identificadores.',
           ].join(' '),
         },
         {
@@ -158,26 +179,42 @@ export class OperationsAiService {
         },
       ];
 
-      const firstResponse = await this.chatWithOllama(messages, [
-        RESERVATIONS_TOOL,
-      ]);
+      const firstResponse =
+        await this.chatWithOllama(
+          messages,
+          [RESERVATIONS_TOOL],
+        );
 
-      const toolCalls = firstResponse.message.tool_calls ?? [];
+      const toolCalls =
+        firstResponse.message.tool_calls ?? [];
 
       toolRequestedByModel =
-        toolCalls.length === 1 && toolCalls[0]?.function?.name === TOOL_NAME;
+        toolCalls.length === 1 &&
+        toolCalls[0]?.function?.name === TOOL_NAME;
 
-      this.logger.debug(`Function Calling nativo: ${toolRequestedByModel}`);
+      this.logger.debug(
+        `Function Calling nativo: ${toolRequestedByModel}`,
+      );
     } else {
       this.logger.debug(
-        `Operação selecionada pelo orquestrador: ${resolvedDecision.intent}`,
+        `Intenção recebida: ${resolvedDecision.intent}`,
       );
     }
 
-    // A consulta é controlada exclusivamente pelo NestJS.
-    const reservations = await this.reservationsService.listForDemoGuest();
+    // A partir daqui, toda consulta operacional
+    // passa pelo Registry.
+    const result = await this.registry.execute(
+      'reservations.list',
+    );
 
-    // Formata a resposta conforme a intenção identificada.
+    if (result.tool !== 'reservations.list') {
+      throw new InternalServerErrorException(
+        'Resultado inesperado da ferramenta de reservas.',
+      );
+    }
+
+    const reservations = result.data;
+
     const reply = this.formatReservationReply(
       reservations,
       resolvedDecision,
@@ -185,7 +222,7 @@ export class OperationsAiService {
     );
 
     this.logger.log(
-      `Consulta operacional concluída: ${reservations.length} reservas`,
+      `reservations.list: ${reservations.length} registros encontrados`,
     );
 
     return {
@@ -220,20 +257,25 @@ export class OperationsAiService {
         .trim();
 
     const formatStatus = (status: string): string =>
-      statusLabels[status.toLowerCase()] ?? `registrada com status "${status}"`;
+      statusLabels[status.toLowerCase()] ??
+      `registrada com status "${status}"`;
 
-    // 1. Consulta geral: lista todas as reservas.
     if (decision.intent === 'reservation.list') {
-      const details = reservations.map((reservation, index) => {
-        const date = reservation.reservedAt.replace(' ', ' às ');
+      const details = reservations.map(
+        (reservation, index) => {
+          const date = reservation.reservedAt.replace(
+            ' ',
+            ' às ',
+          );
 
-        return [
-          `${index + 1}. ${reservation.restaurant}`,
-          `Data: ${date}`,
-          `Pessoas: ${reservation.partySize}`,
-          `Status: ${formatStatus(reservation.status)}`,
-        ].join('\n');
-      });
+          return [
+            `${index + 1}. ${reservation.restaurant}`,
+            `Data: ${date}`,
+            `Pessoas: ${reservation.partySize}`,
+            `Status: ${formatStatus(reservation.status)}`,
+          ].join('\n');
+        },
+      );
 
       const count = reservations.length;
 
@@ -246,18 +288,21 @@ export class OperationsAiService {
       ].join('\n');
     }
 
-    // 2. Identifica se a pergunta cita um restaurante.
     const normalizedQuestion = normalize(question);
 
-    const matchingReservations = reservations.filter((reservation) =>
-      normalizedQuestion.includes(normalize(reservation.restaurant)),
+    const matchingReservations = reservations.filter(
+      (reservation) =>
+        normalizedQuestion.includes(
+          normalize(reservation.restaurant),
+        ),
     );
 
     const candidates =
-      matchingReservations.length > 0 ? matchingReservations : reservations;
+      matchingReservations.length > 0
+        ? matchingReservations
+        : reservations;
 
-    // 3. Não escolhe arbitrariamente entre várias reservas.
-
+    // Não escolhe uma reserva arbitrariamente.
     if (candidates.length !== 1) {
       return [
         `Encontrei ${candidates.length} reservas relacionadas à sua consulta.`,
@@ -271,17 +316,21 @@ export class OperationsAiService {
     const restaurant = reservation.restaurant;
     const status = formatStatus(reservation.status);
 
-    const [date, time] = reservation.reservedAt.split(' ');
+    const [date, time] =
+      reservation.reservedAt.split(' ');
 
-    // 4. Consulta específica do status.
     if (decision.intent === 'reservation.status') {
-      return `Sua reserva na ${restaurant} está ${status}.`;
+      return (
+        `Sua reserva na ${restaurant} está ${status}.`
+      );
     }
 
-    // 5. Consulta específica de algum detalhe.
     switch (decision.detail) {
       case 'party_size': {
-        const peopleLabel = reservation.partySize === 1 ? 'pessoa' : 'pessoas';
+        const peopleLabel =
+          reservation.partySize === 1
+            ? 'pessoa'
+            : 'pessoas';
 
         return (
           `Sua reserva na ${restaurant} é para ` +
@@ -290,15 +339,22 @@ export class OperationsAiService {
       }
 
       case 'date':
-        return `Sua reserva na ${restaurant} ` + `está marcada para ${date}.`;
+        return (
+          `Sua reserva na ${restaurant} ` +
+          `está marcada para ${date}.`
+        );
 
       case 'time':
         return (
-          `Sua reserva na ${restaurant} ` + `está marcada para as ${time}.`
+          `Sua reserva na ${restaurant} ` +
+          `está marcada para as ${time}.`
         );
 
       case 'restaurant':
-        return `Sua reserva está cadastrada ` + `no restaurante ${restaurant}.`;
+        return (
+          `Sua reserva está cadastrada ` +
+          `no restaurante ${restaurant}.`
+        );
 
       default:
         return [
