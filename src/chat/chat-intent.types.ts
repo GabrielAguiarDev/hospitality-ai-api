@@ -3,6 +3,8 @@ export type ChatIntent =
   | 'reservation.list'
   | 'reservation.details'
   | 'reservation.status'
+  | 'request.list'
+  | 'request.status'
   | 'knowledge.search';
 
 export type ReservationDetail =

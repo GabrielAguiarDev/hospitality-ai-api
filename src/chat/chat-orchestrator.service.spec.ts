@@ -2,6 +2,7 @@ import { BadGatewayException, Logger } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 
 import { OperationsAiService } from '../operations/operations-ai.service.js';
+import { RequestsOperationsService } from '../operations/requests-operations.service.js';
 import type { RetrievedDocument } from '../rag/knowledge.service.js';
 import { RetrievalService } from '../rag/retrieval.service.js';
 
@@ -40,6 +41,7 @@ describe('ChatOrchestratorService', () => {
     classify: vi.fn<IntentClassifierService['classify']>(),
   };
   const operations = { ask: vi.fn<OperationsAiService['ask']>() };
+  const requests = { ask: vi.fn<RequestsOperationsService['ask']>() };
   const retrieval = { search: vi.fn<RetrievalService['search']>() };
 
   let orchestrator: ChatOrchestratorService;
@@ -47,13 +49,14 @@ describe('ChatOrchestratorService', () => {
   beforeEach(async () => {
     vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
 
-    // Only the three collaborators are provided: if the orchestrator ever
+    // Only the four collaborators are provided: if the orchestrator ever
     // started depending on DataSource or EmbeddingsService, this would fail.
     const moduleRef = await Test.createTestingModule({
       providers: [
         ChatOrchestratorService,
         { provide: IntentClassifierService, useValue: classifier },
         { provide: OperationsAiService, useValue: operations },
+        { provide: RequestsOperationsService, useValue: requests },
         { provide: RetrievalService, useValue: retrieval },
       ],
     }).compile();
@@ -86,6 +89,7 @@ describe('ChatOrchestratorService', () => {
         'E para quantas pessoas?',
         decision,
       );
+      expect(requests.ask).not.toHaveBeenCalled();
       expect(retrieval.search).not.toHaveBeenCalled();
       expect(result).toEqual({
         mode: 'operations',
@@ -118,6 +122,43 @@ describe('ChatOrchestratorService', () => {
       await expect(
         orchestrator.resolve('Tenho alguma reserva?'),
       ).rejects.toBeInstanceOf(BadGatewayException);
+      expect(retrieval.search).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('request intents', () => {
+    it.each<IntentDecision>([
+      { intent: 'request.list', detail: 'none' },
+      { intent: 'request.status', detail: 'none' },
+    ])('routes $intent to RequestsOperationsService only', async (decision) => {
+      classifier.classify.mockResolvedValue(decision);
+      requests.ask.mockResolvedValue('Sua solicitação de manutenção está pendente.');
+
+      const result = await orchestrator.resolve('Como está meu chamado?');
+
+      expect(requests.ask).toHaveBeenCalledExactlyOnceWith(
+        'Como está meu chamado?',
+        decision.intent,
+      );
+      expect(operations.ask).not.toHaveBeenCalled();
+      expect(retrieval.search).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        mode: 'operations',
+        reply: 'Sua solicitação de manutenção está pendente.',
+        documents: [],
+      });
+    });
+
+    it('propagates RequestsOperationsService failures instead of falling back to RAG', async () => {
+      classifier.classify.mockResolvedValue({
+        intent: 'request.list',
+        detail: 'none',
+      });
+      requests.ask.mockRejectedValue(new Error('MySQL indisponível'));
+
+      await expect(
+        orchestrator.resolve('Quais são minhas solicitações?'),
+      ).rejects.toThrow('MySQL indisponível');
       expect(retrieval.search).not.toHaveBeenCalled();
     });
   });

@@ -13,6 +13,9 @@ import {
 import type { FetchMock } from '../../test/support/ollama-fakes.js';
 import { OllamaService } from '../llm/ollama.service.js';
 import { OperationsAiService } from '../operations/operations-ai.service.js';
+import { OperationsToolRegistryService } from '../operations/operations-tool-registry.service.js';
+import { RequestsOperationsService } from '../operations/requests-operations.service.js';
+import { RequestsService } from '../operations/requests.service.js';
 import { ReservationsService } from '../operations/reservations.service.js';
 import type { RestaurantReservation } from '../operations/reservations.service.js';
 import { EmbeddingsService } from '../rag/embeddings.service.js';
@@ -128,6 +131,9 @@ describe.each([
         ChatOrchestratorService,
         IntentClassifierService,
         OperationsAiService,
+        OperationsToolRegistryService,
+        RequestsOperationsService,
+        RequestsService,
         ReservationsService,
         RetrievalService,
         OllamaService,
