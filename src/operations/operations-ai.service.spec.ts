@@ -70,6 +70,7 @@ describe('OperationsAiService', () => {
       .spyOn(Logger.prototype, 'error')
       .mockImplementation(() => undefined);
     vi.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+    vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -84,7 +85,7 @@ describe('OperationsAiService', () => {
       );
       reservations.listForDemoGuest.mockResolvedValue([TRATTORIA]);
 
-      const result = await createService().ask('Tenho alguma reserva?', LIST);
+      const result = await createService().ask('Tenho alguma reserva?');
 
       expect(reservations.listForDemoGuest).toHaveBeenCalledExactlyOnceWith();
       expect(result).toMatchObject({
@@ -100,9 +101,22 @@ describe('OperationsAiService', () => {
     it('reports when the model correctly requested the tool', async () => {
       reservations.listForDemoGuest.mockResolvedValue([TRATTORIA]);
 
-      const result = await createService().ask('Tenho alguma reserva?', LIST);
+      const result = await createService().ask('Tenho alguma reserva?');
 
       expect(result.toolRequestedByModel).toBe(true);
+    });
+
+    it('skips Ollama when the orchestrator already supplied the decision', async () => {
+      reservations.listForDemoGuest.mockResolvedValue([TRATTORIA]);
+
+      const result = await createService().ask('Tenho alguma reserva?', LIST);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        toolUsed: true,
+        toolRequestedByModel: false,
+        reservationsFound: 1,
+      });
     });
 
     it.each([
@@ -112,7 +126,7 @@ describe('OperationsAiService', () => {
       fetchMock.mockResolvedValue(makeResponse());
       reservations.listForDemoGuest.mockResolvedValue([TRATTORIA]);
 
-      const result = await createService().ask('Tenho alguma reserva?', LIST);
+      const result = await createService().ask('Tenho alguma reserva?');
 
       // listForDemoGuest takes no arguments, so the bound parameters
       // (see reservations.service.spec.ts) cannot come from the model.
@@ -124,7 +138,7 @@ describe('OperationsAiService', () => {
     it('exposes a tool without parameters, so the model cannot supply SQL or identifiers', async () => {
       reservations.listForDemoGuest.mockResolvedValue([]);
 
-      await createService().ask('Tenho alguma reserva?', LIST);
+      await createService().ask('Tenho alguma reserva?');
 
       const body = requestBody(fetchMock);
       expect(body.tools).toEqual([
@@ -158,11 +172,11 @@ describe('OperationsAiService', () => {
     });
   });
 
-  // KNOWN LIMITATION, not a desired behaviour: the reply is built only from
-  // the database, yet a failed function-calling round trip blocks it. These
-  // tests document the current contract; flip them if the dependency on
-  // Ollama is made optional.
-  describe('Ollama failures', () => {
+  // KNOWN LIMITATION, not a desired behaviour: without an orchestrator
+  // decision the reply is still built only from the database, yet a failed
+  // function-calling round trip blocks it. These tests document the current
+  // contract; flip them if the dependency on Ollama is made optional.
+  describe('Ollama failures (no orchestrator decision)', () => {
     it.each<[string, () => void]>([
       ['connection refused', () => fetchMock.mockRejectedValue(connectionError())],
       ['timeout', () => fetchMock.mockRejectedValue(timeoutError())],
@@ -173,7 +187,7 @@ describe('OperationsAiService', () => {
       reservations.listForDemoGuest.mockResolvedValue([TRATTORIA]);
 
       await expect(
-        createService().ask('Tenho alguma reserva?', LIST),
+        createService().ask('Tenho alguma reserva?'),
       ).rejects.toBeInstanceOf(BadGatewayException);
       expect(reservations.listForDemoGuest).not.toHaveBeenCalled();
     });
@@ -184,7 +198,7 @@ describe('OperationsAiService', () => {
       );
 
       const error = await createService()
-        .ask('Tenho alguma reserva?', LIST)
+        .ask('Tenho alguma reserva?')
         .catch((caught: unknown) => caught);
 
       expect(error).toBeInstanceOf(BadGatewayException);

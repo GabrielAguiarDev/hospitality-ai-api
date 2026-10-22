@@ -6,9 +6,8 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import { ReservationsService } from './reservations.service.js';
-
 import type { IntentDecision } from '../chat/chat-intent.types.js';
+import { ReservationsService } from './reservations.service.js';
 import type { RestaurantReservation } from './reservations.service.js';
 
 interface ToolCall {
@@ -30,6 +29,13 @@ interface OllamaResponse {
   message: OllamaMessage;
 }
 
+export interface OperationsResponse {
+  reply: string;
+  toolUsed: boolean;
+  toolRequestedByModel: boolean;
+  reservationsFound: number;
+}
+
 const TOOL_NAME = 'list_my_restaurant_reservations';
 
 const RESERVATIONS_TOOL = {
@@ -37,9 +43,8 @@ const RESERVATIONS_TOOL = {
   function: {
     name: TOOL_NAME,
     description:
-      'Consulta as reservas de restaurante do hóspede atual ' +
-      'diretamente no banco de dados. Use quando o hóspede ' +
-      'perguntar sobre suas reservas, horários ou status.',
+      'Consulta as reservas de restaurante do hóspede atual diretamente ' +
+      'no banco de dados. Use quando o hóspede perguntar sobre suas reservas.',
     parameters: {
       type: 'object',
       properties: {},
@@ -91,7 +96,7 @@ export class OperationsAiService {
         }),
         signal: AbortSignal.timeout(90_000),
       });
-    } catch (error) {
+    } catch (error: unknown) {
       this.logger.error(
         'Erro de conexão com Ollama',
         error instanceof Error ? error.stack : String(error),
@@ -121,50 +126,67 @@ export class OperationsAiService {
 
   async ask(
     message: string,
-    decision: IntentDecision = {
-      intent: 'reservation.list',
-      detail: 'none',
-    },
-  ) {
+    decision?: IntentDecision,
+  ): Promise<OperationsResponse> {
     if (this.configService.get<string>('NODE_ENV') === 'production') {
       throw new ForbiddenException('Consulta de demonstração desabilitada.');
     }
 
-    const messages: OllamaMessage[] = [
-      {
-        role: 'system',
-        content: [
-          'Você é um concierge de resort.',
-          'Para consultar reservas pessoais,',
-          'solicite list_my_restaurant_reservations.',
-          'Não invente dados nem identificadores.',
-        ].join(' '),
-      },
-      {
-        role: 'user',
-        content: message,
-      },
-    ];
+    const resolvedDecision: IntentDecision = decision ?? {
+      intent: 'reservation.list',
+      detail: 'none',
+    };
 
-    // Mantemos o experimento de Function Calling.
-    const firstResponse = await this.chatWithOllama(messages, [
-      RESERVATIONS_TOOL,
-    ]);
+    let toolRequestedByModel = false;
 
-    const toolCalls = firstResponse.message.tool_calls ?? [];
+    // Quando a intenção já foi identificada pelo
+    // ChatOrchestrator, não chamamos o Qwen novamente.
+    if (!decision) {
+      const messages: OllamaMessage[] = [
+        {
+          role: 'system',
+          content: [
+            'Você é um concierge de resort.',
+            'Para consultar reservas pessoais,',
+            'solicite list_my_restaurant_reservations.',
+            'Não invente dados nem identificadores.',
+          ].join(' '),
+        },
+        {
+          role: 'user',
+          content: message,
+        },
+      ];
 
-    const toolRequestedByModel =
-      toolCalls.length === 1 && toolCalls[0]?.function.name === TOOL_NAME;
+      const firstResponse = await this.chatWithOllama(messages, [
+        RESERVATIONS_TOOL,
+      ]);
 
-    this.logger.debug(
-      `Tool Calling solicitado pelo Qwen: ${toolRequestedByModel}`,
-    );
+      const toolCalls = firstResponse.message.tool_calls ?? [];
 
-    // A consulta não depende de a LLM acertar
-    // a chamada da ferramenta.
+      toolRequestedByModel =
+        toolCalls.length === 1 && toolCalls[0]?.function?.name === TOOL_NAME;
+
+      this.logger.debug(`Function Calling nativo: ${toolRequestedByModel}`);
+    } else {
+      this.logger.debug(
+        `Operação selecionada pelo orquestrador: ${resolvedDecision.intent}`,
+      );
+    }
+
+    // A consulta é controlada exclusivamente pelo NestJS.
     const reservations = await this.reservationsService.listForDemoGuest();
 
-    const reply = this.formatReservationReply(reservations, decision, message);
+    // Formata a resposta conforme a intenção identificada.
+    const reply = this.formatReservationReply(
+      reservations,
+      resolvedDecision,
+      message,
+    );
+
+    this.logger.log(
+      `Consulta operacional concluída: ${reservations.length} reservas`,
+    );
 
     return {
       reply,
@@ -190,46 +212,51 @@ export class OperationsAiService {
       canceled: 'cancelada',
     };
 
-    const normalize = (text: string) =>
+    const normalize = (text: string): string =>
       text
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '')
-        .toLowerCase();
+        .toLowerCase()
+        .trim();
 
-    const formatStatus = (status: string) =>
+    const formatStatus = (status: string): string =>
       statusLabels[status.toLowerCase()] ?? `registrada com status "${status}"`;
 
-    // Uma pergunta de listagem pode mostrar várias reservas.
+    // 1. Consulta geral: lista todas as reservas.
     if (decision.intent === 'reservation.list') {
-      const details = reservations.map((reservation) => {
+      const details = reservations.map((reservation, index) => {
         const date = reservation.reservedAt.replace(' ', ' às ');
 
         return [
-          `${reservation.restaurant}`,
+          `${index + 1}. ${reservation.restaurant}`,
           `Data: ${date}`,
           `Pessoas: ${reservation.partySize}`,
           `Status: ${formatStatus(reservation.status)}`,
         ].join('\n');
       });
 
+      const count = reservations.length;
+
       return [
-        `Encontrei ${reservations.length} ${
-          reservations.length === 1 ? 'reserva' : 'reservas'
+        `Encontrei ${count} ${
+          count === 1 ? 'reserva' : 'reservas'
         } de restaurante no seu cadastro:`,
         '',
         details.join('\n\n'),
       ].join('\n');
     }
 
-    // Se existirem várias reservas, tenta identificar
-    // o restaurante mencionado na pergunta.
+    // 2. Identifica se a pergunta cita um restaurante.
     const normalizedQuestion = normalize(question);
 
-    const matching = reservations.filter((reservation) =>
+    const matchingReservations = reservations.filter((reservation) =>
       normalizedQuestion.includes(normalize(reservation.restaurant)),
     );
 
-    const candidates = matching.length > 0 ? matching : reservations;
+    const candidates =
+      matchingReservations.length > 0 ? matchingReservations : reservations;
+
+    // 3. Não escolhe arbitrariamente entre várias reservas.
 
     if (candidates.length !== 1) {
       return [
@@ -241,22 +268,24 @@ export class OperationsAiService {
 
     const reservation = candidates[0];
 
-    const [date, time] = reservation.reservedAt.split(' ');
-
     const restaurant = reservation.restaurant;
     const status = formatStatus(reservation.status);
 
+    const [date, time] = reservation.reservedAt.split(' ');
+
+    // 4. Consulta específica do status.
     if (decision.intent === 'reservation.status') {
       return `Sua reserva na ${restaurant} está ${status}.`;
     }
 
+    // 5. Consulta específica de algum detalhe.
     switch (decision.detail) {
       case 'party_size': {
-        const people = reservation.partySize === 1 ? 'pessoa' : 'pessoas';
+        const peopleLabel = reservation.partySize === 1 ? 'pessoa' : 'pessoas';
 
         return (
           `Sua reserva na ${restaurant} é para ` +
-          `${reservation.partySize} ${people}.`
+          `${reservation.partySize} ${peopleLabel}.`
         );
       }
 

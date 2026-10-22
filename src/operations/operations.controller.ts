@@ -1,12 +1,9 @@
 
-import {
-  Body,
-  Controller,
-  Post,
-} from '@nestjs/common';
+import { Body, Controller, Post } from '@nestjs/common';
 
 import { AskOperationsDto } from './dto/ask-operations.dto.js';
 import { OperationsAiService } from './operations-ai.service.js';
+import type { OperationsResponse } from './operations-ai.service.js';
 
 @Controller('operations')
 export class OperationsController {
@@ -15,7 +12,9 @@ export class OperationsController {
   ) {}
 
   @Post('ask')
-  async ask(@Body() dto: AskOperationsDto) {
+  async ask(
+    @Body() dto: AskOperationsDto,
+  ): Promise<OperationsResponse> {
     return this.operationsAiService.ask(dto.message);
   }
 }
