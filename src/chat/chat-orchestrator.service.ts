@@ -55,7 +55,10 @@ export class ChatOrchestratorService {
     }
 
     // 2. Consultas de conhecimento continuam no RAG.
-    const documents = await this.retrievalService.search(message);
+    const documents = await this.retrievalService.search(
+      message,
+      guest.resortId,
+    );
 
     return {
       mode: 'knowledge',

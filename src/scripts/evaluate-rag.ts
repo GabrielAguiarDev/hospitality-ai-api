@@ -1,4 +1,3 @@
-
 import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from '../app.module.js';
@@ -13,19 +12,15 @@ const questions = [
 ];
 
 async function bootstrap() {
-  const app = await NestFactory.createApplicationContext(
-    AppModule,
-    {
-      logger: ['error', 'warn'],
-    },
-  );
+  const app = await NestFactory.createApplicationContext(AppModule, {
+    logger: ['error', 'warn'],
+  });
 
   try {
     const retrievalService = app.get(RetrievalService);
 
     for (const question of questions) {
-      const documents =
-        await retrievalService.search(question);
+      const documents = await retrievalService.search(question, 'demo');
 
       console.log('\n--------------------------------');
       console.log(`Pergunta: ${question}`);

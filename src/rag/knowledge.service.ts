@@ -1,5 +1,8 @@
 
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'node:crypto';
 import { ChromaClient } from 'chromadb-client';
@@ -24,8 +27,10 @@ export interface RetrievedDocument {
 export class KnowledgeService {
   private readonly client: ChromaClient;
 
+  // Nova coleção: não misturamos documentos antigos
+  // com a estrutura multi-resort.
   private readonly collectionName =
-    'yago_knowledge_demo_v1';
+    'yago_knowledge_multi_v2';
 
   constructor(
     private readonly configService: ConfigService,
@@ -50,7 +55,30 @@ export class KnowledgeService {
     });
   }
 
-  // Gera uma identificação baseada no conteúdo.
+  private requireResortId(resortId: string): void {
+    if (!resortId?.trim()) {
+      throw new BadRequestException(
+        'resortId é obrigatório para acessar o conhecimento.',
+      );
+    }
+  }
+
+  // Evita colisões entre documentos de resorts
+  // e fontes diferentes que utilizem o mesmo ID.
+  private documentKey(
+    resortId: string,
+    source: string,
+    documentId: string,
+  ): string {
+    return [
+      resortId,
+      source,
+      documentId,
+    ]
+      .map(encodeURIComponent)
+      .join(':');
+  }
+
   fingerprint(document: KnowledgeDocument): string {
     const content = JSON.stringify({
       title: document.title,
@@ -63,31 +91,45 @@ export class KnowledgeService {
       .digest('hex');
   }
 
-  // Lista documentos indexados por esta fonte.
+  // Recupera hashes somente dos documentos
+  // desta fonte e deste resort.
   async listIndexedHashes(
+    resortId: string,
     source: string,
   ): Promise<Map<string, string>> {
-    const collection = await this.getCollection();
-    const result = new Map<string, string>();
+    this.requireResortId(resortId);
 
+    const collection = await this.getCollection();
+
+    const indexed = new Map<string, string>();
     const pageSize = 100;
+
     let offset = 0;
 
     while (true) {
       const page = await collection.get({
-        where: { source },
+        where: {
+          $and: [
+            { resortId },
+            { source },
+          ],
+        },
         limit: pageSize,
         offset,
       });
 
-      page.ids.forEach((id, index) => {
+      page.ids.forEach((_, index) => {
         const metadata = page.metadatas?.[index];
+
+        const originalId = metadata?.documentId;
         const hash = metadata?.contentHash;
 
-        result.set(
-          id,
-          typeof hash === 'string' ? hash : '',
-        );
+        if (
+          typeof originalId === 'string' &&
+          typeof hash === 'string'
+        ) {
+          indexed.set(originalId, hash);
+        }
       });
 
       if (page.ids.length < pageSize) {
@@ -97,29 +139,45 @@ export class KnowledgeService {
       offset += page.ids.length;
     }
 
-    return result;
+    return indexed;
   }
 
-  // Insere ou atualiza documentos.
+  // Insere e atualiza documentos de um resort.
   async upsertDocuments(
     documents: KnowledgeDocument[],
-    source = 'manual-demo',
+    resortId: string,
+    source: string,
   ): Promise<number> {
+    this.requireResortId(resortId);
+
+    if (!source?.trim()) {
+      throw new BadRequestException(
+        'A fonte dos documentos é obrigatória.',
+      );
+    }
+
     if (documents.length === 0) {
       return 0;
     }
 
     const collection = await this.getCollection();
 
-    const embeddings = await this.embeddingsService.embed(
-      documents.map(
-        (document) =>
-          `title: ${document.title} | text: ${document.content}`,
-      ),
-    );
+    const embeddings =
+      await this.embeddingsService.embed(
+        documents.map(
+          (document) =>
+            `title: ${document.title} | text: ${document.content}`,
+        ),
+      );
 
     await collection.upsert({
-      ids: documents.map((document) => document.id),
+      ids: documents.map((document) =>
+        this.documentKey(
+          resortId,
+          source,
+          document.id,
+        ),
+      ),
 
       embeddings,
 
@@ -128,10 +186,11 @@ export class KnowledgeService {
       ),
 
       metadatas: documents.map((document) => ({
+        resortId,
+        source,
+        documentId: document.id,
         title: document.title,
         category: document.category,
-        resortId: 'demo',
-        source,
         contentHash: this.fingerprint(document),
       })),
     });
@@ -139,21 +198,47 @@ export class KnowledgeService {
     return documents.length;
   }
 
-  // Remove documentos por ID.
-  async deleteDocuments(ids: string[]): Promise<void> {
-    if (ids.length === 0) {
+  // Remove documentos pertencentes somente
+  // à fonte e ao resort informados.
+  async deleteDocuments(
+    documentIds: string[],
+    resortId: string,
+    source: string,
+  ): Promise<void> {
+    this.requireResortId(resortId);
+
+    if (!source?.trim()) {
+      throw new BadRequestException(
+        'A fonte dos documentos é obrigatória.',
+      );
+    }
+
+    if (documentIds.length === 0) {
       return;
     }
 
     const collection = await this.getCollection();
 
-    await collection.delete({ ids });
+    await collection.delete({
+      ids: documentIds.map((id) =>
+        this.documentKey(resortId, source, id),
+      ),
+      where: {
+        $and: [
+          { resortId },
+          { source },
+        ],
+      },
+    });
   }
 
-  // Busca semântica utilizada pelo RAG.
+  // Busca vetorial com filtro obrigatório de resort.
   async searchByVector(
     vector: number[],
+    resortId: string,
   ): Promise<RetrievedDocument[]> {
+    this.requireResortId(resortId);
+
     const collection = await this.getCollection();
     const count = await collection.count();
 
@@ -165,7 +250,7 @@ export class KnowledgeService {
       queryEmbeddings: [vector],
       nResults: Math.min(3, count),
       where: {
-        resortId: 'demo',
+        resortId,
       },
     });
 
@@ -174,13 +259,18 @@ export class KnowledgeService {
     const metadatas = result.metadatas?.[0] ?? [];
     const distances = result.distances?.[0] ?? [];
 
-    return ids.map((id, index) => ({
-      id,
-      title: String(
-        metadatas[index]?.title ?? 'Documento',
-      ),
-      content: documents[index] ?? '',
-      distance: distances[index] ?? null,
-    }));
+    return ids.map((id, index) => {
+      const metadata = metadatas[index];
+
+      return {
+        // Preserva o ID original no retorno do RAG.
+        id: String(metadata?.documentId ?? id),
+        title: String(
+          metadata?.title ?? 'Documento',
+        ),
+        content: documents[index] ?? '',
+        distance: distances[index] ?? null,
+      };
+    });
   }
 }

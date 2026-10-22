@@ -134,7 +134,7 @@ describe('ChatOrchestratorService', () => {
       const question = 'Qual é o horário de funcionamento da Trattoria Aurora?';
       const result = await orchestrator.resolve(question, GUEST, HISTORY);
 
-      expect(retrieval.search).toHaveBeenCalledExactlyOnceWith(question);
+      expect(retrieval.search).toHaveBeenCalledExactlyOnceWith(question, GUEST.resortId);
       expect(dispatcher.dispatch).not.toHaveBeenCalled();
       expect(result).toEqual({ mode: 'knowledge', documents: [HOURS_DOCUMENT] });
     });

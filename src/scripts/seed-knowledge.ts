@@ -1,4 +1,3 @@
-
 import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from '../app.module.js';
@@ -70,18 +69,18 @@ const documents: KnowledgeDocument[] = [
 ];
 
 async function bootstrap() {
-  const app =
-    await NestFactory.createApplicationContext(AppModule);
+  const app = await NestFactory.createApplicationContext(AppModule);
 
   try {
     const knowledgeService = app.get(KnowledgeService);
 
-    const total =
-      await knowledgeService.upsertDocuments(documents);
-
-    console.log(
-      `${total} documentos fictícios indexados com sucesso!`,
+    const total = await knowledgeService.upsertDocuments(
+      documents,
+      'demo',
+      'legacy-demo-seed',
     );
+
+    console.log(`${total} documentos fictícios indexados com sucesso!`);
   } finally {
     await app.close();
   }

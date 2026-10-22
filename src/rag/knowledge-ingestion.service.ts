@@ -1,5 +1,4 @@
-
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
 import {
@@ -15,19 +14,21 @@ export interface SyncResult {
 
 @Injectable()
 export class KnowledgeIngestionService {
-  private readonly logger = new Logger(
-    KnowledgeIngestionService.name,
-  );
+  private readonly logger = new Logger(KnowledgeIngestionService.name);
 
-  private readonly source = 'mysql-demo';
+  private readonly source = 'mysql-resort-knowledge';
 
   constructor(
     private readonly dataSource: DataSource,
     private readonly knowledgeService: KnowledgeService,
   ) {}
 
-  async syncDemo(): Promise<SyncResult> {
-    // 1. Busca o conhecimento ativo no MySQL.
+  async syncResort(resortId: string): Promise<SyncResult> {
+    if (!resortId?.trim()) {
+      throw new BadRequestException('resortId obrigatório na sincronização.');
+    }
+
+    // Consulta a fonte oficial deste resort.
     const documents = (await this.dataSource.query(
       `
         SELECT id, title, category, content
@@ -36,51 +37,38 @@ export class KnowledgeIngestionService {
           AND active = TRUE
         ORDER BY id
       `,
-      ['demo'],
+      [resortId],
     )) as KnowledgeDocument[];
 
-    // Evita apagar o índice inteiro por acidente.
-    if (documents.length === 0) {
-      throw new Error(
-        'Nenhum documento ativo encontrado. ' +
-        'Sincronização interrompida por segurança.',
-      );
-    }
+    // Recupera somente os documentos já gerenciados
+    // por esta fonte e por este resort.
+    const indexed = await this.knowledgeService.listIndexedHashes(
+      resortId,
+      this.source,
+    );
 
-    // 2. Recupera os hashes já indexados.
-    const indexed = await this.knowledgeService
-      .listIndexedHashes(this.source);
-
-    // 3. Identifica documentos novos ou alterados.
+    // Identifica documentos novos ou alterados.
     const changed = documents.filter((document) => {
-      const currentHash =
-        this.knowledgeService.fingerprint(document);
+      const currentHash = this.knowledgeService.fingerprint(document);
 
-      const indexedHash = indexed.get(document.id);
-
-      return currentHash !== indexedHash;
+      return indexed.get(document.id) !== currentHash;
     });
 
-    // 4. Indexa somente documentos modificados.
-    const createdOrUpdated =
-      await this.knowledgeService.upsertDocuments(
-        changed,
-        this.source,
-      );
-
-    // 5. Identifica documentos que deixaram de existir
-    // ou não estão mais ativos no MySQL.
-    const activeIds = new Set(
-      documents.map((document) => document.id),
+    const createdOrUpdated = await this.knowledgeService.upsertDocuments(
+      changed,
+      resortId,
+      this.source,
     );
 
-    const removedIds = [...indexed.keys()].filter(
-      (id) => !activeIds.has(id),
-    );
+    // Identifica documentos desativados ou removidos.
+    const activeIds = new Set(documents.map((document) => document.id));
 
-    // 6. Remove documentos obsoletos.
+    const removedIds = [...indexed.keys()].filter((id) => !activeIds.has(id));
+
     await this.knowledgeService.deleteDocuments(
       removedIds,
+      resortId,
+      this.source,
     );
 
     const result: SyncResult = {
@@ -89,10 +77,14 @@ export class KnowledgeIngestionService {
       removed: removedIds.length,
     };
 
-    this.logger.log(
-      `Sincronização concluída: ${JSON.stringify(result)}`,
-    );
+    this.logger.log(`Resort ${resortId}: ${JSON.stringify(result)}`);
 
     return result;
+  }
+
+  // Preserva o contrato utilizado pelo script
+  // e pelo agendador já implementados.
+  async syncDemo(): Promise<SyncResult> {
+    return this.syncResort('demo');
   }
 }

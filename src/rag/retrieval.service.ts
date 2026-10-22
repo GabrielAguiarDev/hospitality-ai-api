@@ -1,10 +1,16 @@
 
-import { Injectable } from '@nestjs/common';
+import {
+  BadGatewayException,
+  BadRequestException,
+  Injectable,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import { EmbeddingsService } from './embeddings.service.js';
-import { KnowledgeService } from './knowledge.service.js';
-import type { RetrievedDocument } from './knowledge.service.js';
+import {
+  KnowledgeService,
+  type RetrievedDocument,
+} from './knowledge.service.js';
 
 @Injectable()
 export class RetrievalService {
@@ -16,50 +22,53 @@ export class RetrievalService {
 
   async search(
     question: string,
+    resortId: string,
   ): Promise<RetrievedDocument[]> {
-    const [queryEmbedding] =
+    if (!resortId?.trim()) {
+      throw new BadRequestException(
+        'resortId obrigatório na busca RAG.',
+      );
+    }
+
+    const embeddings =
       await this.embeddingsService.embed([
         `task: search result | query: ${question}`,
       ]);
 
-    if (!queryEmbedding) {
-      return [];
+    const vector = embeddings[0];
+
+    if (!vector?.length) {
+      throw new BadGatewayException(
+        'O Ollama não retornou um embedding válido.',
+      );
     }
 
-    // Busca documentos semanticamente semelhantes.
     const documents =
       await this.knowledgeService.searchByVector(
-        queryEmbedding,
+        vector,
+        resortId,
       );
 
-    // O limite é opcional durante a calibração.
-    const configuredDistance = this.configService
+    // Valor vazio usa o padrão; Number('') seria 0
+    // e descartaria todos os documentos.
+    const rawDistance = this.configService
       .get<string>('RAG_MAX_DISTANCE')
       ?.trim();
 
-    if (!configuredDistance) {
-      return documents;
-    }
+    const configuredDistance = rawDistance
+      ? Number(rawDistance)
+      : Number.NaN;
 
-    const maxDistance = Number(configuredDistance);
+    const maxDistance =
+      Number.isFinite(configuredDistance) &&
+      configuredDistance >= 0
+        ? configuredDistance
+        : 0.5;
 
-    if (
-      !Number.isFinite(maxDistance) ||
-      maxDistance < 0 ||
-      maxDistance > 2
-    ) {
-      throw new Error(
-        'RAG_MAX_DISTANCE deve ser um número entre 0 e 2',
-      );
-    }
-
-    // Descarta documentos com distância elevada.
-    return documents.filter((document) => {
-      if (document.distance === null) {
-        return false;
-      }
-
-      return document.distance <= maxDistance;
-    });
+    return documents.filter(
+      (document) =>
+        document.distance !== null &&
+        document.distance <= maxDistance,
+    );
   }
 }

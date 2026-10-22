@@ -234,6 +234,11 @@ describe.each([
     expect(embeddings.embed).toHaveBeenCalledExactlyOnceWith([
       'task: search result | query: Qual é o horário de funcionamento da Trattoria Aurora?',
     ]);
+    // The knowledge search is scoped to the guest's resort.
+    expect(knowledge.searchByVector).toHaveBeenCalledExactlyOnceWith(
+      [0.1, 0.2, 0.3],
+      DEMO_GUEST_CONTEXT.resortId,
+    );
 
     const [generation] = requests('generation') as {
       messages: { role: string; content: string }[];
