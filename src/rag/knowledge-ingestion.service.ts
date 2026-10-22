@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { ConfigService } from '@nestjs/config';
+import { requireConfiguredResortId } from '../guest/resort-config.js';
 
 import {
   KnowledgeService,
@@ -21,6 +23,7 @@ export class KnowledgeIngestionService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly knowledgeService: KnowledgeService,
+    private readonly configService: ConfigService,
   ) {}
 
   async syncResort(resortId: string): Promise<SyncResult> {
@@ -84,7 +87,12 @@ export class KnowledgeIngestionService {
 
   // Preserva o contrato utilizado pelo script
   // e pelo agendador já implementados.
+
   async syncDemo(): Promise<SyncResult> {
-    return this.syncResort('demo');
+    const resortId = requireConfiguredResortId(
+      this.configService.get<string>('RESORT_ID'),
+    );
+
+    return this.syncResort(resortId);
   }
 }
