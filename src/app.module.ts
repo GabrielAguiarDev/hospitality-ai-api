@@ -2,6 +2,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ScheduleModule } from '@nestjs/schedule';
 
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
@@ -12,7 +13,6 @@ import { ChatModule } from './chat/chat.module.js';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
-
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
@@ -27,7 +27,7 @@ import { ChatModule } from './chat/chat.module.js';
         synchronize: false,
       }),
     }),
-
+    ScheduleModule.forRoot(),
     ChatModule,
   ],
   controllers: [AppController],
