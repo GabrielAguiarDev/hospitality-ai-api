@@ -1,3 +1,4 @@
+
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
@@ -6,11 +7,11 @@ import type { Repository } from 'typeorm';
 
 import { OllamaService } from '../llm/ollama.service.js';
 import type { LlmMessage } from '../llm/ollama.service.js';
-import { RetrievalService } from '../rag/retrieval.service.js';
 import type { RetrievedDocument } from '../rag/knowledge.service.js';
 
 import { ChatConversation } from './entities/chat-conversation.entity.js';
 import { ChatMessage } from './entities/chat-message.entity.js';
+import { ChatOrchestratorService } from './chat-orchestrator.service.js';
 
 @Injectable()
 export class ChatService {
@@ -33,8 +34,8 @@ export class ChatService {
 
   constructor(
     private readonly ollamaService: OllamaService,
-    private readonly retrievalService: RetrievalService,
     private readonly dataSource: DataSource,
+    private readonly chatOrchestrator: ChatOrchestratorService,
 
     @InjectRepository(ChatConversation)
     private readonly conversationsRepository: Repository<ChatConversation>,
@@ -49,20 +50,29 @@ export class ChatService {
   ): Promise<{
     reply: string;
     conversationId: string;
-    retrievedSources: { id: string; title: string; distance: number | null }[];
+    retrievedSources: {
+      id: string;
+      title: string;
+      distance: number | null;
+    }[];
   }> {
     const id = conversationId ?? randomUUID();
 
+    // 1. Valida a conversa existente.
     if (conversationId) {
-      const conversation = await this.conversationsRepository.findOneBy({
-        id,
-      });
+      const conversation =
+        await this.conversationsRepository.findOneBy({
+          id,
+        });
 
       if (!conversation) {
-        throw new NotFoundException('Conversa não encontrada');
+        throw new NotFoundException(
+          'Conversa não encontrada',
+        );
       }
     }
 
+    // 2. Recupera o histórico da conversa.
     const previousMessages = conversationId
       ? await this.messagesRepository.find({
           where: { conversationId: id },
@@ -71,29 +81,50 @@ export class ChatService {
         })
       : [];
 
-    const history: LlmMessage[] = previousMessages
+    const history = previousMessages
       .reverse()
       .map(({ role, content }) => ({
         role,
         content,
       }));
 
-    const documents = await this.retrievalService.search(message);
+    // 3. O orquestrador decide qual mecanismo utilizar.
+    const orchestration =
+      await this.chatOrchestrator.resolve(
+        message,
+        history,
+      );
 
-    const messages: LlmMessage[] = [
-      {
-        role: 'system',
-        content: this.buildSystemPrompt(documents),
-      },
-      ...history,
-      {
-        role: 'user',
-        content: message,
-      },
-    ];
+    let reply: string;
+    let documents: RetrievedDocument[] = [];
 
-    const reply = await this.ollamaService.generate(messages);
+    if (orchestration.mode === 'operations') {
+      // 4A. Consulta operacional.
+      // O OperationsAiService já produziu a resposta.
+      reply = orchestration.reply;
+    } else {
+      // 4B. Consulta de conhecimento (RAG).
+      // Os documentos já foram recuperados pelo orquestrador.
+      documents = orchestration.documents;
 
+      const messages: LlmMessage[] = [
+        {
+          role: 'system',
+          content: this.buildSystemPrompt(documents),
+        },
+        ...history,
+        {
+          role: 'user',
+          content: message,
+        },
+      ];
+
+      reply = await this.ollamaService.generate(
+        messages,
+      );
+    }
+
+    // 5. Salva a conversa independentemente do fluxo.
     await this.dataSource.transaction(async (manager) => {
       if (!conversationId) {
         await manager.insert(ChatConversation, {
@@ -114,9 +145,14 @@ export class ChatService {
         },
       ]);
 
-      await manager.update(ChatConversation, { id }, { updatedAt: new Date() });
+      await manager.update(
+        ChatConversation,
+        { id },
+        { updatedAt: new Date() },
+      );
     });
 
+    // 6. Retorna uma estrutura única para o frontend.
     return {
       reply,
       conversationId: id,
@@ -128,7 +164,9 @@ export class ChatService {
     };
   }
 
-  private buildSystemPrompt(documents: RetrievedDocument[]): string {
+  private buildSystemPrompt(
+    documents: RetrievedDocument[],
+  ): string {
     const context = documents.length
       ? documents
           .map(
@@ -166,12 +204,15 @@ Conteúdo: ${content.trim()}`,
   }
 
   async getMessages(conversationId: string) {
-    const conversation = await this.conversationsRepository.findOneBy({
-      id: conversationId,
-    });
+    const conversation =
+      await this.conversationsRepository.findOneBy({
+        id: conversationId,
+      });
 
     if (!conversation) {
-      throw new NotFoundException('Conversa não encontrada');
+      throw new NotFoundException(
+        'Conversa não encontrada',
+      );
     }
 
     const messages = await this.messagesRepository.find({

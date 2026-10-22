@@ -11,5 +11,6 @@ import { ReservationsService } from './reservations.service.js';
     OperationsAiService,
     ReservationsService,
   ],
+  exports: [OperationsAiService],
 })
 export class OperationsModule {}

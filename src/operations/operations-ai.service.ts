@@ -8,6 +8,9 @@ import { ConfigService } from '@nestjs/config';
 
 import { ReservationsService } from './reservations.service.js';
 
+import type { IntentDecision } from '../chat/chat-intent.types.js';
+import type { RestaurantReservation } from './reservations.service.js';
+
 interface ToolCall {
   type: 'function';
   function: {
@@ -116,7 +119,13 @@ export class OperationsAiService {
     return data;
   }
 
-  async ask(message: string) {
+  async ask(
+    message: string,
+    decision: IntentDecision = {
+      intent: 'reservation.list',
+      detail: 'none',
+    },
+  ) {
     if (this.configService.get<string>('NODE_ENV') === 'production') {
       throw new ForbiddenException('Consulta de demonstração desabilitada.');
     }
@@ -125,10 +134,10 @@ export class OperationsAiService {
       {
         role: 'system',
         content: [
-          'Você é o concierge de um resort.',
-          'Para consultar as reservas do hóspede,',
-          'utilize a ferramenta list_my_restaurant_reservations.',
-          'Nunca invente informações.',
+          'Você é um concierge de resort.',
+          'Para consultar reservas pessoais,',
+          'solicite list_my_restaurant_reservations.',
+          'Não invente dados nem identificadores.',
         ].join(' '),
       },
       {
@@ -137,7 +146,7 @@ export class OperationsAiService {
       },
     ];
 
-    // 1. Testamos se o Qwen solicita a ferramenta.
+    // Mantemos o experimento de Function Calling.
     const firstResponse = await this.chatWithOllama(messages, [
       RESERVATIONS_TOOL,
     ]);
@@ -145,35 +154,35 @@ export class OperationsAiService {
     const toolCalls = firstResponse.message.tool_calls ?? [];
 
     const toolRequestedByModel =
-      toolCalls.length === 1 && toolCalls[0]?.function?.name === TOOL_NAME;
+      toolCalls.length === 1 && toolCalls[0]?.function.name === TOOL_NAME;
 
     this.logger.debug(
-      `Tool Calling: ${JSON.stringify({
-        requestedByModel: toolRequestedByModel,
-        toolCalls,
-        content: firstResponse.message.content,
-      })}`,
+      `Tool Calling solicitado pelo Qwen: ${toolRequestedByModel}`,
     );
 
-    // 2. O backend sempre consulta o MySQL
-    // neste endpoint especializado.
+    // A consulta não depende de a LLM acertar
+    // a chamada da ferramenta.
     const reservations = await this.reservationsService.listForDemoGuest();
 
-    this.logger.log(
-      `Consulta MySQL: ${reservations.length} registros encontrados`,
-    );
+    const reply = this.formatReservationReply(reservations, decision, message);
 
-    // 3. Caso não existam reservas.
+    return {
+      reply,
+      toolUsed: true,
+      toolRequestedByModel,
+      reservationsFound: reservations.length,
+    };
+  }
+
+  private formatReservationReply(
+    reservations: RestaurantReservation[],
+    decision: IntentDecision,
+    question: string,
+  ): string {
     if (reservations.length === 0) {
-      return {
-        reply: 'Não encontrei reservas de restaurante no seu cadastro.',
-        toolUsed: true,
-        toolRequestedByModel,
-        reservationsFound: 0,
-      };
+      return 'Não encontrei reservas de restaurante no seu cadastro.';
     }
 
-    // 4. Mapeia os status cadastrados no banco.
     const statusLabels: Record<string, string> = {
       confirmed: 'confirmada',
       pending: 'pendente',
@@ -181,38 +190,94 @@ export class OperationsAiService {
       canceled: 'cancelada',
     };
 
-    // 5. Formata cada reserva sem usar a LLM.
-    const reservationDetails = reservations.map((reservation, index) => {
-      const date = reservation.reservedAt.replace(' ', ' às ');
+    const normalize = (text: string) =>
+      text
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase();
 
-      const peopleLabel = reservation.partySize === 1 ? 'pessoa' : 'pessoas';
+    const formatStatus = (status: string) =>
+      statusLabels[status.toLowerCase()] ?? `registrada com status "${status}"`;
 
-      const status =
-        statusLabels[reservation.status.toLowerCase()] ?? reservation.status;
+    // Uma pergunta de listagem pode mostrar várias reservas.
+    if (decision.intent === 'reservation.list') {
+      const details = reservations.map((reservation) => {
+        const date = reservation.reservedAt.replace(' ', ' às ');
+
+        return [
+          `${reservation.restaurant}`,
+          `Data: ${date}`,
+          `Pessoas: ${reservation.partySize}`,
+          `Status: ${formatStatus(reservation.status)}`,
+        ].join('\n');
+      });
 
       return [
-        `${index + 1}. ${reservation.restaurant}`,
-        `Data: ${date}`,
-        `Pessoas: ${reservation.partySize} ${peopleLabel}`,
-        `Status: ${status}`,
+        `Encontrei ${reservations.length} ${
+          reservations.length === 1 ? 'reserva' : 'reservas'
+        } de restaurante no seu cadastro:`,
+        '',
+        details.join('\n\n'),
       ].join('\n');
-    });
+    }
 
-    const count = reservations.length;
+    // Se existirem várias reservas, tenta identificar
+    // o restaurante mencionado na pergunta.
+    const normalizedQuestion = normalize(question);
 
-    const reply = [
-      `Encontrei ${count} ${
-        count === 1 ? 'reserva' : 'reservas'
-      } de restaurante no seu cadastro:`,
-      '',
-      reservationDetails.join('\n\n'),
-    ].join('\n');
+    const matching = reservations.filter((reservation) =>
+      normalizedQuestion.includes(normalize(reservation.restaurant)),
+    );
 
-    return {
-      reply,
-      toolUsed: true,
-      toolRequestedByModel,
-      reservationsFound: count,
-    };
+    const candidates = matching.length > 0 ? matching : reservations;
+
+    if (candidates.length !== 1) {
+      return [
+        `Encontrei ${candidates.length} reservas relacionadas à sua consulta.`,
+        'De qual reserva você deseja os detalhes?',
+        'Informe o restaurante ou a data.',
+      ].join(' ');
+    }
+
+    const reservation = candidates[0];
+
+    const [date, time] = reservation.reservedAt.split(' ');
+
+    const restaurant = reservation.restaurant;
+    const status = formatStatus(reservation.status);
+
+    if (decision.intent === 'reservation.status') {
+      return `Sua reserva na ${restaurant} está ${status}.`;
+    }
+
+    switch (decision.detail) {
+      case 'party_size': {
+        const people = reservation.partySize === 1 ? 'pessoa' : 'pessoas';
+
+        return (
+          `Sua reserva na ${restaurant} é para ` +
+          `${reservation.partySize} ${people}.`
+        );
+      }
+
+      case 'date':
+        return `Sua reserva na ${restaurant} ` + `está marcada para ${date}.`;
+
+      case 'time':
+        return (
+          `Sua reserva na ${restaurant} ` + `está marcada para as ${time}.`
+        );
+
+      case 'restaurant':
+        return `Sua reserva está cadastrada ` + `no restaurante ${restaurant}.`;
+
+      default:
+        return [
+          `Sua reserva na ${restaurant}:`,
+          `Data: ${date} às ${time}`,
+          `Pessoas: ${reservation.partySize}`,
+          `Status: ${status}`,
+        ].join('\n');
+    }
   }
 }
