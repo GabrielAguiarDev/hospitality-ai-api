@@ -2,6 +2,8 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
+import type { GuestContext } from '../guest/guest-context.js';
+
 export interface GuestRequest {
   id: string;
   category: string;
@@ -17,12 +19,9 @@ export class RequestsService {
     private readonly dataSource: DataSource,
   ) {}
 
-  async listForDemoGuest(): Promise<GuestRequest[]> {
-    // Contexto fictício controlado pelo backend.
-    // Futuramente virá da sessão autenticada.
-    const resortId = 'demo';
-    const guestId = 'guest-demo-001';
-
+  async listForGuest(
+    guest: GuestContext,
+  ): Promise<GuestRequest[]> {
     const results: unknown = await this.dataSource.query(
       `
         SELECT
@@ -44,7 +43,7 @@ export class RequestsService {
         ORDER BY created_at DESC
         LIMIT 20
       `,
-      [resortId, guestId],
+      [guest.resortId, guest.guestId],
     );
 
     return results as GuestRequest[];

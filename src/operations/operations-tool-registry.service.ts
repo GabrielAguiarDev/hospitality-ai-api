@@ -7,6 +7,8 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import type { GuestContext } from '../guest/guest-context.js';
+
 import {
   ReservationsService,
   type RestaurantReservation,
@@ -47,13 +49,13 @@ export class OperationsToolRegistryService {
     {
       name: 'reservations.list',
       description:
-        'Consulta as reservas de restaurante do hóspede atual.',
+        'Consulta reservas de restaurante do hóspede atual.',
       readOnly: true,
     },
     {
       name: 'requests.list',
       description:
-        'Consulta as solicitações de manutenção e governança do hóspede atual.',
+        'Consulta solicitações do hóspede atual.',
       readOnly: true,
     },
   ];
@@ -70,10 +72,9 @@ export class OperationsToolRegistryService {
 
   async execute(
     name: string,
+    guest: GuestContext,
     input: unknown = {},
   ): Promise<OperationToolResult> {
-    // O registro ainda opera exclusivamente
-    // com o contexto fictício de desenvolvimento.
     if (
       this.configService.get<string>('NODE_ENV') ===
       'production'
@@ -83,8 +84,15 @@ export class OperationsToolRegistryService {
       );
     }
 
-    // Por enquanto, nenhuma ferramenta aceita parâmetros
-    // fornecidos pelo modelo ou pelo hóspede.
+    if (
+      !guest?.resortId ||
+      !guest?.guestId
+    ) {
+      throw new ForbiddenException(
+        'Contexto do hóspede obrigatório.',
+      );
+    }
+
     if (
       input === null ||
       typeof input !== 'object' ||
@@ -99,7 +107,9 @@ export class OperationsToolRegistryService {
     switch (name) {
       case 'reservations.list': {
         const data =
-          await this.reservationsService.listForDemoGuest();
+          await this.reservationsService.listForGuest(
+            guest,
+          );
 
         this.logger.log(
           `Ferramenta executada: ${name}`,
@@ -113,7 +123,9 @@ export class OperationsToolRegistryService {
 
       case 'requests.list': {
         const data =
-          await this.requestsService.listForDemoGuest();
+          await this.requestsService.listForGuest(
+            guest,
+          );
 
         this.logger.log(
           `Ferramenta executada: ${name}`,

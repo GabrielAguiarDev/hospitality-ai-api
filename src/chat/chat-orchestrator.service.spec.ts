@@ -1,8 +1,8 @@
 import { BadGatewayException, Logger } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 
-import { OperationsAiService } from '../operations/operations-ai.service.js';
-import { RequestsOperationsService } from '../operations/requests-operations.service.js';
+import type { GuestContext } from '../guest/guest-context.js';
+import { OperationsDispatcherService } from '../operations/operations-dispatcher.service.js';
 import type { RetrievedDocument } from '../rag/knowledge.service.js';
 import { RetrievalService } from '../rag/retrieval.service.js';
 
@@ -17,6 +17,8 @@ const HOURS_DOCUMENT: RetrievedDocument = {
   distance: 0.21,
 };
 
+const GUEST: GuestContext = { resortId: 'resort-1', guestId: 'guest-001' };
+
 const HISTORY: HistoryEntry[] = [
   { role: 'user', content: 'Tenho alguma reserva?' },
   {
@@ -25,23 +27,13 @@ const HISTORY: HistoryEntry[] = [
   },
 ];
 
-type OperationsAskResult = Awaited<ReturnType<OperationsAiService['ask']>>;
-
-function operationsResult(reply: string): OperationsAskResult {
-  return {
-    reply,
-    toolUsed: true,
-    toolRequestedByModel: false,
-    reservationsFound: 1,
-  };
-}
-
 describe('ChatOrchestratorService', () => {
   const classifier = {
     classify: vi.fn<IntentClassifierService['classify']>(),
   };
-  const operations = { ask: vi.fn<OperationsAiService['ask']>() };
-  const requests = { ask: vi.fn<RequestsOperationsService['ask']>() };
+  const dispatcher = {
+    dispatch: vi.fn<OperationsDispatcherService['dispatch']>(),
+  };
   const retrieval = { search: vi.fn<RetrievalService['search']>() };
 
   let orchestrator: ChatOrchestratorService;
@@ -49,14 +41,13 @@ describe('ChatOrchestratorService', () => {
   beforeEach(async () => {
     vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
 
-    // Only the four collaborators are provided: if the orchestrator ever
+    // Only the three collaborators are provided: if the orchestrator ever
     // started depending on DataSource or EmbeddingsService, this would fail.
     const moduleRef = await Test.createTestingModule({
       providers: [
         ChatOrchestratorService,
         { provide: IntentClassifierService, useValue: classifier },
-        { provide: OperationsAiService, useValue: operations },
-        { provide: RequestsOperationsService, useValue: requests },
+        { provide: OperationsDispatcherService, useValue: dispatcher },
         { provide: RetrievalService, useValue: retrieval },
       ],
     }).compile();
@@ -77,19 +68,22 @@ describe('ChatOrchestratorService', () => {
       { intent: 'reservation.details', detail: 'time' },
       { intent: 'reservation.details', detail: 'restaurant' },
       { intent: 'reservation.status', detail: 'none' },
-    ])('routes $intent/$detail to OperationsAiService only', async (decision) => {
+      { intent: 'request.list', detail: 'none' },
+      { intent: 'request.status', detail: 'none' },
+    ])('routes $intent/$detail to the dispatcher only', async (decision) => {
       classifier.classify.mockResolvedValue(decision);
-      operations.ask.mockResolvedValue(
-        operationsResult('Sua reserva na Trattoria Aurora é para 4 pessoas.'),
-      );
+      dispatcher.dispatch.mockResolvedValue({
+        tool: 'reservations.list',
+        reply: 'Sua reserva na Trattoria Aurora é para 4 pessoas.',
+      });
 
-      const result = await orchestrator.resolve('E para quantas pessoas?', HISTORY);
+      const result = await orchestrator.resolve('E para quantas pessoas?', GUEST, HISTORY);
 
-      expect(operations.ask).toHaveBeenCalledExactlyOnceWith(
+      expect(dispatcher.dispatch).toHaveBeenCalledExactlyOnceWith(
         'E para quantas pessoas?',
         decision,
+        GUEST,
       );
-      expect(requests.ask).not.toHaveBeenCalled();
       expect(retrieval.search).not.toHaveBeenCalled();
       expect(result).toEqual({
         mode: 'operations',
@@ -98,67 +92,33 @@ describe('ChatOrchestratorService', () => {
       });
     });
 
-    it('exposes only the reply, not internal tool metadata', async () => {
-      classifier.classify.mockResolvedValue({
-        intent: 'reservation.list',
-        detail: 'none',
-      });
-      operations.ask.mockResolvedValue(operationsResult('Encontrei 1 reserva.'));
-
-      const result = await orchestrator.resolve('Tenho alguma reserva?');
-
-      expect(Object.keys(result).sort()).toEqual(['documents', 'mode', 'reply']);
-    });
-
-    it('propagates OperationsAiService failures instead of falling back to RAG', async () => {
-      classifier.classify.mockResolvedValue({
-        intent: 'reservation.list',
-        detail: 'none',
-      });
-      operations.ask.mockRejectedValue(
-        new BadGatewayException('Não foi possível conectar ao Ollama.'),
-      );
-
-      await expect(
-        orchestrator.resolve('Tenho alguma reserva?'),
-      ).rejects.toBeInstanceOf(BadGatewayException);
-      expect(retrieval.search).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('request intents', () => {
-    it.each<IntentDecision>([
-      { intent: 'request.list', detail: 'none' },
-      { intent: 'request.status', detail: 'none' },
-    ])('routes $intent to RequestsOperationsService only', async (decision) => {
-      classifier.classify.mockResolvedValue(decision);
-      requests.ask.mockResolvedValue('Sua solicitação de manutenção está pendente.');
-
-      const result = await orchestrator.resolve('Como está meu chamado?');
-
-      expect(requests.ask).toHaveBeenCalledExactlyOnceWith(
-        'Como está meu chamado?',
-        decision.intent,
-      );
-      expect(operations.ask).not.toHaveBeenCalled();
-      expect(retrieval.search).not.toHaveBeenCalled();
-      expect(result).toEqual({
-        mode: 'operations',
-        reply: 'Sua solicitação de manutenção está pendente.',
-        documents: [],
-      });
-    });
-
-    it('propagates RequestsOperationsService failures instead of falling back to RAG', async () => {
+    it('exposes only the reply, not the tool used', async () => {
       classifier.classify.mockResolvedValue({
         intent: 'request.list',
         detail: 'none',
       });
-      requests.ask.mockRejectedValue(new Error('MySQL indisponível'));
+      dispatcher.dispatch.mockResolvedValue({
+        tool: 'requests.list',
+        reply: 'Você tem 1 solicitação pendente.',
+      });
+
+      const result = await orchestrator.resolve('Quais são minhas solicitações?', GUEST);
+
+      expect(Object.keys(result).sort()).toEqual(['documents', 'mode', 'reply']);
+    });
+
+    it('propagates dispatcher failures instead of falling back to RAG', async () => {
+      classifier.classify.mockResolvedValue({
+        intent: 'reservation.list',
+        detail: 'none',
+      });
+      dispatcher.dispatch.mockRejectedValue(
+        new BadGatewayException('Não foi possível conectar ao Ollama.'),
+      );
 
       await expect(
-        orchestrator.resolve('Quais são minhas solicitações?'),
-      ).rejects.toThrow('MySQL indisponível');
+        orchestrator.resolve('Tenho alguma reserva?', GUEST),
+      ).rejects.toBeInstanceOf(BadGatewayException);
       expect(retrieval.search).not.toHaveBeenCalled();
     });
   });
@@ -172,10 +132,10 @@ describe('ChatOrchestratorService', () => {
       retrieval.search.mockResolvedValue([HOURS_DOCUMENT]);
 
       const question = 'Qual é o horário de funcionamento da Trattoria Aurora?';
-      const result = await orchestrator.resolve(question, HISTORY);
+      const result = await orchestrator.resolve(question, GUEST, HISTORY);
 
       expect(retrieval.search).toHaveBeenCalledExactlyOnceWith(question);
-      expect(operations.ask).not.toHaveBeenCalled();
+      expect(dispatcher.dispatch).not.toHaveBeenCalled();
       expect(result).toEqual({ mode: 'knowledge', documents: [HOURS_DOCUMENT] });
     });
 
@@ -187,7 +147,7 @@ describe('ChatOrchestratorService', () => {
       retrieval.search.mockResolvedValue([]);
 
       await expect(
-        orchestrator.resolve('Vocês têm heliponto?'),
+        orchestrator.resolve('Vocês têm heliponto?', GUEST),
       ).resolves.toEqual({ mode: 'knowledge', documents: [] });
     });
 
@@ -198,10 +158,10 @@ describe('ChatOrchestratorService', () => {
       });
       retrieval.search.mockRejectedValue(new Error('ChromaDB indisponível'));
 
-      await expect(orchestrator.resolve('O resort tem spa?')).rejects.toThrow(
+      await expect(orchestrator.resolve('O resort tem spa?', GUEST)).rejects.toThrow(
         'ChromaDB indisponível',
       );
-      expect(operations.ask).not.toHaveBeenCalled();
+      expect(dispatcher.dispatch).not.toHaveBeenCalled();
     });
   });
 
@@ -213,7 +173,7 @@ describe('ChatOrchestratorService', () => {
       });
       retrieval.search.mockResolvedValue([]);
 
-      await orchestrator.resolve('Está confirmada?', HISTORY);
+      await orchestrator.resolve('Está confirmada?', GUEST, HISTORY);
 
       expect(classifier.classify).toHaveBeenCalledExactlyOnceWith(
         'Está confirmada?',
@@ -228,7 +188,7 @@ describe('ChatOrchestratorService', () => {
       });
       retrieval.search.mockResolvedValue([]);
 
-      await orchestrator.resolve('Olá');
+      await orchestrator.resolve('Olá', GUEST);
 
       expect(classifier.classify).toHaveBeenCalledWith('Olá', []);
     });
@@ -236,8 +196,8 @@ describe('ChatOrchestratorService', () => {
     it('does not call any downstream service when classification fails', async () => {
       classifier.classify.mockRejectedValue(new Error('unexpected'));
 
-      await expect(orchestrator.resolve('Olá')).rejects.toThrow('unexpected');
-      expect(operations.ask).not.toHaveBeenCalled();
+      await expect(orchestrator.resolve('Olá', GUEST)).rejects.toThrow('unexpected');
+      expect(dispatcher.dispatch).not.toHaveBeenCalled();
       expect(retrieval.search).not.toHaveBeenCalled();
     });
   });

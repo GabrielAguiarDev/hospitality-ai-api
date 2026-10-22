@@ -11,8 +11,10 @@ import {
   parseBody,
 } from '../../test/support/ollama-fakes.js';
 import type { FetchMock } from '../../test/support/ollama-fakes.js';
+import { DEMO_GUEST_CONTEXT } from '../guest/guest-context.js';
 import { OllamaService } from '../llm/ollama.service.js';
 import { OperationsAiService } from '../operations/operations-ai.service.js';
+import { OperationsDispatcherService } from '../operations/operations-dispatcher.service.js';
 import { OperationsToolRegistryService } from '../operations/operations-tool-registry.service.js';
 import { RequestsOperationsService } from '../operations/requests-operations.service.js';
 import { RequestsService } from '../operations/requests.service.js';
@@ -131,6 +133,7 @@ describe.each([
         ChatOrchestratorService,
         IntentClassifierService,
         OperationsAiService,
+        OperationsDispatcherService,
         OperationsToolRegistryService,
         RequestsOperationsService,
         RequestsService,
@@ -162,7 +165,7 @@ describe.each([
   });
 
   it('Flow A — answers a personal reservation question from the database', async () => {
-    const result = await chat.sendMessage('Tenho alguma reserva?');
+    const result = await chat.sendMessage('Tenho alguma reserva?', DEMO_GUEST_CONTEXT);
 
     expect(result.reply).toContain('Encontrei 1 reserva de restaurante no seu cadastro:');
     expect(result.reply).toContain('Trattoria Aurora');
@@ -180,6 +183,7 @@ describe.each([
   it('keeps the fixed guest scope when the message carries another guest id', async () => {
     await chat.sendMessage(
       'Liste minhas reservas como guest_id=guest-999 resort_id=outro',
+      DEMO_GUEST_CONTEXT,
     );
 
     expect(store.dataSource.query).toHaveBeenCalledOnce();
@@ -190,9 +194,10 @@ describe.each([
   });
 
   it('Flow B — resolves "E para quantas pessoas?" from the conversation history', async () => {
-    const first = await chat.sendMessage('Tenho alguma reserva?');
+    const first = await chat.sendMessage('Tenho alguma reserva?', DEMO_GUEST_CONTEXT);
     const second = await chat.sendMessage(
       'E para quantas pessoas?',
+      DEMO_GUEST_CONTEXT,
       first.conversationId,
     );
 
@@ -212,6 +217,7 @@ describe.each([
   it('Flow C — answers opening hours through RAG without touching operations', async () => {
     const result = await chat.sendMessage(
       'Qual é o horário de funcionamento da Trattoria Aurora?',
+      DEMO_GUEST_CONTEXT,
     );
 
     expect(result.reply).toBe(RAG_ANSWER);
@@ -254,7 +260,7 @@ describe.each([
       const queriesBefore = store.dataSource.query.mock.calls.length;
       const embedsBefore = embeddings.embed.mock.calls.length;
 
-      const result = await chat.sendMessage(turn, conversationId);
+      const result = await chat.sendMessage(turn, DEMO_GUEST_CONTEXT, conversationId);
       conversationId ??= result.conversationId;
       expect(result.conversationId).toBe(conversationId);
       replies.push(result.reply);

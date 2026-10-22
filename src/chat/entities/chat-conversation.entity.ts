@@ -1,9 +1,9 @@
-
 import {
   Entity,
   PrimaryColumn,
   CreateDateColumn,
   UpdateDateColumn,
+  Column,
 } from 'typeorm';
 
 @Entity('chat_conversations')
@@ -24,4 +24,18 @@ export class ChatConversation {
     precision: 6,
   })
   updatedAt!: Date;
+
+  @Column({
+    name: 'resort_id',
+    type: 'varchar',
+    length: 50,
+  })
+  resortId!: string;
+
+  @Column({
+    name: 'guest_id',
+    type: 'varchar',
+    length: 50,
+  })
+  guestId!: string;
 }

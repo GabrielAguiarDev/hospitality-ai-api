@@ -13,6 +13,7 @@ import { IntentClassifierService } from './intent-classifier.service.js';
 
 import { ChatConversation } from './entities/chat-conversation.entity.js';
 import { ChatMessage } from './entities/chat-message.entity.js';
+import { GuestContextModule } from '../guest/guest-context.module.js';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { ChatMessage } from './entities/chat-message.entity.js';
     LlmModule,
     RagModule,
     OperationsModule,
+    GuestContextModule,
   ],
   controllers: [ChatController],
   providers: [

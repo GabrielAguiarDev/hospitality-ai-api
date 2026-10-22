@@ -1,19 +1,14 @@
-
-import {
-  Injectable,
-  InternalServerErrorException,
-} from '@nestjs/common';
+import { Injectable, InternalServerErrorException } from '@nestjs/common';
 
 import { OperationsToolRegistryService } from './operations-tool-registry.service.js';
 import type { GuestRequest } from './requests.service.js';
+import { GuestContext } from '../guest/guest-context.js';
 
 type RequestIntent = 'request.list' | 'request.status';
 
 @Injectable()
 export class RequestsOperationsService {
-  constructor(
-    private readonly registry: OperationsToolRegistryService,
-  ) {}
+  constructor(private readonly registry: OperationsToolRegistryService) {}
 
   private normalize(text: string): string {
     return text
@@ -42,10 +37,7 @@ export class RequestsOperationsService {
       canceled: 'cancelada',
     };
 
-    return (
-      statuses[status.toLowerCase()] ??
-      `com status "${status}"`
-    );
+    return statuses[status.toLowerCase()] ?? `com status "${status}"`;
   }
 
   private selectRequest(
@@ -93,11 +85,7 @@ export class RequestsOperationsService {
       ...new Set(
         this.normalize(question)
           .split(/\s+/)
-          .filter(
-            (word) =>
-              word.length >= 4 &&
-              !ignoredWords.has(word),
-          ),
+          .filter((word) => word.length >= 4 && !ignoredWords.has(word)),
       ),
     ];
 
@@ -107,45 +95,34 @@ export class RequestsOperationsService {
 
     const scored = requests.map((request) => {
       const searchable = this.normalize(
-        [
-          request.description,
-          this.categoryLabel(request.category),
-        ].join(' '),
+        [request.description, this.categoryLabel(request.category)].join(' '),
       );
 
       return {
         request,
-        score: terms.filter((term) =>
-          searchable.split(/\s+/).includes(term),
-        ).length,
+        score: terms.filter((term) => searchable.split(/\s+/).includes(term))
+          .length,
       };
     });
 
-    const highestScore = Math.max(
-      ...scored.map((item) => item.score),
-    );
+    const highestScore = Math.max(...scored.map((item) => item.score));
 
     if (highestScore === 0) {
       return null;
     }
 
-    const matches = scored.filter(
-      (item) => item.score === highestScore,
-    );
+    const matches = scored.filter((item) => item.score === highestScore);
 
-    return matches.length === 1
-      ? matches[0].request
-      : null;
+    return matches.length === 1 ? matches[0].request : null;
   }
 
   async ask(
     question: string,
     intent: RequestIntent,
+    guest: GuestContext,
   ): Promise<string> {
     // O Registry decide qual operação pode ser executada.
-    const result = await this.registry.execute(
-      'requests.list',
-    );
+    const result = await this.registry.execute('requests.list', guest);
 
     if (result.tool !== 'requests.list') {
       throw new InternalServerErrorException(
@@ -160,31 +137,25 @@ export class RequestsOperationsService {
     }
 
     if (intent === 'request.list') {
-      const items = requests.map(
-        (request, index) =>
-          [
-            `${index + 1}. ${this.categoryLabel(request.category)}`,
-            `Descrição: ${request.description}`,
-            `Status: ${this.statusLabel(request.status)}`,
-            `Abertura: ${request.createdAt}`,
-          ].join('\n'),
+      const items = requests.map((request, index) =>
+        [
+          `${index + 1}. ${this.categoryLabel(request.category)}`,
+          `Descrição: ${request.description}`,
+          `Status: ${this.statusLabel(request.status)}`,
+          `Abertura: ${request.createdAt}`,
+        ].join('\n'),
       );
 
       return [
         `Encontrei ${requests.length} ${
-          requests.length === 1
-            ? 'solicitação'
-            : 'solicitações'
+          requests.length === 1 ? 'solicitação' : 'solicitações'
         } no seu cadastro:`,
         '',
         items.join('\n\n'),
       ].join('\n');
     }
 
-    const selected = this.selectRequest(
-      question,
-      requests,
-    );
+    const selected = this.selectRequest(question, requests);
 
     if (!selected) {
       return [
@@ -194,13 +165,9 @@ export class RequestsOperationsService {
       ].join(' ');
     }
 
-    const category = this.categoryLabel(
-      selected.category,
-    );
+    const category = this.categoryLabel(selected.category);
 
-    const status = this.statusLabel(
-      selected.status,
-    );
+    const status = this.statusLabel(selected.status);
 
     return [
       `Sua solicitação de ${category}`,

@@ -5,6 +5,8 @@ import { vi } from 'vitest';
 
 import { ChatConversation } from '../../src/chat/entities/chat-conversation.entity.js';
 import { ChatMessage } from '../../src/chat/entities/chat-message.entity.js';
+import { DEMO_GUEST_CONTEXT } from '../../src/guest/guest-context.js';
+import type { GuestContext } from '../../src/guest/guest-context.js';
 
 type StoredMessage = Pick<
   ChatMessage,
@@ -19,20 +21,32 @@ interface FindMessagesOptions {
 
 type MessageInput = Pick<ChatMessage, 'conversationId' | 'role' | 'content'>;
 
+type StoredConversation = Pick<ChatConversation, 'id' | 'resortId' | 'guestId'> & {
+  updatedAt?: Date;
+};
+
 /**
  * In-memory replacement for the TypeORM pieces used by ChatService:
  * the two repositories and DataSource.transaction(). Writes made inside a
  * transaction are only committed if the callback resolves.
  */
 export class InMemoryChatStore {
-  readonly conversations = new Map<string, { id: string; updatedAt?: Date }>();
+  readonly conversations = new Map<string, StoredConversation>();
   readonly messages: StoredMessage[] = [];
   private nextMessageId = 1;
 
   readonly conversationsRepository = {
-    findOneBy: vi.fn(async ({ id }: { id: string }) =>
-      this.conversations.get(id) ?? null,
-    ),
+    // Every criterion must match, so a conversation owned by another guest
+    // is not found, as with the real repository.
+    findOneBy: vi.fn(async (where: Partial<StoredConversation>) => {
+      const conversation = where.id ? this.conversations.get(where.id) : undefined;
+      if (!conversation) return null;
+
+      const matches = Object.entries(where).every(
+        ([key, value]) => conversation[key as keyof StoredConversation] === value,
+      );
+      return matches ? conversation : null;
+    }),
   };
 
   readonly messagesRepository = {
@@ -60,8 +74,12 @@ export class InMemoryChatStore {
     ),
   };
 
-  seedConversation(id: string, messages: Omit<MessageInput, 'conversationId'>[] = []) {
-    this.conversations.set(id, { id });
+  seedConversation(
+    id: string,
+    messages: Omit<MessageInput, 'conversationId'>[] = [],
+    owner: GuestContext = DEMO_GUEST_CONTEXT,
+  ) {
+    this.conversations.set(id, { id, resortId: owner.resortId, guestId: owner.guestId });
     for (const message of messages) {
       this.messages.push({ id: this.nextMessageId++, conversationId: id, ...message });
     }
@@ -86,9 +104,10 @@ export class InMemoryChatStore {
 
     return {
       insert: vi.fn(
-        async (entity: unknown, values: { id: string } | MessageInput[]) => {
+        async (entity: unknown, values: StoredConversation | MessageInput[]) => {
           if (entity === ChatConversation && !Array.isArray(values)) {
-            staged.push(() => this.conversations.set(values.id, { id: values.id }));
+            const { id, resortId, guestId } = values;
+            staged.push(() => this.conversations.set(id, { id, resortId, guestId }));
             return;
           }
 

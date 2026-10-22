@@ -16,6 +16,7 @@ import {
 } from '../../test/support/ollama-fakes.js';
 import type { FetchMock } from '../../test/support/ollama-fakes.js';
 import type { IntentDecision } from '../chat/chat-intent.types.js';
+import type { GuestContext } from '../guest/guest-context.js';
 
 import { OperationsAiService } from './operations-ai.service.js';
 import { OperationsToolRegistryService } from './operations-tool-registry.service.js';
@@ -36,6 +37,8 @@ const SABOR_DO_MAR: RestaurantReservation = {
   partySize: 1,
   status: 'pending',
 };
+
+const GUEST: GuestContext = { resortId: 'resort-1', guestId: 'guest-001' };
 
 const LIST: IntentDecision = { intent: 'reservation.list', detail: 'none' };
 
@@ -90,9 +93,9 @@ describe('OperationsAiService', () => {
       );
       givenReservations([TRATTORIA]);
 
-      const result = await createService().ask('Tenho alguma reserva?');
+      const result = await createService().ask('Tenho alguma reserva?', GUEST);
 
-      expect(registry.execute).toHaveBeenCalledExactlyOnceWith('reservations.list');
+      expect(registry.execute).toHaveBeenCalledExactlyOnceWith('reservations.list', GUEST);
       expect(result).toMatchObject({
         toolUsed: true,
         toolRequestedByModel: false,
@@ -106,7 +109,7 @@ describe('OperationsAiService', () => {
     it('reports when the model correctly requested the tool', async () => {
       givenReservations([TRATTORIA]);
 
-      const result = await createService().ask('Tenho alguma reserva?');
+      const result = await createService().ask('Tenho alguma reserva?', GUEST);
 
       expect(result.toolRequestedByModel).toBe(true);
     });
@@ -114,7 +117,7 @@ describe('OperationsAiService', () => {
     it('skips Ollama when the orchestrator already supplied the decision', async () => {
       givenReservations([TRATTORIA]);
 
-      const result = await createService().ask('Tenho alguma reserva?', LIST);
+      const result = await createService().ask('Tenho alguma reserva?', GUEST, LIST);
 
       expect(fetchMock).not.toHaveBeenCalled();
       expect(result).toMatchObject({
@@ -131,11 +134,11 @@ describe('OperationsAiService', () => {
       fetchMock.mockResolvedValue(makeResponse());
       givenReservations([TRATTORIA]);
 
-      const result = await createService().ask('Tenho alguma reserva?');
+      const result = await createService().ask('Tenho alguma reserva?', GUEST);
 
-      // The registry is called with the tool name only; model-supplied
-      // arguments never reach it.
-      expect(registry.execute).toHaveBeenCalledExactlyOnceWith('reservations.list');
+      // The registry is called with the tool name and the authenticated
+      // guest only; model-supplied arguments never reach it.
+      expect(registry.execute).toHaveBeenCalledExactlyOnceWith('reservations.list', GUEST);
       expect(result.toolRequestedByModel).toBe(_case === 'SQL passed as tool arguments');
       expect(result.reply).toContain('Trattoria Aurora');
       expect(result.reply).not.toMatch(/DROP|SELECT|guest-999/);
@@ -144,7 +147,7 @@ describe('OperationsAiService', () => {
     it('exposes a tool without parameters, so the model cannot supply SQL or identifiers', async () => {
       givenReservations([]);
 
-      await createService().ask('Tenho alguma reserva?');
+      await createService().ask('Tenho alguma reserva?', GUEST);
 
       const body = requestBody(fetchMock);
       expect(body.tools).toEqual([
@@ -163,7 +166,7 @@ describe('OperationsAiService', () => {
       registry.execute.mockResolvedValue({ tool: 'requests.list', data: [] });
 
       await expect(
-        createService().ask('Tenho alguma reserva?', LIST),
+        createService().ask('Tenho alguma reserva?', GUEST, LIST),
       ).rejects.toBeInstanceOf(InternalServerErrorException);
     });
 
@@ -171,7 +174,7 @@ describe('OperationsAiService', () => {
       registry.execute.mockRejectedValue(new Error('ER_ACCESS_DENIED_ERROR'));
 
       await expect(
-        createService().ask('Tenho alguma reserva?', LIST),
+        createService().ask('Tenho alguma reserva?', GUEST, LIST),
       ).rejects.toThrow('ER_ACCESS_DENIED_ERROR');
     });
   });
@@ -179,7 +182,7 @@ describe('OperationsAiService', () => {
   describe('production guard', () => {
     it('refuses the demo query in production without calling Ollama or the database', async () => {
       await expect(
-        createService('production').ask('Tenho alguma reserva?', LIST),
+        createService('production').ask('Tenho alguma reserva?', GUEST, LIST),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(fetchMock).not.toHaveBeenCalled();
       expect(registry.execute).not.toHaveBeenCalled();
@@ -201,7 +204,7 @@ describe('OperationsAiService', () => {
       givenReservations([TRATTORIA]);
 
       await expect(
-        createService().ask('Tenho alguma reserva?'),
+        createService().ask('Tenho alguma reserva?', GUEST),
       ).rejects.toBeInstanceOf(BadGatewayException);
       expect(registry.execute).not.toHaveBeenCalled();
     });
@@ -212,7 +215,7 @@ describe('OperationsAiService', () => {
       );
 
       const error = await createService()
-        .ask('Tenho alguma reserva?')
+        .ask('Tenho alguma reserva?', GUEST)
         .catch((caught: unknown) => caught);
 
       expect(error).toBeInstanceOf(BadGatewayException);
@@ -227,7 +230,7 @@ describe('OperationsAiService', () => {
     it('answers that there are no reservations only when the query returns none', async () => {
       givenReservations([]);
 
-      const result = await createService().ask('Tenho alguma reserva?', LIST);
+      const result = await createService().ask('Tenho alguma reserva?', GUEST, LIST);
 
       expect(result.reply).toBe(
         'Não encontrei reservas de restaurante no seu cadastro.',
@@ -242,7 +245,7 @@ describe('OperationsAiService', () => {
     ])('never says there are no reservations when records exist ($intent)', async (decision) => {
       givenReservations([TRATTORIA]);
 
-      const { reply } = await createService().ask('Tenho reserva?', decision);
+      const { reply } = await createService().ask('Tenho reserva?', GUEST, decision);
 
       expect(reply).not.toMatch(/não encontrei|nenhuma reserva|não possui/i);
     });
@@ -250,7 +253,7 @@ describe('OperationsAiService', () => {
     it('lists every reservation with date, time, party size and status from the database', async () => {
       givenReservations([TRATTORIA, SABOR_DO_MAR]);
 
-      const { reply } = await createService().ask('Quais são minhas reservas?', LIST);
+      const { reply } = await createService().ask('Quais são minhas reservas?', GUEST, LIST);
 
       expect(reply).toContain('Encontrei 2 reservas de restaurante no seu cadastro:');
       expect(reply).toContain('Trattoria Aurora\nData: 24/10/2026 às 20:00\nPessoas: 4\nStatus: confirmada');
@@ -267,7 +270,7 @@ describe('OperationsAiService', () => {
     ])('answers $intent/$detail with the stored values', async (decision, expected) => {
       givenReservations([TRATTORIA]);
 
-      const { reply } = await createService().ask('pergunta', decision);
+      const { reply } = await createService().ask('pergunta', GUEST, decision);
 
       expect(reply).toBe(expected);
     });
@@ -275,7 +278,7 @@ describe('OperationsAiService', () => {
     it('uses the singular for a party of one', async () => {
       givenReservations([SABOR_DO_MAR]);
 
-      const { reply } = await createService().ask('Quantas pessoas?', {
+      const { reply } = await createService().ask('Quantas pessoas?', GUEST, {
         intent: 'reservation.details',
         detail: 'party_size',
       });
@@ -293,7 +296,7 @@ describe('OperationsAiService', () => {
     ])('translates status "%s" to "%s"', async (status, label) => {
       givenReservations([{ ...TRATTORIA, status }]);
 
-      const { reply } = await createService().ask('Está confirmada?', {
+      const { reply } = await createService().ask('Está confirmada?', GUEST, {
         intent: 'reservation.status',
         detail: 'none',
       });
@@ -308,7 +311,7 @@ describe('OperationsAiService', () => {
       ]);
 
       const { reply } = await createService().ask(
-        'Para quantas pessoas é a reserva no cafe jardim?',
+        'Para quantas pessoas é a reserva no cafe jardim?', GUEST,
         { intent: 'reservation.details', detail: 'party_size' },
       );
 
@@ -318,7 +321,7 @@ describe('OperationsAiService', () => {
     it('asks which reservation when several match and none is mentioned', async () => {
       givenReservations([TRATTORIA, SABOR_DO_MAR]);
 
-      const { reply } = await createService().ask('E para quantas pessoas?', {
+      const { reply } = await createService().ask('E para quantas pessoas?', GUEST, {
         intent: 'reservation.details',
         detail: 'party_size',
       });

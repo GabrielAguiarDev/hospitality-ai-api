@@ -2,6 +2,8 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
+import type { GuestContext } from '../guest/guest-context.js';
+
 export interface RestaurantReservation {
   id: string;
   restaurant: string;
@@ -16,11 +18,10 @@ export class ReservationsService {
     private readonly dataSource: DataSource,
   ) {}
 
-  async listForDemoGuest(): Promise<RestaurantReservation[]> {
-    const resortId = 'demo';
-    const guestId = 'guest-demo-001';
-
-    const results = await this.dataSource.query(
+  async listForGuest(
+    guest: GuestContext,
+  ): Promise<RestaurantReservation[]> {
+    const results: unknown = await this.dataSource.query(
       `
         SELECT
           id,
@@ -37,7 +38,7 @@ export class ReservationsService {
         ORDER BY reserved_at ASC
         LIMIT 20
       `,
-      [resortId, guestId],
+      [guest.resortId, guest.guestId],
     );
 
     return results as RestaurantReservation[];
