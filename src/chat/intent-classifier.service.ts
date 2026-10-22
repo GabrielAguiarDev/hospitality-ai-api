@@ -92,7 +92,7 @@ export class IntentClassifierService {
         detail: 'date',
       },
       {
-        pattern: /que horas|qual horario|\bhora\b/,
+        pattern: /que horas|qual (?:e )?(?:o )?horario|\bhora\b/,
         detail: 'time',
       },
       {
@@ -173,6 +173,8 @@ export class IntentClassifierService {
       /\bstatus\b/,
       /que horas/,
       /qual horario/,
+      // Somente a pergunta isolada: "qual o horário do spa?" é conhecimento.
+      /^(?:e )?qual (?:e )?o horario(?: dela| da reserva| dessa reserva)?\??$/,
       /que dia/,
       /qual dia/,
       /\bquando\b/,
