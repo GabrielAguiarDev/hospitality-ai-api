@@ -33,7 +33,27 @@ services:
     volumes:
       - yago_chroma_data:/data
 
+  resort_mysql:
+    image: mysql:8.4
+    container_name: yago-resort-mysql
+    restart: unless-stopped
+
+    environment:
+      MYSQL_ROOT_PASSWORD: ${RESORT_MYSQL_ROOT_PASSWORD:?Configure a senha do MySQL do resort}
+      MYSQL_DATABASE: resort_snapshot
+
+    ports:
+      - "127.0.0.1:3308:3306"
+
+    command:
+      - --innodb-buffer-pool-size=256M
+      - --performance-schema=OFF
+
+    volumes:
+      - yago_resort_mysql_data:/var/lib/mysql
+
 
 volumes:
   yago_mysql_data:
   yago_chroma_data:
+  yago_resort_mysql_data:

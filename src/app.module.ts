@@ -8,6 +8,7 @@ import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { ChatModule } from './chat/chat.module.js';
 import { OperationsModule } from './operations/operations.module.js';
+import { ResortDatabaseModule } from './database/resort-database.module.js';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { OperationsModule } from './operations/operations.module.js';
     ScheduleModule.forRoot(),
     ChatModule,
     OperationsModule,
+    ResortDatabaseModule,
   ],
   controllers: [AppController],
   providers: [AppService],
