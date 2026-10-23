@@ -8,6 +8,7 @@ import { OperationsDispatcherService } from './operations-dispatcher.service.js'
 import { RequestsOperationsService } from './requests-operations.service.js';
 import { ReservationsService } from './reservations.service.js';
 import { RequestsService } from './requests.service.js';
+import { ResortReservationsService } from './resort-reservations.service.js';
 
 @Module({
   controllers: [
@@ -20,6 +21,7 @@ import { RequestsService } from './requests.service.js';
     RequestsOperationsService,
     ReservationsService,
     RequestsService,
+    ResortReservationsService
   ],
   exports: [
     OperationsAiService,

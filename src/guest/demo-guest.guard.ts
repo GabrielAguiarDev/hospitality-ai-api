@@ -1,4 +1,3 @@
-
 import {
   CanActivate,
   ExecutionContext,
@@ -8,11 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { IncomingMessage } from 'node:http';
 
-import {
-  DEMO_GUEST_CONTEXT,
-  type GuestContext,
-} from './guest-context.js';
-
+import type { GuestContext } from './guest-context.js';
 import { requireConfiguredResortId } from './resort-config.js';
 
 type GuestRequest = IncomingMessage & {
@@ -21,65 +16,66 @@ type GuestRequest = IncomingMessage & {
 
 @Injectable()
 export class DemoGuestGuard implements CanActivate {
-  constructor(
-    private readonly configService: ConfigService,
-  ) {}
+  constructor(private readonly configService: ConfigService) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const env = this.configService.get<string>(
-      'NODE_ENV',
+    const env = this.configService.get<string>('NODE_ENV');
+
+    const enabled = this.configService.get<string>('ENABLE_DEMO_GUEST_CONTEXT');
+
+    const dynamicGuest = this.configService.get<string>(
+      'DEMO_DYNAMIC_GUEST_ENABLED',
     );
 
-    const enabled = this.configService.get<string>(
-      'ENABLE_DEMO_GUEST_CONTEXT',
-    );
-
-    // Nunca permitir o contexto fictício em produção.
-    if (env !== 'development' || enabled !== 'true') {
-      throw new UnauthorizedException(
-        'Autenticação do hóspede não configurada.',
-      );
-    }
-
-    const request = context
-      .switchToHttp()
-      .getRequest<GuestRequest>();
-
-    const remoteAddress =
-      request.socket.remoteAddress;
-
-    const isLocal = [
-      '127.0.0.1',
-      '::1',
-      '::ffff:127.0.0.1',
-    ].includes(remoteAddress ?? '');
-
-    if (!isLocal) {
-      throw new UnauthorizedException(
-        'Contexto de demonstração restrito ao localhost.',
-      );
-    }
-
-    // Impede que o cliente escolha outra identidade.
     if (
-      request.headers['x-guest-id'] !== undefined ||
-      request.headers['x-resort-id'] !== undefined
+      env !== 'development' ||
+      enabled !== 'true' ||
+      dynamicGuest !== 'true'
     ) {
+      throw new UnauthorizedException('Modo de demonstração indisponível.');
+    }
+
+    const request = context.switchToHttp().getRequest<GuestRequest>();
+
+    const remoteAddress = request.socket.remoteAddress ?? '';
+
+    const clientIp = remoteAddress.startsWith('::ffff:')
+      ? remoteAddress.slice(7)
+      : remoteAddress;
+
+    const allowedIps = new Set(
+      this.configService
+        .get<string>('DEMO_ALLOWED_CLIENT_IPS', '127.0.0.1,::1')
+        .split(',')
+        .map((ip) => ip.trim())
+        .filter(Boolean),
+    );
+
+    if (!allowedIps.has(clientIp)) {
       throw new UnauthorizedException(
-        'Identificadores de hóspedes não são aceitos.',
+        'Dispositivo não autorizado para demonstração.',
       );
     }
 
-    // Identifica o resort configurado no servidor.
-    const resortId = requireConfiguredResortId(
-      this.configService.get<string>('RESORT_ID'),
-    );
+    // Não permite que o cliente escolha um resort.
+    if (
+      request.headers['x-resort-id'] !== undefined ||
+      request.headers['x-guest-id'] !== undefined
+    ) {
+      throw new UnauthorizedException('Identificadores não autorizados.');
+    }
 
-    // O hóspede continua fictício até integrarmos
-    // a validação do token do backend original.
+    const header = request.headers['x-demo-guest-id'];
+
+    if (typeof header !== 'string' || !header.trim() || header.length > 255) {
+      throw new UnauthorizedException('ID do hóspede não informado.');
+    }
+
     request.guestContext = {
-      resortId,
-      guestId: DEMO_GUEST_CONTEXT.guestId,
+      resortId: requireConfiguredResortId(
+        this.configService.get<string>('RESORT_ID'),
+      ),
+      guestId: header.trim(),
     };
 
     return true;
