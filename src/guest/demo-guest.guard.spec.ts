@@ -92,7 +92,15 @@ describe('DemoGuestGuard', () => {
   it('denies missing or invalid guest ids', () => {
     expectDenied(run({}, { 'x-demo-guest-id': undefined }).result);
     expectDenied(run({}, { 'x-demo-guest-id': 'guest-demo-001' }).result);
+    expectDenied(run({}, { 'x-demo-guest-id': '1 OR 1=1' }).result);
+    expectDenied(run({}, { 'x-demo-guest-id': '-1' }).result);
     expectDenied(run({}, { 'x-demo-guest-id': '' }).result);
+  });
+
+  it('accepts the numeric ids that exist in the snapshot (e.g. "1")', () => {
+    const { result, request } = run({}, { 'x-demo-guest-id': ' 1 ' });
+    expect(result()).toBe(true);
+    expect(request.guestContext).toEqual({ resortId: 'demo', guestId: '1' });
   });
 
   it('validates DEMO_SHARED_SECRET when configured', () => {

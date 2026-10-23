@@ -1,4 +1,3 @@
-
 import {
   CanActivate,
   ExecutionContext,
@@ -60,6 +59,7 @@ export class DemoGuestGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<GuestRequest>();
 
     const remoteAddress = request.socket.remoteAddress ?? '';
+    console.log('[DemoGuestGuard] IP recebido:', remoteAddress);
 
     const clientIp = remoteAddress.startsWith('::ffff:')
       ? remoteAddress.slice(7)
@@ -70,7 +70,9 @@ export class DemoGuestGuard implements CanActivate {
     }
 
     // Proteção contra DNS rebinding: somente hosts locais conhecidos.
-    const host = (request.headers.host ?? '').toLowerCase().replace(/:\d+$/, '');
+    const host = (request.headers.host ?? '')
+      .toLowerCase()
+      .replace(/:\d+$/, '');
 
     if (!this.list('DEMO_ALLOWED_HOSTS', DEFAULT_ALLOWED_HOSTS).has(host)) {
       this.deny('host não autorizado');
@@ -90,7 +92,9 @@ export class DemoGuestGuard implements CanActivate {
     if (secret) {
       const provided = request.headers['x-demo-secret'];
       const expected = Buffer.from(secret);
-      const received = Buffer.from(typeof provided === 'string' ? provided : '');
+      const received = Buffer.from(
+        typeof provided === 'string' ? provided : '',
+      );
 
       if (
         expected.length !== received.length ||
@@ -102,7 +106,8 @@ export class DemoGuestGuard implements CanActivate {
 
     const header = request.headers['x-demo-guest-id'];
 
-    const guestId = typeof header === 'string' ? header.trim().toLowerCase() : '';
+    const guestId =
+      typeof header === 'string' ? header.trim().toLowerCase() : '';
 
     if (!GUEST_ID_PATTERN.test(guestId)) {
       this.deny('ID do hóspede ausente ou inválido');

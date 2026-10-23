@@ -7,8 +7,12 @@ import { requireConfiguredResortId } from '../guest/resort-config.js';
 import { ResortClock } from './resort-clock.service.js';
 import { ResortSnapshotGateway } from './resort-snapshot.gateway.js';
 
+// Formatos de id_hospede existentes no snapshot: UUID (padrão) ou
+// numérico (registros antigos/de teste do sistema, ex.: "1").
+// O formato só filtra entradas absurdas; o controle real é a consulta
+// ao titular com hospedagem ativa.
 export const GUEST_ID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9]{1,20})$/;
 
 /**
  * Hospedagem do titular. O ID de hospedagem do PMS é reutilizado
