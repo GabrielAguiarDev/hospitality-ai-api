@@ -20,7 +20,7 @@ import { ChatConversation } from './entities/chat-conversation.entity.js';
 import { ChatConversationState } from './entities/chat-conversation-state.entity.js';
 import { ChatMessage } from './entities/chat-message.entity.js';
 import { ChatOrchestratorService } from './chat-orchestrator.service.js';
-import type { HistoryEntry } from './chat-intent.types.js';
+import type { ConversationIntent, HistoryEntry } from './chat-intent.types.js';
 
 // Resposta fixa quando o RAG não encontra evidências:
 // o modelo não é chamado para não inventar informações.
@@ -32,10 +32,32 @@ export const NO_EVIDENCE_REPLY =
   'Posso ajudar com restaurantes, experiências, programação de lazer, ' +
   'suas reservas ou solicitações. Para outros assuntos, procure a recepção.';
 
+// Usadas quando a resposta social do modelo cita horários ou preços,
+// que não podem ser afirmados sem uma fonte do resort.
+export const CONVERSATION_FALLBACK_REPLIES: Record<ConversationIntent, string> = {
+  'conversation.greeting':
+    'Olá! Sou o Yago, concierge digital do resort. Posso ajudar com ' +
+    'restaurantes, experiências, programação de lazer, suas reservas ou solicitações.',
+  'conversation.general':
+    'Por nada! Estou à disposição para ajudar com restaurantes, experiências, ' +
+    'programação de lazer, suas reservas ou solicitações.',
+};
+
+// "9h", "10:30", "10 horas", "8 da manhã", "R$ 50", "50 reais".
+// O "h" não pode iniciar uma palavra: "2 hóspedes" é permitido.
+const OPERATIONAL_DETAIL =
+  /R\$|\b\d+(?:[.,]\d+)?\s*reais\b|\b\d{1,2}\s?h(?:\d{2})?(?![a-zà-ú])|\b\d{1,2}:\d{2}\b|\b\d{1,2}\s*horas?\b|\b\d{1,2}\s*(?:da|de)\s+(?:manhã|manha|tarde|noite)/i;
+
+const CONVERSATION_KIND: Record<ConversationIntent, string> = {
+  'conversation.greeting': 'saudação',
+  'conversation.general':
+    'interação social (agradecimento, despedida ou pergunta sobre você)',
+};
+
 @Injectable()
 export class ChatService {
   private readonly systemPrompt = `
-    Você é Yago, o mordomo digital de um resort.
+    Você é Yago, o concierge digital do resort.
 
     Regras:
     - Responda sempre em português brasileiro.
@@ -125,6 +147,14 @@ export class ChatService {
     if (orchestration.mode === 'operations') {
       reply = orchestration.reply;
       actions = sanitizeActions(orchestration.actions);
+    } else if (orchestration.mode === 'conversation') {
+      reply = await this.converse(
+        message,
+        history,
+        orchestration.intent,
+        today,
+        Boolean(state.experience?.pendingPreviewId),
+      );
     } else if (orchestration.documents.length === 0) {
       reply = NO_EVIDENCE_REPLY;
     } else {
@@ -213,6 +243,59 @@ export class ChatService {
       })),
       actions,
     };
+  }
+
+  private async converse(
+    message: string,
+    history: HistoryEntry[],
+    intent: ConversationIntent,
+    today: string,
+    pendingBooking: boolean,
+  ): Promise<string> {
+    const reply = await this.ollamaService.generate([
+      {
+        role: 'system',
+        content: this.buildConversationPrompt(intent, today, pendingBooking),
+      },
+      ...history,
+      {
+        role: 'user',
+        content: message,
+      },
+    ]);
+
+    // Nenhuma fonte foi consultada: horários e preços seriam inventados.
+    return OPERATIONAL_DETAIL.test(reply) ? CONVERSATION_FALLBACK_REPLIES[intent] : reply;
+  }
+
+  private buildConversationPrompt(
+    intent: ConversationIntent,
+    today: string,
+    pendingBooking: boolean,
+  ): string {
+    const pending = pendingBooking
+      ? `
+    - Há uma pré-reserva aguardando confirmação: ela NÃO foi
+      confirmada. Para confirmar, o hóspede deve responder "confirmo".`
+      : '';
+
+    return `
+    ${this.systemPrompt}
+
+    DATA ATUAL NO RESORT: ${ResortClock.describeDate(today)}.
+
+    TIPO DE MENSAGEM: ${CONVERSATION_KIND[intent]}.
+
+    REGRAS DE CONVERSA:
+    - Responda de forma calorosa, natural e breve (até 3 frases).
+    - Ao se apresentar, diga que é o Yago, concierge digital do resort.
+    - Não repita a apresentação se ela já aparece no histórico.
+    - Nenhuma fonte do resort foi consultada: não cite nomes,
+      horários, preços, disponibilidade ou regras de serviços.
+    - Não confirme reservas nem prometa ações.
+    - Quando fizer sentido, ofereça ajuda com restaurantes,
+      experiências, programação de lazer, reservas ou solicitações.${pending}
+  `;
   }
 
   private buildSystemPrompt(

@@ -123,6 +123,42 @@ describe('ChatOrchestratorService', () => {
     });
   });
 
+  describe('conversation intents', () => {
+    it.each<IntentDecision>([
+      { intent: 'conversation.greeting', detail: 'none' },
+      { intent: 'conversation.general', detail: 'none' },
+    ])('answers $intent without RAG or tools', async (decision) => {
+      classifier.classify.mockResolvedValue(decision);
+
+      const result = await orchestrator.resolve('Olá', GUEST, HISTORY);
+
+      expect(retrieval.search).not.toHaveBeenCalled();
+      expect(dispatcher.dispatch).not.toHaveBeenCalled();
+      expect(result).toEqual({ mode: 'conversation', intent: decision.intent, documents: [] });
+    });
+
+    it('keeps the conversation state untouched, including a pending pre-booking', async () => {
+      classifier.classify.mockResolvedValue({ intent: 'conversation.general', detail: 'none' });
+      const state = {
+        topic: 'experience' as const,
+        experience: { selectedId: 'exp-1', pendingPreviewId: 'preview-1' },
+      };
+
+      const result = await orchestrator.resolve('Obrigado!', GUEST, [], {
+        conversationId: 'conv-1',
+        state,
+        today: '2026-10-23',
+      });
+
+      expect(result).toEqual({
+        mode: 'conversation',
+        intent: 'conversation.general',
+        documents: [],
+        state,
+      });
+    });
+  });
+
   describe('knowledge intent', () => {
     it('routes knowledge.search to RetrievalService only and returns the documents', async () => {
       classifier.classify.mockResolvedValue({

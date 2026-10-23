@@ -16,9 +16,14 @@ export type ChatIntent =
   | 'experience.booking.confirm'
   | 'experience.booking.cancel'
   | 'experience.reservations'
-  | 'knowledge.search';
+  | 'knowledge.search'
+  | 'conversation.greeting'
+  | 'conversation.general';
 
 export type ExperienceIntent = Extract<ChatIntent, `experience.${string}`>;
+
+// Interações sociais: não consultam o RAG nem ferramentas.
+export type ConversationIntent = Extract<ChatIntent, `conversation.${string}`>;
 
 export type ReservationDetail =
   | 'party_size'
@@ -41,4 +46,8 @@ export interface HistoryEntry {
 
 export function isExperienceIntent(intent: ChatIntent): intent is ExperienceIntent {
   return intent.startsWith('experience.');
+}
+
+export function isConversationIntent(intent: ChatIntent): intent is ConversationIntent {
+  return intent.startsWith('conversation.');
 }

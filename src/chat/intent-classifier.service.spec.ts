@@ -482,13 +482,138 @@ describe('IntentClassifierService', () => {
 
     // A classificação do modelo não pode liberar operações sozinha,
     // então ele não é chamado quando não há indício operacional.
-    it.each(['Olá', 'O resort tem academia?', 'Qual o horário do spa?'])(
+    it.each(['O resort tem academia?', 'Qual o horário do spa?'])(
       'does not call Ollama for %j without operational evidence',
       async (message) => {
         await expect(service.classify(message)).resolves.toEqual(KNOWLEDGE);
         expect(fetchMock).not.toHaveBeenCalled();
       },
     );
+  });
+
+  describe('conversation (deterministic)', () => {
+    it.each([
+      'Olá',
+      'Oi',
+      'Olá, Yago! Tudo bem?',
+      'Bom dia',
+      'Boa noite, Yago 😊',
+      'Oi, tudo bem? E você?',
+      'Tudo certo?',
+      'Bom dia, Yago, tudo certo?',
+      'Oiii',
+      'Bom diaaa',
+      'Oi, tudo bem com você?',
+      'Boa tarde a todos',
+    ])('classifies %j as a greeting without calling Ollama', async (message) => {
+      await expect(service.classify(message)).resolves.toEqual({
+        intent: 'conversation.greeting',
+        detail: 'none',
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      'Obrigado!',
+      'Muito obrigada pela ajuda, Yago',
+      'Valeu!',
+      'Quem é você?',
+      'Oi, quem é você?',
+      'Qual o seu nome?',
+      'O que você pode fazer?',
+      'Tchau, até mais!',
+      'Obrigado pelas informações',
+      'Qual é seu nome?',
+      'Estou bem, obrigado',
+      'Obrigado mais uma vez',
+    ])('classifies %j as a general conversation without calling Ollama', async (message) => {
+      await expect(service.classify(message)).resolves.toEqual({
+        intent: 'conversation.general',
+        detail: 'none',
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      'Olá, quais restaurantes existem?',
+      'Bom dia, qual o horário do café da manhã?',
+      'Oi, o resort tem academia?',
+      'Obrigado, e o spa abre que horas?',
+      'E o show?',
+      'Oi, e o show?',
+      'É legal?',
+      'Olá, mais uma informação sobre a piscina',
+    ])('keeps the knowledge route for the mixed message %j', async (message) => {
+      await expect(service.classify(message)).resolves.toEqual(KNOWLEDGE);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['Olá, quero reservar uma experiência', 'experience.booking'],
+      ['Quero reservar uma experiência', 'experience.booking'],
+      ['Oi, quais passeios vocês têm?', 'experience.list'],
+      ['Olá, quero reservar uma mesa no restaurante', 'restaurant.booking'],
+      ['Oi, quais são minhas solicitações?', 'request.list'],
+    ])('routes the mixed message %j to %s', async (message, intent) => {
+      const decision = await service.classify(message);
+
+      expect(decision.intent).toBe(intent);
+    });
+
+    it('routes "Olá, tenho alguma reserva?" to reservations', async () => {
+      fetchMock.mockRejectedValue(connectionError());
+
+      const decision = await service.classify('Olá, tenho alguma reserva?');
+
+      expect(decision.intent).toBe('reservation.list');
+    });
+
+    it('does not discard a pending pre-booking when the guest says thanks', async () => {
+      const state: ConversationState = {
+        topic: 'experience',
+        experience: { selectedId: 'exp-1', pendingPreviewId: 'preview-1' },
+      };
+
+      await expect(service.classify('Obrigado!', [], state)).resolves.toEqual({
+        intent: 'conversation.general',
+        detail: 'none',
+      });
+      await expect(service.classify('Sim, confirmo', [], state)).resolves.toMatchObject({
+        intent: 'experience.booking.confirm',
+      });
+    });
+
+    it.each(['Sim, valeu', 'Ok, valeu', 'Perfeito, valeu!'])(
+      'confirms %j deterministically instead of sending it to the free-form model',
+      async (message) => {
+        const state: ConversationState = {
+          topic: 'experience',
+          experience: { selectedId: 'exp-1', pendingPreviewId: 'preview-1' },
+        };
+
+        await expect(service.classify(message, [], state)).resolves.toMatchObject({
+          intent: 'experience.booking.confirm',
+        });
+      },
+    );
+
+    it('never treats an affirmative with a pending pre-booking as conversation', async () => {
+      const state: ConversationState = {
+        topic: 'experience',
+        experience: { selectedId: 'exp-1', pendingPreviewId: 'preview-1' },
+      };
+
+      const decision = await service.classify('Sim, tudo bem, obrigado pela ajuda', [], state);
+
+      expect(decision.intent).not.toMatch(/^conversation\./);
+    });
+
+    it('greets inside a reservation follow-up context without reaching operations', async () => {
+      await expect(service.classify('Obrigado!', RESERVATION_HISTORY)).resolves.toMatchObject({
+        intent: 'conversation.general',
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 
   describe('experiences and restaurants (deterministic)', () => {

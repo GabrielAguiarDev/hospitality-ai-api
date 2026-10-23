@@ -139,6 +139,7 @@ const HOURS_DOCUMENT: RetrievedDocument = {
 };
 
 const RAG_ANSWER = 'A Trattoria Aurora funciona diariamente das 19h às 23h.';
+const CONVERSATION_ANSWER = 'Olá! Sou o Yago, concierge digital do resort. Como posso ajudar?';
 
 const MODEL_ANSWERS: Record<string, IntentDecision> = {
   'Tenho alguma reserva?': { intent: 'reservation.list', detail: 'none' },
@@ -222,7 +223,11 @@ describe.each([
             ],
           });
         case 'generation':
-          return ollamaChat(RAG_ANSWER);
+          return ollamaChat(
+            body.messages[0].content.includes('REGRAS DE CONVERSA')
+              ? CONVERSATION_ANSWER
+              : RAG_ANSWER,
+          );
       }
     });
 
@@ -463,6 +468,88 @@ describe.each([
     expect(
       store.messages.every((message) => message.conversationId === conversationId),
     ).toBe(true);
+  });
+
+  describe('conversation', () => {
+    it.each(['Olá', 'Olá, Yago! Tudo bem?', 'Bom dia', 'Obrigado!', 'Quem é você?'])(
+      'answers %j with the model, without RAG, classifier or tools',
+      async (message) => {
+        const result = await chat.sendMessage(message, GUEST);
+
+        expect(result).toEqual({
+          reply: CONVERSATION_ANSWER,
+          conversationId: expect.any(String),
+          retrievedSources: [],
+          actions: [],
+        });
+        expect(embeddings.embed).not.toHaveBeenCalled();
+        expect(knowledge.searchByVector).not.toHaveBeenCalled();
+        expect(resortQuery).not.toHaveBeenCalled();
+        expect(requests('classifier')).toHaveLength(0);
+        expect(requests('operations')).toHaveLength(0);
+        expect(requests('generation')).toHaveLength(1);
+        expect(store.messages.map(({ role, content }) => ({ role, content }))).toEqual([
+          { role: 'user', content: message },
+          { role: 'assistant', content: CONVERSATION_ANSWER },
+        ]);
+      },
+    );
+
+    it('answers a greeting followed by a question through RAG', async () => {
+      const result = await chat.sendMessage('Olá, quais restaurantes existem?', GUEST);
+
+      expect(result.reply).toBe(RAG_ANSWER);
+      expect(result.retrievedSources).toHaveLength(1);
+      expect(embeddings.embed).toHaveBeenCalledOnce();
+      expect(resortQuery).not.toHaveBeenCalled();
+    });
+
+    it.each(['Quero reservar uma experiência', 'Olá, quero reservar uma experiência'])(
+      'routes %j to the experience tools, not to the conversation',
+      async (message) => {
+        const result = await chat.sendMessage(message, GUEST);
+
+        expect(result.reply).not.toBe(CONVERSATION_ANSWER);
+        expect(embeddings.embed).not.toHaveBeenCalled();
+        expect(requests('generation')).toHaveLength(0);
+        expect(result.reply).toContain('Não identifiquei qual experiência você deseja');
+      },
+    );
+
+    it('keeps the context across greetings, operations and thanks in one conversation', async () => {
+      const turns = ['Olá', 'Tenho alguma reserva?', 'E para quantas pessoas?', 'Obrigado!'];
+      let conversationId: string | undefined;
+      const replies: string[] = [];
+
+      for (const turn of turns) {
+        const result = await chat.sendMessage(turn, GUEST, conversationId);
+        conversationId ??= result.conversationId;
+        expect(result.conversationId).toBe(conversationId);
+        replies.push(result.reply);
+      }
+
+      expect(replies[0]).toBe(CONVERSATION_ANSWER);
+      expect(replies[1]).toContain('Encontrei 1 reserva de restaurante no seu cadastro:');
+      expect(replies[2]).toBe('Sua reserva na Trattoria Aurora é para 4 pessoas.');
+      expect(replies[3]).toBe(CONVERSATION_ANSWER);
+      expect(embeddings.embed).not.toHaveBeenCalled();
+
+      // A resposta social recebe todo o histórico da conversa.
+      const generations = requests('generation') as {
+        messages: { role: string; content: string }[];
+      }[];
+      expect(generations).toHaveLength(2);
+      expect(generations[1].messages.slice(1).map(({ content }) => content)).toEqual([
+        'Olá',
+        CONVERSATION_ANSWER,
+        'Tenho alguma reserva?',
+        replies[1],
+        'E para quantas pessoas?',
+        replies[2],
+        'Obrigado!',
+      ]);
+      expect(store.messages).toHaveLength(turns.length * 2);
+    });
   });
 
   describe('MVP scenarios', () => {

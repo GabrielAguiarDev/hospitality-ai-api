@@ -136,6 +136,20 @@ describe('OperationsDispatcherService', () => {
     expect(requests.ask).not.toHaveBeenCalled();
   });
 
+  it.each(['conversation.greeting', 'conversation.general'] as const)(
+    'never sends %s to the Tool Registry',
+    async (intent) => {
+      await expect(
+        dispatcher.dispatch('Olá', { intent, detail: 'none' }, GUEST, CONTEXT),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(reservations.ask).not.toHaveBeenCalled();
+      expect(requests.ask).not.toHaveBeenCalled();
+      expect(experiences.handle).not.toHaveBeenCalled();
+      expect(restaurants.handleBooking).not.toHaveBeenCalled();
+    },
+  );
+
   it('propagates the correct guest context', async () => {
     const anotherGuest: GuestContext = {
       resortId: 'resort-002',

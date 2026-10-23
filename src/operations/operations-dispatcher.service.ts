@@ -1,8 +1,10 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 
 import {
+  isConversationIntent,
   isExperienceIntent,
   type ChatIntent,
+  type ConversationIntent,
   type IntentDecision,
 } from '../chat/chat-intent.types.js';
 
@@ -17,7 +19,7 @@ import { GuestContext } from '../guest/guest-context.js';
 
 export type { DispatchContext, DispatchResult } from './operations.types.js';
 
-type OperationalIntent = Exclude<ChatIntent, 'knowledge.search'>;
+type OperationalIntent = Exclude<ChatIntent, 'knowledge.search' | ConversationIntent>;
 
 // Mapeamento centralizado entre intenções e ferramentas.
 const INTENT_TOOL_MAP = {
@@ -60,6 +62,13 @@ export class OperationsDispatcherService {
     if (decision.intent === 'knowledge.search') {
       throw new BadRequestException(
         'Intenções de conhecimento não são operações.',
+      );
+    }
+
+    // Conversas nunca chegam ao Tool Registry.
+    if (isConversationIntent(decision.intent)) {
+      throw new BadRequestException(
+        'Intenções de conversa não são operações.',
       );
     }
 

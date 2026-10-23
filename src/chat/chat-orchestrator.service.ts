@@ -10,7 +10,9 @@ import type { RetrievedDocument } from '../rag/knowledge.service.js';
 import { IntentClassifierService } from './intent-classifier.service.js';
 import { extractDate } from './message-entities.js';
 import {
+  isConversationIntent,
   isExperienceIntent,
+  type ConversationIntent,
   type HistoryEntry,
   type IntentDecision,
 } from './chat-intent.types.js';
@@ -36,6 +38,12 @@ export type OrchestrationResult =
   | {
       mode: 'knowledge';
       documents: RetrievedDocument[];
+      state?: ConversationState;
+    }
+  | {
+      mode: 'conversation';
+      intent: ConversationIntent;
+      documents: [];
       state?: ConversationState;
     };
 
@@ -85,7 +93,18 @@ export class ChatOrchestratorService {
       `Intenção identificada: ${decision.intent} (${decision.detail})`,
     );
 
-    // 1. Todas as operações passam pelo Dispatcher.
+    // 1. Interações sociais: sem RAG e sem ferramentas. O estado segue
+    // intacto para que "Obrigado!" não descarte uma pré-reserva pendente.
+    if (isConversationIntent(decision.intent)) {
+      return {
+        mode: 'conversation',
+        intent: decision.intent,
+        documents: [],
+        ...(context ? { state: context.state } : {}),
+      };
+    }
+
+    // 2. Todas as operações passam pelo Dispatcher.
     if (decision.intent !== 'knowledge.search') {
       const result = context
         ? await this.dispatcher.dispatch(message, decision, guest, {
@@ -107,7 +126,7 @@ export class ChatOrchestratorService {
       };
     }
 
-    // 2. Consultas de conhecimento continuam no RAG. Datas relativas
+    // 3. Consultas de conhecimento continuam no RAG. Datas relativas
     // são convertidas para datas absolutas antes da busca.
     const date = context?.today
       ? (decision.entities?.date ?? extractDate(message, context.today))

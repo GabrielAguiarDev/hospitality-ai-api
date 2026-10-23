@@ -33,12 +33,46 @@ const CONFIRM_TRIGGERS = new Set([
   'sim', 'confirmo', 'confirmar', 'confirma', 'confirmado', 'fechado', 'ok', 'isso', 'perfeito', 'claro', 'reservar',
 ]);
 const CONFIRM_WORDS = new Set([
-  ...CONFIRM_TRIGGERS, 'pode', 'quero', 'por', 'favor', 'obrigado', 'obrigada', 'yago', 'fazer', 'a', 'reserva', 'pfv', 'pf',
+  ...CONFIRM_TRIGGERS, 'pode', 'quero', 'por', 'favor', 'obrigado', 'obrigada', 'valeu', 'otimo', 'beleza', 'yago', 'fazer',
+  'a', 'reserva', 'pfv', 'pf',
 ]);
 const CANCEL_TRIGGERS = new Set(['nao', 'cancela', 'cancelar', 'cancele', 'desisto']);
 const CANCEL_WORDS = new Set([
   ...CANCEL_TRIGGERS, 'obrigado', 'obrigada', 'yago', 'quero', 'mais', 'por', 'favor', 'a', 'reserva', 'deixa', 'pra', 'la', 'melhor',
 ]);
+
+// Expressões sociais (texto normalizado). Uma mensagem só é conversa
+// quando, removidas estas expressões, não sobra nenhuma solicitação:
+// "Olá, quais restaurantes existem?" continua sendo conhecimento.
+// "show" e "legal" ficam de fora: "E o show?" e "É legal?" são perguntas.
+const GREETING_PHRASES = [
+  'bom dia', 'boa tarde', 'boa noite', 'tudo bem', 'tudo bom', 'tudo certo', 'tudo joia', 'tudo otimo', 'td bem', 'td bom',
+  'como vai', 'como voce esta', 'como vc esta', 'como esta', 'e ai', 'eai', 'muito prazer', 'prazer',
+  'ola', 'oi', 'oie', 'opa', 'hey', 'hello', 'hi', 'salve', 'beleza', 'blz',
+];
+const GENERAL_PHRASES = [
+  'muito obrigado', 'muito obrigada', 'obrigado', 'obrigada', 'brigado', 'brigada', 'brigadao', 'valeu', 'agradeco',
+  'grato', 'grata', 'thanks', 'mais uma vez', 'pelas informacoes', 'pela informacao',
+  'quem e voce', 'quem e vc', 'quem e o yago', 'quem fala', 'qual e o seu nome', 'qual e seu nome', 'qual o seu nome',
+  'qual seu nome', 'como voce se chama', 'como vc se chama', 'voce e um robo', 'voce e humano', 'voce e uma ia',
+  'o que voce faz', 'o que vc faz', 'o que voce pode fazer', 'o que vc pode fazer',
+  'como voce pode me ajudar', 'como vc pode me ajudar', 'pode me ajudar', 'preciso de ajuda', 'me ajuda',
+  'tchau', 'ate logo', 'ate mais', 'ate breve', 'ate amanha', 'adeus', 'bom descanso',
+  'entendi', 'otimo', 'perfeito', 'certo', 'ok',
+];
+// Palavras que podem acompanhar uma expressão social sem formar um pedido.
+const SOCIAL_FILLERS = new Set([
+  'yago', 'a', 'o', 'e', 'voce', 'vc', 'pra', 'para', 'por', 'favor', 'tambem', 'muito', 'muita', 'demais',
+  'entao', 'ai', 'gente', 'ne', 'sim', 'pela', 'pelo', 'pelas', 'pelos', 'ajuda', 'atencao', 'com', 'contigo',
+  'tudo', 'bem', 'estou', 'todos', 'mim', 'amigo', 'amiga', 'querido', 'querida', 'haha', 'k', 'rs',
+]);
+const GENERAL_SET = new Set(GENERAL_PHRASES);
+// Um único padrão, da expressão mais longa para a mais curta:
+// "tudo certo" é saudação, não "tudo" + "certo".
+const SOCIAL_PATTERN = new RegExp(
+  `\\b(?:${[...GREETING_PHRASES, ...GENERAL_PHRASES].sort((a, b) => b.length - a.length).join('|')})\\b`,
+  'g',
+);
 
 const KNOWLEDGE: IntentDecision = {
   intent: 'knowledge.search',
@@ -273,6 +307,47 @@ export class IntentClassifierService {
     };
   }
 
+  /**
+   * Saudações, agradecimentos e perguntas sobre o assistente.
+   * Mensagens mistas ("Olá, quero reservar...") seguem o roteamento normal.
+   */
+  private detectConversation(
+    message: string,
+    state?: ConversationState,
+  ): IntentDecision | null {
+    // "Oiii" e "Bom diaaa" viram "oi" e "bom dia".
+    const text = normalizeText(message).replace(/([a-z])\1{2,}/g, '$1');
+    let general = false;
+    let social = false;
+
+    // Com uma pré-reserva pendente, "sim"/"não" nunca vão ao modelo livre,
+    // que poderia afirmar uma confirmação que não aconteceu.
+    if (
+      state?.experience?.pendingPreviewId &&
+      text.split(' ').some((word) => CONFIRM_TRIGGERS.has(word) || CANCEL_TRIGGERS.has(word))
+    ) {
+      return null;
+    }
+
+    const rest = text
+      .replace(SOCIAL_PATTERN, (phrase) => {
+        social = true;
+        general ||= GENERAL_SET.has(phrase);
+        return ' ';
+      })
+      .split(' ')
+      .filter(Boolean);
+
+    if (!social || !rest.every((word) => SOCIAL_FILLERS.has(word))) {
+      return null;
+    }
+
+    return {
+      intent: general ? 'conversation.general' : 'conversation.greeting',
+      detail: 'none',
+    };
+  }
+
   private decision(
     intent: ChatIntent,
     message: string,
@@ -435,6 +510,12 @@ export class IntentClassifierService {
 
     if (requestIntent) {
       return requestIntent;
+    }
+
+    const conversation = this.detectConversation(message, state);
+
+    if (conversation) {
+      return conversation;
     }
 
     const experienceIntent = this.detectExperienceOrRestaurant(message, state);
