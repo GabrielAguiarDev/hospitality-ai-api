@@ -1,10 +1,14 @@
 import { getRepositoryToken } from '@nestjs/typeorm';
 import type { Provider } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import { vi } from 'vitest';
 
 import { ChatConversation } from '../../src/chat/entities/chat-conversation.entity.js';
+import { ChatConversationState } from '../../src/chat/entities/chat-conversation-state.entity.js';
 import { ChatMessage } from '../../src/chat/entities/chat-message.entity.js';
+import type { ConversationState } from '../../src/contracts/conversation-state.js';
+import { ResortClock } from '../../src/resort/resort-clock.service.js';
 import { DEMO_GUEST_CONTEXT } from '../../src/guest/guest-context.js';
 import type { GuestContext } from '../../src/guest/guest-context.js';
 
@@ -25,6 +29,11 @@ type StoredConversation = Pick<ChatConversation, 'id' | 'resortId' | 'guestId'> 
   updatedAt?: Date;
 };
 
+type StoredState = Pick<ChatConversationState, 'conversationId' | 'state' | 'version'>;
+
+/** Fixed resort date used by the chat tests: Friday, 2026-10-23. */
+export const TEST_TODAY = '2026-10-23';
+
 /**
  * In-memory replacement for the TypeORM pieces used by ChatService:
  * the two repositories and DataSource.transaction(). Writes made inside a
@@ -33,7 +42,21 @@ type StoredConversation = Pick<ChatConversation, 'id' | 'resortId' | 'guestId'> 
 export class InMemoryChatStore {
   readonly conversations = new Map<string, StoredConversation>();
   readonly messages: StoredMessage[] = [];
+  readonly states = new Map<string, StoredState>();
   private nextMessageId = 1;
+
+  readonly clock = (() => {
+    const clock = new ResortClock(new ConfigService({ RESORT_TIMEZONE: 'America/Bahia' }));
+    vi.spyOn(clock, 'today').mockReturnValue(TEST_TODAY);
+    return clock;
+  })();
+
+  readonly statesRepository = {
+    findOneBy: vi.fn(async ({ conversationId }: { conversationId: string }) => {
+      const stored = this.states.get(conversationId);
+      return stored ? structuredClone(stored) : null;
+    }),
+  };
 
   readonly conversationsRepository = {
     // Every criterion must match, so a conversation owned by another guest
@@ -85,9 +108,18 @@ export class InMemoryChatStore {
     }
   }
 
+  seedState(conversationId: string, state: ConversationState, version = 1) {
+    this.states.set(conversationId, { conversationId, state, version });
+  }
+
   providers(): Provider[] {
     return [
       { provide: DataSource, useValue: this.dataSource },
+      { provide: ResortClock, useValue: this.clock },
+      {
+        provide: getRepositoryToken(ChatConversationState),
+        useValue: this.statesRepository,
+      },
       {
         provide: getRepositoryToken(ChatConversation),
         useValue: this.conversationsRepository,
@@ -104,9 +136,21 @@ export class InMemoryChatStore {
 
     return {
       insert: vi.fn(
-        async (entity: unknown, values: StoredConversation | MessageInput[]) => {
+        async (entity: unknown, values: StoredConversation | MessageInput[] | MessageInput | StoredState) => {
+          if (entity === ChatConversationState && !Array.isArray(values)) {
+            const stored = values as StoredState;
+            staged.push(() => this.states.set(stored.conversationId, structuredClone(stored)));
+            return;
+          }
+
+          if (entity === ChatMessage && !Array.isArray(values)) {
+            const message = values as MessageInput;
+            staged.push(() => this.messages.push({ id: this.nextMessageId++, ...message }));
+            return;
+          }
+
           if (entity === ChatConversation && !Array.isArray(values)) {
-            const { id, resortId, guestId } = values;
+            const { id, resortId, guestId } = values as StoredConversation;
             staged.push(() => this.conversations.set(id, { id, resortId, guestId }));
             return;
           }
@@ -124,10 +168,26 @@ export class InMemoryChatStore {
         },
       ),
       update: vi.fn(
-        async (_entity: unknown, { id }: { id: string }, values: { updatedAt: Date }) => {
+        async (
+          entity: unknown,
+          where: { id?: string; conversationId?: string; version?: number },
+          values: { updatedAt?: Date; state?: ConversationState; version?: number },
+        ) => {
+          if (entity === ChatConversationState) {
+            const stored = this.states.get(where.conversationId ?? '');
+            const matches =
+              !!stored && (where.version === undefined || stored.version === where.version);
+
+            if (matches) {
+              staged.push(() => Object.assign(stored, structuredClone(values)));
+            }
+
+            return { affected: matches ? 1 : 0 };
+          }
+
           staged.push(() => {
-            const conversation = this.conversations.get(id);
-            if (conversation) conversation.updatedAt = values.updatedAt;
+            const conversation = this.conversations.get(where.id ?? '');
+            if (conversation && values.updatedAt) conversation.updatedAt = values.updatedAt;
           });
         },
       ),

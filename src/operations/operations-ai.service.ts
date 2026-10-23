@@ -40,6 +40,11 @@ export interface OperationsResponse {
 
 const TOOL_NAME = 'list_my_restaurant_reservations';
 
+// A quantidade vem dos pedidos de pratos (um por pessoa).
+function formatPartySize(partySize: number | null): string {
+  return partySize === null ? 'não informado' : String(partySize);
+}
+
 const RESERVATIONS_TOOL = {
   type: 'function',
   function: {
@@ -131,7 +136,7 @@ export class OperationsAiService {
     guest: GuestContext,
     decision?: IntentDecision,
   ): Promise<OperationsResponse> {
-    if (this.configService.get<string>('NODE_ENV') === 'production') {
+    if (this.configService.get<string>('NODE_ENV') !== 'development') {
       throw new ForbiddenException('Consulta de demonstração desabilitada.');
     }
 
@@ -215,6 +220,8 @@ export class OperationsAiService {
     }
 
     const statusLabels: Record<string, string> = {
+      aprovada: 'confirmada',
+      cancelada: 'cancelada',
       confirmed: 'confirmada',
       pending: 'pendente',
       cancelled: 'cancelada',
@@ -238,7 +245,7 @@ export class OperationsAiService {
         return [
           `${index + 1}. ${reservation.restaurant}`,
           `Data: ${date}`,
-          `Pessoas: ${reservation.partySize}`,
+          `Pessoas: ${formatPartySize(reservation.partySize)}`,
           `Status: ${formatStatus(reservation.status)}`,
         ].join('\n');
       });
@@ -278,6 +285,7 @@ export class OperationsAiService {
     const status = formatStatus(reservation.status);
 
     const [date, time] = reservation.reservedAt.split(' ');
+    const timeLabel = time ?? 'horário não informado';
 
     if (decision.intent === 'reservation.status') {
       return `Sua reserva na ${restaurant} está ${status}.`;
@@ -285,6 +293,13 @@ export class OperationsAiService {
 
     switch (decision.detail) {
       case 'party_size': {
+        if (reservation.partySize === null) {
+          return (
+            `O sistema não informa a quantidade de pessoas da sua reserva na ${restaurant}: ` +
+            'não há pedidos de pratos registrados para ela.'
+          );
+        }
+
         const peopleLabel = reservation.partySize === 1 ? 'pessoa' : 'pessoas';
 
         return (
@@ -297,6 +312,10 @@ export class OperationsAiService {
         return `Sua reserva na ${restaurant} ` + `está marcada para ${date}.`;
 
       case 'time':
+        if (!time) {
+          return `O horário da sua reserva na ${restaurant} não está informado no sistema.`;
+        }
+
         return (
           `Sua reserva na ${restaurant} ` + `está marcada para as ${time}.`
         );
@@ -307,8 +326,8 @@ export class OperationsAiService {
       default:
         return [
           `Sua reserva na ${restaurant}:`,
-          `Data: ${date} às ${time}`,
-          `Pessoas: ${reservation.partySize}`,
+          `Data: ${date} às ${timeLabel}`,
+          `Pessoas: ${formatPartySize(reservation.partySize)}`,
           `Status: ${status}`,
         ].join('\n');
     }

@@ -12,6 +12,8 @@ import {
 } from '../../test/support/ollama-fakes.js';
 import type { FetchMock } from '../../test/support/ollama-fakes.js';
 
+import type { ConversationState } from '../contracts/conversation-state.js';
+
 import type { HistoryEntry, IntentDecision } from './chat-intent.types.js';
 import { IntentClassifierService } from './intent-classifier.service.js';
 
@@ -452,6 +454,8 @@ describe('IntentClassifierService', () => {
         role: index % 2 === 0 ? 'user' : 'assistant',
         content: `mensagem-${index} ${'x'.repeat(500)}`,
       }));
+      // A última resposta mantém o contexto de reserva que libera o modelo.
+      history[7] = { role: 'assistant', content: `mensagem-7 ${PARTY_SIZE_REPLY} ${'x'.repeat(500)}` };
 
       await service.classify('E para quantas pessoas?', history);
 
@@ -470,10 +474,151 @@ describe('IntentClassifierService', () => {
     });
 
     it('marks an empty history explicitly', async () => {
-      await service.classify('Olá');
+      await service.classify('Tenho alguma reserva?');
 
       const messages = requestBody(fetchMock).messages as { content: string }[];
       expect(messages[1].content).toContain('HISTÓRICO:\n(vazio)');
+    });
+
+    // A classificação do modelo não pode liberar operações sozinha,
+    // então ele não é chamado quando não há indício operacional.
+    it.each(['Olá', 'O resort tem academia?', 'Qual o horário do spa?'])(
+      'does not call Ollama for %j without operational evidence',
+      async (message) => {
+        await expect(service.classify(message)).resolves.toEqual(KNOWLEDGE);
+        expect(fetchMock).not.toHaveBeenCalled();
+      },
+    );
+  });
+
+  describe('experiences and restaurants (deterministic)', () => {
+    const LISTED: ConversationState = {
+      topic: 'experience',
+      experience: {
+        listed: [
+          { id: 'exp-1', title: 'Cidade Histórica / City Tour' },
+          { id: 'exp-2', title: 'Reserva da Jaqueira' },
+        ],
+        listedDate: '2026-10-24',
+      },
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      // Sexta-feira, 23/10/2026, 12h no fuso do resort.
+      vi.setSystemTime(new Date('2026-10-23T15:00:00Z'));
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it.each<[string, string]>([
+      ['Quais experiências posso fazer amanhã?', 'experience.list'],
+      ['Quais passeios vocês têm?', 'experience.list'],
+      ['Quero reservar um passeio de caiaque amanhã às 10h para duas pessoas.', 'experience.booking'],
+      ['Quanto custa o passeio de caiaque?', 'experience.price'],
+      ['Tem vagas no passeio amanhã?', 'experience.availability'],
+      ['Minhas reservas de experiências', 'experience.reservations'],
+      ['Quero reservar uma mesa no restaurante italiano.', 'restaurant.booking'],
+      ['Gostaria de reservar um jantar', 'restaurant.booking'],
+    ])('classifies %j as %s without calling Ollama', async (message, intent) => {
+      const decision = await service.classify(message);
+
+      expect(decision.intent).toBe(intent);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('extracts absolute dates, times and party size for a booking request', async () => {
+      const decision = await service.classify(
+        'Quero reservar um passeio de caiaque amanhã às 10h para duas pessoas.',
+      );
+
+      expect(decision.entities).toEqual({ date: '2026-10-24', time: '10:00', people: 2 });
+    });
+
+    it.each<[string, string, Record<string, unknown>]>([
+      ['Gostei da segunda.', 'experience.details', { ordinal: 2 }],
+      ['Tem para duas pessoas?', 'experience.availability', { people: 2 }],
+      ['Quanto custa?', 'experience.price', {}],
+      ['Pode reservar.', 'experience.booking', {}],
+      ['E para quantas pessoas?', 'experience.details', {}],
+      ['Para quantas pessoas está?', 'experience.details', {}],
+      ['E no sábado?', 'experience.availability', { date: '2026-10-24' }],
+    ])('keeps the experience context for the follow-up %j', async (message, intent, entities) => {
+      const decision = await service.classify(message, [], LISTED);
+
+      expect(decision.intent).toBe(intent);
+      expect(decision.entities).toMatchObject(entities);
+    });
+
+    it('leaves the experience context for questions about other services', async () => {
+      await expect(service.classify('Qual o horário do spa?', [], LISTED)).resolves.toEqual(KNOWLEDGE);
+    });
+
+    it('still answers personal restaurant reservations while an experience is selected', async () => {
+      fetchMock.mockRejectedValue(connectionError());
+
+      await expect(service.classify('Tenho alguma reserva?', [], LISTED)).resolves.toEqual({
+        intent: 'reservation.list',
+        detail: 'none',
+      });
+    });
+
+    it('does not treat follow-ups as experience questions without a stored context', async () => {
+      await expect(service.classify('Gostei da segunda.')).resolves.toEqual(KNOWLEDGE);
+      await expect(service.classify('Quanto custa?')).resolves.toEqual(KNOWLEDGE);
+    });
+
+    describe('pending pre-booking', () => {
+      const PENDING: ConversationState = {
+        topic: 'experience',
+        experience: { selectedId: 'exp-2', pendingPreviewId: '0b5c2a5e-8c1d-4b7a-9e2f-3a4b5c6d7e8f' },
+      };
+
+      it.each(['Sim, confirmo', 'confirmo', 'Pode confirmar', 'sim', 'Sim, pode reservar!', 'Ok, confirmado.'])(
+        'treats %j as an explicit confirmation',
+        async (message) => {
+          await expect(service.classify(message, [], PENDING)).resolves.toMatchObject({
+            intent: 'experience.booking.confirm',
+          });
+        },
+      );
+
+      it.each(['Não, cancela', 'cancelar', 'desisto', 'não', 'Melhor não'])('treats %j as a cancellation', async (message) => {
+        await expect(service.classify(message, [], PENDING)).resolves.toMatchObject({
+          intent: 'experience.booking.cancel',
+        });
+      });
+
+      it('does not discard the preview for a question that starts with "não"', async () => {
+        const decision = await service.classify('não sei, quais horários?', [], PENDING);
+        expect(decision.intent).not.toBe('experience.booking.cancel');
+      });
+
+      it.each([
+        'sim, mas não agora',
+        'Quanto custa?',
+        'sim, mas para 3 adultos',
+        'isso é caro?',
+        'ok, e às 15h?',
+        'claro que não',
+      ])('does not confirm %j', async (message) => {
+        const decision = await service.classify(message, [], PENDING);
+        expect(decision.intent).not.toBe('experience.booking.confirm');
+      });
+
+      // Sem pré-reserva, o handler responde que não há nada a confirmar;
+      // fora do contexto de experiência, não há confirmação alguma.
+      it('routes a stray confirmation to the experience handler only within an experience context', async () => {
+        await expect(service.classify('confirmo', [], LISTED)).resolves.toMatchObject({
+          intent: 'experience.booking.confirm',
+        });
+        await expect(service.classify('sim', [], LISTED)).resolves.not.toMatchObject({
+          intent: 'experience.booking.confirm',
+        });
+        await expect(service.classify('confirmo')).resolves.toEqual(KNOWLEDGE);
+      });
     });
   });
 });

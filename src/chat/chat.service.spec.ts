@@ -1,14 +1,15 @@
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 
-import { InMemoryChatStore } from '../../test/support/in-memory-chat-store.js';
+import { InMemoryChatStore, TEST_TODAY } from '../../test/support/in-memory-chat-store.js';
+import type { ChatAction } from '../contracts/chat-actions.js';
 import type { GuestContext } from '../guest/guest-context.js';
 import { OllamaService } from '../llm/ollama.service.js';
 import type { LlmMessage } from '../llm/ollama.service.js';
 import type { RetrievedDocument } from '../rag/knowledge.service.js';
 
 import { ChatOrchestratorService } from './chat-orchestrator.service.js';
-import { ChatService } from './chat.service.js';
+import { ChatService, NO_EVIDENCE_REPLY } from './chat.service.js';
 import { ChatMessage } from './entities/chat-message.entity.js';
 
 const UUID_V4 =
@@ -65,7 +66,11 @@ describe('ChatService', () => {
 
       expect(result.conversationId).toMatch(UUID_V4);
       expect(store.conversationsRepository.findOneBy).not.toHaveBeenCalled();
-      expect(orchestrator.resolve).toHaveBeenCalledWith('Tenho alguma reserva?', GUEST, []);
+      expect(orchestrator.resolve).toHaveBeenCalledWith('Tenho alguma reserva?', GUEST, [], {
+        conversationId: result.conversationId,
+        state: {},
+        today: TEST_TODAY,
+      });
       expect(store.conversations.get(result.conversationId)).toEqual({
         id: result.conversationId,
         resortId: GUEST.resortId,
@@ -90,7 +95,7 @@ describe('ChatService', () => {
       expect(orchestrator.resolve).toHaveBeenCalledWith('E para quantas pessoas?', GUEST, [
         { role: 'user', content: 'Tenho alguma reserva?' },
         { role: 'assistant', content: 'Encontrei 1 reserva de restaurante no seu cadastro:' },
-      ]);
+      ], expect.objectContaining({ conversationId: EXISTING_ID }));
       expect(store.conversations.size).toBe(1);
       expect(store.messages).toHaveLength(4);
       expect(store.conversations.get(EXISTING_ID)?.updatedAt).toBeInstanceOf(Date);
@@ -225,7 +230,7 @@ describe('ChatService', () => {
         { role: 'user', content: 'Meu nome é Ana.' },
         { role: 'assistant', content: 'Prazer, Ana!' },
       ]);
-      orchestrator.resolve.mockResolvedValue({ mode: 'knowledge', documents: [] });
+      orchestrator.resolve.mockResolvedValue({ mode: 'knowledge', documents: [HOURS_DOCUMENT] });
 
       await service.sendMessage('O resort tem spa?', GUEST, EXISTING_ID);
 
@@ -238,13 +243,25 @@ describe('ChatService', () => {
       ]);
     });
 
-    it('tells the model when no document was found', async () => {
+    // Sem evidências, o modelo não é chamado: evita respostas inventadas.
+    it('answers with a fixed reply and does not call the model when no document was found', async () => {
       orchestrator.resolve.mockResolvedValue({ mode: 'knowledge', documents: [] });
 
-      await service.sendMessage('Vocês têm heliponto?', GUEST);
+      const result = await service.sendMessage('Vocês têm heliponto?', GUEST);
+
+      expect(ollama.generate).not.toHaveBeenCalled();
+      expect(result.reply).toBe(NO_EVIDENCE_REPLY);
+      expect(result.retrievedSources).toEqual([]);
+      expect(result.actions).toEqual([]);
+    });
+
+    it('includes the current resort date in the knowledge prompt', async () => {
+      orchestrator.resolve.mockResolvedValue({ mode: 'knowledge', documents: [HOURS_DOCUMENT] });
+
+      await service.sendMessage('O que posso fazer hoje?', GUEST);
 
       const [messages] = ollama.generate.mock.calls[0];
-      expect(messages[0].content).toContain('Nenhum documento relevante foi encontrado.');
+      expect(messages[0].content).toContain('sexta-feira, 23/10/2026');
     });
 
     it('keeps injected document text inside the data block, never as a separate instruction', async () => {
@@ -273,11 +290,125 @@ describe('ChatService', () => {
     });
 
     it('does not persist anything when generation fails', async () => {
-      orchestrator.resolve.mockResolvedValue({ mode: 'knowledge', documents: [] });
+      orchestrator.resolve.mockResolvedValue({ mode: 'knowledge', documents: [HOURS_DOCUMENT] });
       ollama.generate.mockRejectedValue(new Error('timeout'));
 
       await expect(service.sendMessage('O resort tem spa?', GUEST)).rejects.toThrow('timeout');
       expect(store.messages).toHaveLength(0);
+    });
+  });
+
+  describe('actions and conversation state', () => {
+    const NAVIGATE: ChatAction = {
+      type: 'navigate',
+      label: 'Abrir Gastronomia',
+      screen: 'Gastronomy',
+      params: { restaurantId: 'rest-1' },
+    };
+
+    it('returns actions: [] for ordinary answers (backwards compatible contract)', async () => {
+      orchestrator.resolve.mockResolvedValue({ mode: 'operations', reply: 'ok', documents: [] });
+
+      const result = await service.sendMessage('Tenho alguma reserva?', GUEST);
+
+      expect(result).toEqual({
+        reply: 'ok',
+        conversationId: expect.any(String),
+        retrievedSources: [],
+        actions: [],
+      });
+    });
+
+    it('returns validated actions and drops invalid ones', async () => {
+      orchestrator.resolve.mockResolvedValue({
+        mode: 'operations',
+        reply: 'Abra Gastronomia.',
+        documents: [],
+        actions: [
+          NAVIGATE,
+          { ...NAVIGATE, screen: 'Settings' } as unknown as ChatAction,
+        ],
+      });
+
+      const result = await service.sendMessage('Quero reservar uma mesa', GUEST);
+
+      expect(result.actions).toEqual([NAVIGATE]);
+    });
+
+    it('persists the new state together with the messages of a new conversation', async () => {
+      orchestrator.resolve.mockResolvedValue({
+        mode: 'operations',
+        reply: 'Lista',
+        documents: [],
+        state: { topic: 'experience', experience: { listed: [{ id: 'e1', title: 'Trilha' }] } },
+      });
+
+      const result = await service.sendMessage('Quais experiências?', GUEST);
+
+      expect(store.states.get(result.conversationId)).toEqual({
+        conversationId: result.conversationId,
+        state: { topic: 'experience', experience: { listed: [{ id: 'e1', title: 'Trilha' }] } },
+        version: 1,
+      });
+    });
+
+    it('loads the stored state for the owner and bumps its version on change', async () => {
+      store.seedConversation(EXISTING_ID, [{ role: 'user', content: 'Oi' }]);
+      store.seedState(EXISTING_ID, { topic: 'experience', experience: { selectedId: 'e1' } }, 3);
+      orchestrator.resolve.mockResolvedValue({
+        mode: 'operations',
+        reply: 'ok',
+        documents: [],
+        state: { topic: 'experience', experience: { selectedId: 'e1', adults: 2 } },
+      });
+
+      await service.sendMessage('Para 2 adultos', GUEST, EXISTING_ID);
+
+      expect(orchestrator.resolve.mock.calls[0][3]?.state).toEqual({
+        topic: 'experience',
+        experience: { selectedId: 'e1' },
+      });
+      expect(store.states.get(EXISTING_ID)?.version).toBe(4);
+      expect(store.states.get(EXISTING_ID)?.state.experience?.adults).toBe(2);
+    });
+
+    it('does not write the state when it did not change', async () => {
+      store.seedConversation(EXISTING_ID);
+      store.seedState(EXISTING_ID, { topic: 'knowledge' }, 2);
+      orchestrator.resolve.mockResolvedValue({
+        mode: 'knowledge',
+        documents: [HOURS_DOCUMENT],
+        state: { topic: 'knowledge' },
+      });
+      ollama.generate.mockResolvedValue('resposta');
+
+      await service.sendMessage('O resort tem spa?', GUEST, EXISTING_ID);
+
+      expect(store.states.get(EXISTING_ID)?.version).toBe(2);
+    });
+
+    it('rejects with 409 and persists nothing when the state changed concurrently', async () => {
+      store.seedConversation(EXISTING_ID);
+      store.seedState(EXISTING_ID, { topic: 'experience' }, 1);
+      orchestrator.resolve.mockImplementation(async () => {
+        // Outra requisição grava o estado durante este turno.
+        store.seedState(EXISTING_ID, { topic: 'knowledge' }, 2);
+        return { mode: 'operations', reply: 'ok', documents: [], state: { topic: 'request' } };
+      });
+
+      await expect(service.sendMessage('Minhas solicitações', GUEST, EXISTING_ID)).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(store.states.get(EXISTING_ID)?.state).toEqual({ topic: 'knowledge' });
+      expect(store.messages).toHaveLength(0);
+    });
+
+    it('never loads the state of a conversation owned by another guest', async () => {
+      store.seedConversation(EXISTING_ID, [], OTHER_GUEST);
+      store.seedState(EXISTING_ID, { experience: { pendingPreviewId: 'x' } });
+
+      await expect(service.sendMessage('confirmo', GUEST, EXISTING_ID)).rejects.toBeInstanceOf(NotFoundException);
+      expect(store.statesRepository.findOneBy).not.toHaveBeenCalled();
     });
   });
 

@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { DemoGuestGuard } from '../guest/demo-guest.guard.js';
 import type { GuestContext } from '../guest/guest-context.js';
 
+import { ChatActionsService } from './chat-actions.service.js';
 import { ChatController } from './chat.controller.js';
 import { ChatService } from './chat.service.js';
 
@@ -14,11 +15,17 @@ describe('ChatController', () => {
     sendMessage: vi.fn<ChatService['sendMessage']>(),
     getMessages: vi.fn<ChatService['getMessages']>(),
   };
+  const chatActions = {
+    execute: vi.fn<ChatActionsService['execute']>(),
+  };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [ChatController],
-      providers: [{ provide: ChatService, useValue: chatService }],
+      providers: [
+        { provide: ChatService, useValue: chatService },
+        { provide: ChatActionsService, useValue: chatActions },
+      ],
     })
       // The guard is covered separately; here it only needs to resolve.
       .overrideGuard(DemoGuestGuard)
@@ -37,6 +44,7 @@ describe('ChatController', () => {
       reply: 'Olá!',
       conversationId: '6f1c2a5e-8c1d-4b7a-9e2f-3a4b5c6d7e8f',
       retrievedSources: [],
+      actions: [],
     };
     chatService.sendMessage.mockResolvedValue(response);
 
@@ -67,5 +75,24 @@ describe('ChatController', () => {
       response.conversationId,
       GUEST,
     );
+  });
+
+  it('forwards structured actions with the guest to ChatActionsService', async () => {
+    const dto = {
+      type: 'experience.booking.confirm' as const,
+      conversationId: '6f1c2a5e-8c1d-4b7a-9e2f-3a4b5c6d7e8f',
+      previewId: '0b5c2a5e-8c1d-4b7a-9e2f-3a4b5c6d7e8f',
+    };
+    const response = {
+      reply: 'Reserva simulada registrada.',
+      conversationId: dto.conversationId,
+      retrievedSources: [],
+      actions: [],
+      status: 'confirmed' as const,
+    };
+    chatActions.execute.mockResolvedValue(response);
+
+    await expect(controller.executeAction(dto, GUEST)).resolves.toBe(response);
+    expect(chatActions.execute).toHaveBeenCalledWith(dto, GUEST);
   });
 });

@@ -1,5 +1,7 @@
 # Integração do chat mobile com a Yago AI API
 
+> **Substituído por [mobile-ai-integration.md](mobile-ai-integration.md)**, que descreve o contrato atual (`actions`, `POST /chat/actions`, Gastronomia e reservas simuladas). Este documento é mantido apenas como referência histórica.
+
 Guia para conectar o chat do app mobile à API do Yago (o mordomo digital do resort).
 
 > **Status:** a API está em **modo de demonstração**. Ainda não existe login/token de verdade: o hóspede é identificado por um header (`X-Demo-Guest-Id`) e só dispositivos/IPs liberados no servidor conseguem acessar. Quando a autenticação real chegar, este header será substituído — mantenha o envio dele centralizado em um único lugar do app (ex.: interceptor do cliente HTTP).

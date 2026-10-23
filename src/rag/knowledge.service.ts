@@ -8,6 +8,10 @@ import { createHash } from 'node:crypto';
 import { ChromaClient } from 'chromadb-client';
 
 import { EmbeddingsService } from './embeddings.service.js';
+import { enabledKnowledgeSources } from './sources/knowledge-source.js';
+
+// Lotes menores evitam timeouts do modelo de embeddings local.
+const EMBEDDING_BATCH_SIZE = 16;
 
 export interface KnowledgeDocument {
   id: string;
@@ -162,13 +166,20 @@ export class KnowledgeService {
 
     const collection = await this.getCollection();
 
-    const embeddings =
-      await this.embeddingsService.embed(
-        documents.map(
-          (document) =>
-            `title: ${document.title} | text: ${document.content}`,
-        ),
+    const embeddings: number[][] = [];
+
+    for (let start = 0; start < documents.length; start += EMBEDDING_BATCH_SIZE) {
+      embeddings.push(
+        ...(await this.embeddingsService.embed(
+          documents
+            .slice(start, start + EMBEDDING_BATCH_SIZE)
+            .map(
+              (document) =>
+                `title: ${document.title} | text: ${document.content}`,
+            ),
+        )),
       );
+    }
 
     await collection.upsert({
       ids: documents.map((document) =>
@@ -232,6 +243,52 @@ export class KnowledgeService {
     });
   }
 
+  // Recupera documentos específicos por ID (ex.: programação do dia),
+  // sempre restritos ao resort e às fontes habilitadas.
+  async getDocuments(
+    documentIds: string[],
+    resortId: string,
+    source: string,
+  ): Promise<RetrievedDocument[]> {
+    this.requireResortId(resortId);
+
+    if (documentIds.length === 0) {
+      return [];
+    }
+
+    const sources = enabledKnowledgeSources(
+      this.configService.get<string>('KNOWLEDGE_SOURCES'),
+    );
+
+    if (!sources.includes(source)) {
+      return [];
+    }
+
+    const collection = await this.getCollection();
+
+    const page = await collection.get({
+      ids: documentIds.map((id) => this.documentKey(resortId, source, id)),
+      where: {
+        $and: [
+          { resortId },
+          { source },
+        ],
+      },
+    });
+
+    return page.ids.map((id, index) => {
+      const metadata = page.metadatas?.[index];
+
+      return {
+        id: String(metadata?.documentId ?? id),
+        title: String(metadata?.title ?? 'Documento'),
+        content: page.documents?.[index] ?? '',
+        // Documento selecionado deterministicamente pela data.
+        distance: 0,
+      };
+    });
+  }
+
   // Busca vetorial com filtro obrigatório de resort.
   async searchByVector(
     vector: number[],
@@ -246,11 +303,29 @@ export class KnowledgeService {
       return [];
     }
 
+    // Somente fontes habilitadas: documentos de fontes desligadas
+    // (ex.: conhecimento fictício) não são recuperados.
+    const sources = enabledKnowledgeSources(
+      this.configService.get<string>('KNOWLEDGE_SOURCES'),
+    );
+
+    const configuredTopK = Number(
+      this.configService.get<string>('RAG_TOP_K'),
+    );
+
+    const topK =
+      Number.isInteger(configuredTopK) && configuredTopK > 0 && configuredTopK <= 10
+        ? configuredTopK
+        : 4;
+
     const result = await collection.query({
       queryEmbeddings: [vector],
-      nResults: Math.min(3, count),
+      nResults: Math.min(topK, count),
       where: {
-        resortId,
+        $and: [
+          { resortId },
+          { source: { $in: sources } },
+        ],
       },
     });
 

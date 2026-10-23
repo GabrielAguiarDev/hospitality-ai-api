@@ -15,7 +15,10 @@ function document(id: string, distance: number | null): RetrievedDocument {
 
 describe('RetrievalService', () => {
   const embeddings = { embed: vi.fn<EmbeddingsService['embed']>() };
-  const knowledge = { searchByVector: vi.fn<KnowledgeService['searchByVector']>() };
+  const knowledge = {
+    searchByVector: vi.fn<KnowledgeService['searchByVector']>(),
+    getDocuments: vi.fn<KnowledgeService['getDocuments']>(),
+  };
 
   function createService(config: Record<string, string> = {}) {
     return new RetrievalService(
@@ -111,5 +114,44 @@ describe('RetrievalService', () => {
     await expect(createService().search('spa', RESORT_ID)).rejects.toThrow(
       'embeddings indisponíveis',
     );
+  });
+
+  describe('dated questions', () => {
+    const SATURDAY = '2026-10-24';
+
+    it('adds the schedule and events of the requested day and drops other days', async () => {
+      knowledge.searchByVector.mockResolvedValue([
+        document('eventos:2026-10-30', 0.2),
+        document('lazer:programacao:sunday', 0.25),
+        document('restaurantes:visao-geral', 0.3),
+      ]);
+      knowledge.getDocuments.mockResolvedValue([
+        document('eventos:2026-10-24', 0),
+        document('lazer:programacao:saturday', 0),
+      ]);
+
+      const result = await createService().search('O que posso fazer amanhã?', RESORT_ID, {
+        date: SATURDAY,
+      });
+
+      expect(knowledge.getDocuments).toHaveBeenCalledExactlyOnceWith(
+        ['eventos:2026-10-24', 'lazer:programacao:saturday'],
+        RESORT_ID,
+        'resort-snapshot',
+      );
+      expect(result.map(({ id }) => id)).toEqual([
+        'eventos:2026-10-24',
+        'lazer:programacao:saturday',
+        'restaurantes:visao-geral',
+      ]);
+    });
+
+    it('does not fetch dated documents without a valid date', async () => {
+      knowledge.searchByVector.mockResolvedValue([document('a', 0.2)]);
+
+      await createService().search('spa', RESORT_ID, { date: '24/10/2026' });
+
+      expect(knowledge.getDocuments).not.toHaveBeenCalled();
+    });
   });
 });

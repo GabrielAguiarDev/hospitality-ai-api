@@ -24,7 +24,10 @@ import type { RestaurantReservation } from './reservations.service.js';
 
 const TRATTORIA: RestaurantReservation = {
   id: 'res-1',
+  restaurantId: 'rest-1',
   restaurant: 'Trattoria Aurora',
+  date: '24/10/2026',
+  time: '20:00',
   reservedAt: '24/10/2026 20:00',
   partySize: 4,
   status: 'confirmed',
@@ -32,7 +35,10 @@ const TRATTORIA: RestaurantReservation = {
 
 const SABOR_DO_MAR: RestaurantReservation = {
   id: 'res-2',
+  restaurantId: 'rest-2',
   restaurant: 'Sabor do Mar',
+  date: '25/10/2026',
+  time: '12:30',
   reservedAt: '25/10/2026 12:30',
   partySize: 1,
   status: 'pending',
@@ -329,6 +335,68 @@ describe('OperationsAiService', () => {
       expect(reply).toContain('Encontrei 2 reservas relacionadas à sua consulta.');
       expect(reply).toContain('De qual reserva você deseja os detalhes?');
       expect(reply).not.toMatch(/\d+ pessoas?\./);
+    });
+  });
+
+  describe('snapshot data', () => {
+    const SNAPSHOT: RestaurantReservation = {
+      id: 'res-3',
+      restaurantId: 'rest-3',
+      restaurant: 'Gino Praia Gastronomia',
+      date: '24/10/2026',
+      time: null,
+      reservedAt: '24/10/2026',
+      partySize: null,
+      status: 'aprovada',
+    };
+
+    it('labels the snapshot status "aprovada" as confirmed', async () => {
+      givenReservations([{ ...SNAPSHOT, partySize: 2, time: '21:30', reservedAt: '24/10/2026 21:30' }]);
+
+      const result = await createService().ask('Minha reserva está confirmada?', GUEST, {
+        intent: 'reservation.status',
+        detail: 'none',
+      });
+
+      expect(result.reply).toBe('Sua reserva na Gino Praia Gastronomia está confirmada.');
+    });
+
+    it('does not invent the party size when no dish orders exist', async () => {
+      givenReservations([SNAPSHOT]);
+
+      const result = await createService().ask('Para quantas pessoas é minha reserva?', GUEST, {
+        intent: 'reservation.details',
+        detail: 'party_size',
+      });
+
+      expect(result.reply).toContain('não informa a quantidade de pessoas');
+      expect(result.reply).not.toMatch(/\d+ pessoas/);
+    });
+
+    it('does not invent the time when the slot is missing', async () => {
+      givenReservations([SNAPSHOT]);
+
+      const result = await createService().ask('Que horas é minha reserva?', GUEST, {
+        intent: 'reservation.details',
+        detail: 'time',
+      });
+
+      expect(result.reply).toContain('não está informado');
+    });
+
+    it('lists unknown party sizes explicitly', async () => {
+      givenReservations([SNAPSHOT]);
+
+      const result = await createService().ask('Tenho alguma reserva?', GUEST, LIST);
+
+      expect(result.reply).toContain('Pessoas: não informado');
+    });
+
+    it('fails closed when NODE_ENV is not set', async () => {
+      await expect(
+        createService('').ask('Tenho alguma reserva?', GUEST, LIST),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(registry.execute).not.toHaveBeenCalled();
     });
   });
 });

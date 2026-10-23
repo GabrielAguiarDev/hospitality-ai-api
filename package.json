@@ -19,7 +19,9 @@
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
-    "test:e2e": "vitest run --config ./vitest.config.e2e.ts"
+    "test:e2e": "vitest run --config ./vitest.config.e2e.ts",
+    "migration:run": "nest build && node dist/scripts/run-migrations.js",
+    "knowledge:sync": "nest build && node dist/scripts/sync-knowledge.js"
   },
   "dependencies": {
     "@nestjs/common": "^12.0.1",

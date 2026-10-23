@@ -30,6 +30,10 @@ export class RequestsOperationsService {
 
   private statusLabel(status: string): string {
     const statuses: Record<string, string> = {
+      atendida: 'atendida (concluída)',
+      executando: 'em andamento',
+      pendente: 'pendente, aguardando atendimento',
+      cancelada: 'cancelada',
       pending: 'pendente',
       in_progress: 'em andamento',
       completed: 'concluída',
@@ -116,6 +120,25 @@ export class RequestsOperationsService {
     return matches.length === 1 ? matches[0].request : null;
   }
 
+  // Solicitações empatadas na busca, para listar em vez de escolher uma.
+  private matchingRequests(
+    question: string,
+    requests: GuestRequest[],
+  ): GuestRequest[] {
+    const text = this.normalize(question);
+
+    return requests.filter((request) => {
+      const category = this.normalize(this.categoryLabel(request.category));
+      return category.length >= 3 && text.includes(category);
+    });
+  }
+
+  private isOpen(status: string): boolean {
+    return ['pendente', 'executando', 'pending', 'in_progress'].includes(
+      status.toLowerCase(),
+    );
+  }
+
   async ask(
     question: string,
     intent: RequestIntent,
@@ -156,6 +179,27 @@ export class RequestsOperationsService {
     }
 
     const selected = this.selectRequest(question, requests);
+
+    // Várias solicitações do mesmo departamento: lista todas,
+    // separando as em andamento das concluídas.
+    const sameCategory = selected ? [] : this.matchingRequests(question, requests);
+
+    if (!selected && sameCategory.length > 1) {
+      const open = sameCategory.filter((request) => this.isOpen(request.status));
+      const closed = sameCategory.filter((request) => !this.isOpen(request.status));
+      const describe = (request: GuestRequest) =>
+        `- ${request.description} (aberta em ${request.createdAt}): ${this.statusLabel(request.status)}`;
+
+      return [
+        `Encontrei ${sameCategory.length} solicitações de ${this.categoryLabel(sameCategory[0].category)}:`,
+        open.length ? 'Em andamento:' : '',
+        ...open.map(describe),
+        closed.length ? 'Encerradas:' : '',
+        ...closed.map(describe),
+      ]
+        .filter(Boolean)
+        .join('\n');
+    }
 
     if (!selected) {
       return [

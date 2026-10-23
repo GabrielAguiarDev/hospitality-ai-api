@@ -1,12 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import { matchByName, normalizeText } from '../common/text.js';
+import type { ConversationState } from '../contracts/conversation-state.js';
+import { ResortClock } from '../resort/resort-clock.service.js';
+
 import type {
   ChatIntent,
   HistoryEntry,
   IntentDecision,
   ReservationDetail,
 } from './chat-intent.types.js';
+import { extractEntities } from './message-entities.js';
 
 const INTENTS: ChatIntent[] = [
   'reservation.list',
@@ -22,6 +27,18 @@ const DETAILS: ReservationDetail[] = [
   'restaurant',
   'none',
 ];
+
+// Vocabulário fechado das respostas a um resumo de pré-reserva.
+const CONFIRM_TRIGGERS = new Set([
+  'sim', 'confirmo', 'confirmar', 'confirma', 'confirmado', 'fechado', 'ok', 'isso', 'perfeito', 'claro', 'reservar',
+]);
+const CONFIRM_WORDS = new Set([
+  ...CONFIRM_TRIGGERS, 'pode', 'quero', 'por', 'favor', 'obrigado', 'obrigada', 'yago', 'fazer', 'a', 'reserva', 'pfv', 'pf',
+]);
+const CANCEL_TRIGGERS = new Set(['nao', 'cancela', 'cancelar', 'cancele', 'desisto']);
+const CANCEL_WORDS = new Set([
+  ...CANCEL_TRIGGERS, 'obrigado', 'obrigada', 'yago', 'quero', 'mais', 'por', 'favor', 'a', 'reserva', 'deixa', 'pra', 'la', 'melhor',
+]);
 
 const KNOWLEDGE: IntentDecision = {
   intent: 'knowledge.search',
@@ -54,7 +71,11 @@ interface OllamaClassificationResponse {
 export class IntentClassifierService {
   private readonly logger = new Logger(IntentClassifierService.name);
 
-  constructor(private readonly configService: ConfigService) {}
+  private readonly clock: ResortClock;
+
+  constructor(private readonly configService: ConfigService) {
+    this.clock = new ResortClock(configService);
+  }
 
   private normalize(value: string): string {
     return value
@@ -252,18 +273,184 @@ export class IntentClassifierService {
     };
   }
 
+  private decision(
+    intent: ChatIntent,
+    message: string,
+  ): IntentDecision {
+    return {
+      intent,
+      detail: 'none',
+      entities: extractEntities(message, this.clock.today()),
+    };
+  }
+
+  /**
+   * Confirmação ou desistência de uma pré-reserva pendente.
+   * Só existe quando o servidor apresentou um resumo nesta conversa.
+   */
+  private pendingBookingDecision(
+    message: string,
+    state?: ConversationState,
+  ): IntentDecision | null {
+    const text = normalizeText(message);
+    const words = text.split(' ').filter(Boolean);
+
+    // Somente respostas curtas e inequívocas: "sim, mas para 3 adultos"
+    // ou "ok, e às 15h?" seguem o roteamento normal e não confirmam.
+    const only = (allowed: Set<string>) =>
+      words.length > 0 && words.length <= 6 && words.every((word) => allowed.has(word));
+
+    const confirmation = only(CONFIRM_WORDS) && words.some((word) => CONFIRM_TRIGGERS.has(word));
+    const cancellation = only(CANCEL_WORDS) && words.some((word) => CANCEL_TRIGGERS.has(word));
+
+    if (!state?.experience?.pendingPreviewId) {
+      // Confirmação sem pré-reserva: responde que não há nada pendente
+      // em vez de tratar a mensagem como pergunta de conhecimento.
+      return state?.topic === 'experience' && confirmation && /\bconfirm/.test(text)
+        ? this.decision('experience.booking.confirm', message)
+        : null;
+    }
+
+    if (cancellation) {
+      return this.decision('experience.booking.cancel', message);
+    }
+
+    if (confirmation) {
+      return this.decision('experience.booking.confirm', message);
+    }
+
+    return null;
+  }
+
+  private detectExperienceOrRestaurant(
+    message: string,
+    state?: ConversationState,
+  ): IntentDecision | null {
+    const text = normalizeText(message);
+
+    const experienceNoun =
+      /\b(?:experiencias?|passeios?|tours?|excursao|excursoes|caiaque|trilhas?)\b/;
+    const restaurantNoun =
+      /\b(?:mesa|restaurantes?|jantar|almoco|gastronomia|cardapio|pratos?)\b/;
+    const bookingVerb =
+      /\b(?:reservar|agendar|marcar|fazer (?:uma )?reserva|quero uma reserva|reserva pra mim|reserve)\b/;
+    const priceWords = /\b(?:quanto custa|quanto e|qual (?:o )?(?:valor|preco)|valor|preco|custa)\b/;
+    const availabilityWords =
+      /\b(?:vagas?|disponive(?:l|is)|disponibilidade|horarios?|tem para|tem pra|da para|da pra|cabe)\b/;
+
+    // Reservas de experiências já feitas pela hospedagem.
+    if (
+      /\b(?:minhas?|tenho|nossas?)\b.{0,40}\breservas?\b.{0,30}\b(?:experiencias?|passeios?|tours?)\b/.test(text) ||
+      /\breservas? (?:simuladas?|de experiencias?|de passeios?)\b/.test(text)
+    ) {
+      return this.decision('experience.reservations', message);
+    }
+
+    if (bookingVerb.test(text) && restaurantNoun.test(text)) {
+      return this.decision('restaurant.booking', message);
+    }
+
+    if (experienceNoun.test(text)) {
+      if (bookingVerb.test(text)) return this.decision('experience.booking', message);
+      if (priceWords.test(text)) return this.decision('experience.price', message);
+
+      if (/\b(?:quais|que|lista|liste|mostre|opcoes|posso fazer|tem alguma|existem|ha)\b/.test(text)) {
+        return this.decision('experience.list', message);
+      }
+
+      if (availabilityWords.test(text)) {
+        return this.decision('experience.availability', message);
+      }
+
+      return this.decision('experience.details', message);
+    }
+
+    const context = state?.topic === 'experience' ? state.experience : undefined;
+
+    // Perguntas explícitas sobre reservas de restaurante têm prioridade.
+    if (context && this.explicitReservation(message)) {
+      return null;
+    }
+
+    if (!context || (!context.selectedId && !context.listed?.length)) {
+      // Verbo de reserva sem contexto: pode citar uma experiência pelo nome.
+      return bookingVerb.test(text) && !/\bminhas? reservas?\b/.test(text)
+        ? this.decision('experience.booking', message)
+        : null;
+    }
+
+    // Perguntas sobre outros serviços encerram o contexto da experiência.
+    if (/\b(?:spa|piscina|academia|restaurantes?|bar|recepcao|wi ?fi|praia|show|eventos?|cafe|toalhas?|check ?(?:in|out)|solicitac(?:ao|oes)|chamados?)\b/.test(text)) {
+      return null;
+    }
+
+    const entities = extractEntities(message, this.clock.today());
+    const mentionsListed =
+      context.listed?.length && matchByName(message, context.listed.map(({ id, title }) => ({ id, name: title }))).length > 0;
+
+    if (bookingVerb.test(text) || /\b(?:quero essa|quero esse|vamos nessa|pode ser essa)\b/.test(text)) {
+      return this.decision('experience.booking', message);
+    }
+
+    if (priceWords.test(text)) return this.decision('experience.price', message);
+
+    if (entities.ordinal !== undefined || mentionsListed) {
+      return this.decision('experience.details', message);
+    }
+
+    if (
+      entities.people !== undefined ||
+      entities.adults !== undefined ||
+      entities.children !== undefined ||
+      entities.date !== undefined ||
+      entities.time !== undefined ||
+      availabilityWords.test(text)
+    ) {
+      return this.decision('experience.availability', message);
+    }
+
+    if (/\b(?:quantas pessoas|para quantos)\b/.test(text)) {
+      return { ...this.decision('experience.details', message), detail: 'party_size' };
+    }
+
+    if (/\b(?:quantas pessoas|idade|regras?|como funciona|detalhes|mais sobre|descricao|o que e|onde)\b/.test(text)) {
+      return this.decision('experience.details', message);
+    }
+
+    return null;
+  }
+
   async classify(
     message: string,
     history: HistoryEntry[] = [],
+    state?: ConversationState,
   ): Promise<IntentDecision> {
+    const pending = this.pendingBookingDecision(message, state);
+
+    if (pending) {
+      return pending;
+    }
+
     const requestIntent = this.detectRequestIntent(message, history);
 
     if (requestIntent) {
       return requestIntent;
     }
-    
+
+    const experienceIntent = this.detectExperienceOrRestaurant(message, state);
+
+    if (experienceIntent) {
+      return experienceIntent;
+    }
+
     const explicit = this.explicitReservation(message);
     const followUp = this.reservationFollowUp(message, history);
+
+    // Sem indício operacional, o modelo não pode liberar uma
+    // consulta: evita uma chamada redundante ao Ollama.
+    if (!explicit && !followUp) {
+      return KNOWLEDGE;
+    }
 
     const fallback = explicit ?? followUp ?? KNOWLEDGE;
 
@@ -347,12 +534,6 @@ export class IntentClassifierService {
       const parsed: unknown = JSON.parse(data.message?.content ?? '');
 
       const decision = this.validate(parsed);
-
-      // Uma classificação não pode, sozinha, liberar
-      // uma consulta operacional sem contexto suficiente.
-      if (!explicit && !followUp) {
-        return KNOWLEDGE;
-      }
 
       // Proteção contra uma classificação incorreta
       // em perguntas operacionais explícitas.

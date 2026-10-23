@@ -8,6 +8,23 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import type { GuestContext } from '../guest/guest-context.js';
+import type { SimulatedExperienceBooking } from '../experiences/entities/simulated-experience-booking.entity.js';
+import { ExperienceAvailabilityService } from '../experiences/experience-availability.service.js';
+import {
+  ExperienceBookingService,
+  type ConfirmResult,
+  type PreviewResult,
+} from '../experiences/experience-booking.service.js';
+import {
+  ExperiencesCatalogService,
+  type StayExperienceReservation,
+} from '../experiences/experiences-catalog.service.js';
+import type { ExperienceInfo, ExperienceSlot } from '../experiences/experience.types.js';
+import { GuestStayService } from '../resort/guest-stay.service.js';
+import {
+  RestaurantsCatalogService,
+  type RestaurantInfo,
+} from '../resort/restaurants-catalog.service.js';
 
 import {
   ReservationsService,
@@ -19,9 +36,26 @@ import {
   type GuestRequest,
 } from './requests.service.js';
 
+import {
+  parseAvailabilityInput,
+  parseExperienceIdInput,
+  parseExperienceListInput,
+  parseNoInput,
+  parsePreviewInput,
+  parsePreviewReferenceInput,
+} from './tool-inputs.js';
+
 export type OperationToolName =
   | 'reservations.list'
-  | 'requests.list';
+  | 'requests.list'
+  | 'restaurants.list'
+  | 'experiences.list'
+  | 'experiences.details'
+  | 'experiences.availability'
+  | 'experiences.reservations'
+  | 'experiences.booking.preview'
+  | 'experiences.booking.confirm'
+  | 'experiences.booking.cancel';
 
 export interface OperationToolDefinition {
   name: OperationToolName;
@@ -37,8 +71,56 @@ export type OperationToolResult =
   | {
       tool: 'requests.list';
       data: GuestRequest[];
+    }
+  | {
+      tool: 'restaurants.list';
+      data: RestaurantInfo[];
+    }
+  | {
+      tool: 'experiences.list';
+      data: {
+        date: string | null;
+        experiences: ExperienceInfo[];
+        slots: ExperienceSlot[];
+      };
+    }
+  | {
+      tool: 'experiences.details';
+      data: ExperienceInfo | null;
+    }
+  | {
+      tool: 'experiences.availability';
+      data: {
+        experience: ExperienceInfo | null;
+        date: string;
+        slots: ExperienceSlot[];
+      };
+    }
+  | {
+      tool: 'experiences.reservations';
+      data: {
+        official: StayExperienceReservation[];
+        simulated: SimulatedExperienceBooking[];
+      };
+    }
+  | {
+      tool: 'experiences.booking.preview';
+      data: PreviewResult;
+    }
+  | {
+      tool: 'experiences.booking.confirm';
+      data: ConfirmResult;
+    }
+  | {
+      tool: 'experiences.booking.cancel';
+      data: { cancelled: boolean };
     };
 
+/**
+ * Ponto único de execução das ferramentas operacionais.
+ * Cada ferramenta valida as próprias entradas; nenhuma
+ * aceita SQL, e identificadores são revalidados no banco.
+ */
 @Injectable()
 export class OperationsToolRegistryService {
   private readonly logger = new Logger(
@@ -58,12 +140,58 @@ export class OperationsToolRegistryService {
         'Consulta solicitações do hóspede atual.',
       readOnly: true,
     },
+    {
+      name: 'restaurants.list',
+      description: 'Lista restaurantes e bares ativos do resort.',
+      readOnly: true,
+    },
+    {
+      name: 'experiences.list',
+      description:
+        'Lista experiências ativas e, com data, as vagas registradas no snapshot.',
+      readOnly: true,
+    },
+    {
+      name: 'experiences.details',
+      description: 'Consulta descrição, regras e preços de uma experiência.',
+      readOnly: true,
+    },
+    {
+      name: 'experiences.availability',
+      description: 'Consulta horários e vagas registrados de uma experiência.',
+      readOnly: true,
+    },
+    {
+      name: 'experiences.reservations',
+      description: 'Consulta reservas de experiências da hospedagem atual.',
+      readOnly: true,
+    },
+    {
+      name: 'experiences.booking.preview',
+      description: 'Cria uma pré-reserva simulada após validar as regras.',
+      readOnly: false,
+    },
+    {
+      name: 'experiences.booking.confirm',
+      description: 'Confirma uma pré-reserva simulada persistida.',
+      readOnly: false,
+    },
+    {
+      name: 'experiences.booking.cancel',
+      description: 'Cancela uma pré-reserva simulada pendente.',
+      readOnly: false,
+    },
   ];
 
   constructor(
     private readonly reservationsService: ReservationsService,
     private readonly requestsService: RequestsService,
     private readonly configService: ConfigService,
+    private readonly restaurantsCatalog: RestaurantsCatalogService,
+    private readonly experiencesCatalog: ExperiencesCatalogService,
+    private readonly experienceAvailability: ExperienceAvailabilityService,
+    private readonly experienceBooking: ExperienceBookingService,
+    private readonly guestStay: GuestStayService,
   ) {}
 
   listTools(): readonly OperationToolDefinition[] {
@@ -75,9 +203,10 @@ export class OperationsToolRegistryService {
     guest: GuestContext,
     input: unknown = {},
   ): Promise<OperationToolResult> {
+    // Falha fechada: ferramentas de demonstração somente em desenvolvimento.
     if (
-      this.configService.get<string>('NODE_ENV') ===
-      'production'
+      this.configService.get<string>('NODE_ENV') !==
+      'development'
     ) {
       throw new ForbiddenException(
         'Ferramentas de demonstração desabilitadas.',
@@ -93,47 +222,133 @@ export class OperationsToolRegistryService {
       );
     }
 
-    if (
-      input === null ||
-      typeof input !== 'object' ||
-      Array.isArray(input) ||
-      Object.keys(input).length > 0
-    ) {
-      throw new BadRequestException(
-        'Esta ferramenta não aceita argumentos.',
-      );
-    }
+    const result = await this.run(name, guest, input);
 
+    this.logger.log(
+      `Ferramenta executada: ${name}`,
+    );
+
+    return result;
+  }
+
+  private async run(
+    name: string,
+    guest: GuestContext,
+    input: unknown,
+  ): Promise<OperationToolResult> {
     switch (name) {
       case 'reservations.list': {
-        const data =
-          await this.reservationsService.listForGuest(
-            guest,
-          );
-
-        this.logger.log(
-          `Ferramenta executada: ${name}`,
-        );
+        parseNoInput(input);
 
         return {
           tool: name,
-          data,
+          data: await this.reservationsService.listForGuest(guest),
         };
       }
 
       case 'requests.list': {
-        const data =
-          await this.requestsService.listForGuest(
-            guest,
-          );
-
-        this.logger.log(
-          `Ferramenta executada: ${name}`,
-        );
+        parseNoInput(input);
 
         return {
           tool: name,
-          data,
+          data: await this.requestsService.listForGuest(guest),
+        };
+      }
+
+      case 'restaurants.list': {
+        parseNoInput(input);
+
+        return {
+          tool: name,
+          data: await this.restaurantsCatalog.listActive(),
+        };
+      }
+
+      case 'experiences.list': {
+        const { date, includeInactive } = parseExperienceListInput(input);
+        const experiences = includeInactive
+          ? await this.experiencesCatalog.listAll()
+          : await this.experiencesCatalog.listActive();
+        const slots = date
+          ? await this.experienceAvailability.findSlots(date)
+          : [];
+
+        return { tool: name, data: { date, experiences, slots } };
+      }
+
+      case 'experiences.details': {
+        const { experienceId } = parseExperienceIdInput(input);
+
+        return {
+          tool: name,
+          data: await this.experiencesCatalog.findById(experienceId),
+        };
+      }
+
+      case 'experiences.availability': {
+        const { experienceId, date } = parseAvailabilityInput(input);
+        const experience = await this.experiencesCatalog.findById(experienceId);
+        const slots = experience
+          ? await this.experienceAvailability.findSlots(date, experience.id)
+          : [];
+
+        return { tool: name, data: { experience, date, slots } };
+      }
+
+      case 'experiences.reservations': {
+        parseNoInput(input);
+        const stay = await this.guestStay.resolve(guest);
+        const [official, simulated] = await Promise.all([
+          this.experiencesCatalog.listStayReservations(stay),
+          this.experienceBooking.listSimulated(guest, stay),
+        ]);
+
+        return { tool: name, data: { official, simulated } };
+      }
+
+      case 'experiences.booking.preview': {
+        const parsed = parsePreviewInput(input);
+        const stay = await this.guestStay.resolve(guest);
+
+        return {
+          tool: name,
+          data: await this.experienceBooking.preview(guest, stay, {
+            conversationId: parsed.conversationId,
+            experienceId: parsed.experienceId,
+            date: parsed.date,
+            time: parsed.time,
+            party: { adults: parsed.adults, children: parsed.children },
+          }),
+        };
+      }
+
+      case 'experiences.booking.confirm': {
+        const { conversationId, previewId } = parsePreviewReferenceInput(input);
+        const stay = await this.guestStay.resolve(guest);
+
+        return {
+          tool: name,
+          data: await this.experienceBooking.confirm(
+            guest,
+            stay,
+            conversationId,
+            previewId,
+          ),
+        };
+      }
+
+      case 'experiences.booking.cancel': {
+        const { conversationId, previewId } = parsePreviewReferenceInput(input);
+
+        return {
+          tool: name,
+          data: {
+            cancelled: await this.experienceBooking.cancelPreview(
+              guest,
+              conversationId,
+              previewId,
+            ),
+          },
         };
       }
 

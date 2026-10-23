@@ -3,8 +3,10 @@ import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 
 import { AppModule } from '../app.module.js';
-import { ResortReservationsService } from '../operations/resort-reservations.service.js';
+import { ReservationsService } from '../operations/reservations.service.js';
+import { RequestsService } from '../operations/requests.service.js';
 
+// Uso: node dist/scripts/test-resort-reservations.js <guestHolderId>
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.createApplicationContext(
     AppModule,
@@ -13,41 +15,52 @@ async function bootstrap(): Promise<void> {
   try {
     const config = app.get(ConfigService);
 
-    const service = app.get(
-      ResortReservationsService,
-    );
-
     const resortId =
       config.getOrThrow<string>('RESORT_ID');
 
-    const guestId = config
-      .getOrThrow<string>('DEMO_ALLOWED_GUEST_IDS')
-      .split(',')
-      .map((id) => id.trim())
-      .find(Boolean);
+    const guestId = process.argv[2]?.trim();
 
     if (!guestId) {
       throw new Error(
-        'Nenhum hóspede de demonstração configurado.',
+        'Informe o guestHolder.id como argumento.',
       );
     }
 
-    const reservations = await service.listForGuest({
-      resortId,
-      guestId,
-    });
+    const guest = { resortId, guestId };
 
+    const reservations = await app
+      .get(ReservationsService)
+      .listForGuest(guest);
+
+    const requests = await app
+      .get(RequestsService)
+      .listForGuest(guest);
+
+    // Não imprime nomes nem identificadores
+    // pessoais de hóspedes.
     console.log(
       `\nReservas encontradas: ${reservations.length}`,
     );
 
-    // Não imprime nomes nem identificadores
-    // pessoais de hóspedes.
     console.table(
       reservations.map((reservation) => ({
         restaurante: reservation.restaurant,
-        data: reservation.reservationDate,
+        data: reservation.reservedAt,
+        pessoas: reservation.partySize,
         situacao: reservation.status,
+      })),
+    );
+
+    console.log(
+      `\nSolicitações encontradas: ${requests.length}`,
+    );
+
+    console.table(
+      requests.map((request) => ({
+        departamento: request.category,
+        itens: request.description,
+        situacao: request.status,
+        abertura: request.createdAt,
       })),
     );
   } finally {
@@ -56,6 +69,8 @@ async function bootstrap(): Promise<void> {
 }
 
 bootstrap().catch((error: unknown) => {
-  console.error(error);
+  console.error(
+    error instanceof Error ? error.message : String(error),
+  );
   process.exitCode = 1;
 });

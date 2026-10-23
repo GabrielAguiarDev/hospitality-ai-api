@@ -9,6 +9,7 @@ import { AppService } from './app.service.js';
 import { ChatModule } from './chat/chat.module.js';
 import { OperationsModule } from './operations/operations.module.js';
 import { ResortDatabaseModule } from './database/resort-database.module.js';
+import { AI_MIGRATIONS, AI_MIGRATIONS_TABLE } from './database/ai-migrations.js';
 
 @Module({
   imports: [
@@ -27,6 +28,11 @@ import { ResortDatabaseModule } from './database/resort-database.module.js';
 
         autoLoadEntities: true,
         synchronize: false,
+
+        // Executadas explicitamente: pnpm migration:run
+        migrations: AI_MIGRATIONS,
+        migrationsTableName: AI_MIGRATIONS_TABLE,
+        migrationsRun: false,
       }),
     }),
     ScheduleModule.forRoot(),

@@ -19,6 +19,11 @@ interface OllamaChatResponse {
   };
 }
 
+function positiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 @Injectable()
 export class OllamaService {
   private readonly logger = new Logger(OllamaService.name);
@@ -28,6 +33,12 @@ export class OllamaService {
 
   private readonly model =
     process.env.OLLAMA_MODEL ?? 'qwen3:1.7b';
+
+  // Listas do catálogo (ex.: restaurantes) precisam de mais tokens.
+  private readonly numPredict = positiveInt(process.env.OLLAMA_NUM_PREDICT, 512);
+
+  // Comporta os documentos recuperados e o histórico da conversa.
+  private readonly numCtx = positiveInt(process.env.OLLAMA_NUM_CTX, 8192);
 
   async generate(messages: LlmMessage[]): Promise<string> {
     let response: Response;
@@ -45,8 +56,8 @@ export class OllamaService {
           think: false,
           messages,
           options: {
-            num_ctx: 4096,
-            num_predict: 256,
+            num_ctx: this.numCtx,
+            num_predict: this.numPredict,
           },
         }),
       });
