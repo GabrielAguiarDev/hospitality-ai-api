@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import { compactText, normalizeTime } from '../common/text.js';
+import { compactText, normalizeTime, stripSymbols } from '../common/text.js';
 
 import { ResortSnapshotGateway } from './resort-snapshot.gateway.js';
 
@@ -69,7 +69,7 @@ export class RestaurantsCatalogService {
 
     return rows.map((row) => ({
       id: row.id,
-      name: compactText(row.name, 120) || 'Restaurante sem nome',
+      name: stripSymbols(compactText(row.name, 120)) || 'Restaurante sem nome',
       type: row.type,
       openingHours: compactText(row.openingHours, 300) || null,
       description: compactText(row.description),

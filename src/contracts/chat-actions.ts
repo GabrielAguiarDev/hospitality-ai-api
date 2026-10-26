@@ -61,10 +61,33 @@ export interface ExperienceBookingConfirmAction {
   summary: ExperienceBookingSummary;
 }
 
+/**
+ * Opções de experiência apresentadas na resposta, na mesma ordem
+ * numerada do texto. Ao tocar em uma opção, o aplicativo envia
+ * `message` para POST /chat na mesma conversa.
+ */
+export interface ExperienceOption {
+  position: number;
+  experienceId: string;
+  title: string;
+  // Horários registrados no snapshot para a data consultada (HH:MM).
+  times: string[];
+  message: string;
+}
+
+export interface ExperienceOptionsAction {
+  type: 'experience.options';
+  label: string;
+  // Data consultada (AAAA-MM-DD) ou null para o catálogo sem data.
+  date: string | null;
+  options: ExperienceOption[];
+}
+
 export type ChatAction =
   | NavigateAction
   | ExperienceBookingPreviewAction
-  | ExperienceBookingConfirmAction;
+  | ExperienceBookingConfirmAction
+  | ExperienceOptionsAction;
 
 export interface RetrievedSource {
   id: string;
@@ -132,6 +155,24 @@ export function isValidChatAction(action: ChatAction): boolean {
         action.confirm?.path === '/chat/actions' &&
         action.confirm.body.previewId === action.previewId &&
         UUID.test(action.confirm.body.conversationId)
+      );
+
+    case 'experience.options':
+      return (
+        isText(action.label, 60) &&
+        (action.date === null || ISO_DATE.test(action.date)) &&
+        Array.isArray(action.options) &&
+        action.options.length >= 1 &&
+        action.options.length <= 10 &&
+        action.options.every(
+          (option, index) =>
+            option.position === index + 1 &&
+            isText(option.experienceId) &&
+            isText(option.title, 160) &&
+            isText(option.message, 60) &&
+            Array.isArray(option.times) &&
+            option.times.every((time) => TIME.test(time)),
+        )
       );
 
     case 'experience.booking.confirm':

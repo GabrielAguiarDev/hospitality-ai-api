@@ -8,7 +8,12 @@ export type ChatIntent =
   | 'request.list'
   | 'request.status'
   | 'restaurant.booking'
+  // Catálogo e detalhes de restaurantes e bares (sem reserva pelo chat).
+  | 'restaurant.list'
+  | 'restaurant.details'
   | 'experience.list'
+  // Busca de vagas em várias experiências (data, período, filtros).
+  | 'experience.search'
   | 'experience.details'
   | 'experience.availability'
   | 'experience.price'
@@ -37,6 +42,24 @@ export interface IntentDecision {
   detail: ReservationDetail;
   // Entidades extraídas deterministicamente da mensagem.
   entities?: MessageEntities;
+  // A mensagem refina a busca anterior ("E de manhã?"): os filtros
+  // já preservados na conversa são combinados com os novos.
+  refine?: boolean;
+  // Referência contextual resolvida pelo servidor ("essa", "sim"):
+  // ID vindo do estado da conversa, nunca do texto do modelo.
+  target?: { kind: 'experience' | 'restaurant'; id: string; via: ContextReference };
+  // "Sim" a uma pergunta pendente: executa a intenção registrada.
+  answersPending?: boolean;
+  // "Não" a uma pergunta pendente: nada é executado.
+  declinesPending?: boolean;
+}
+
+export type ContextReference = 'pending_question' | 'demonstrative' | 'single_listed' | 'selected';
+
+export type RestaurantIntent = Extract<ChatIntent, `restaurant.${string}`>;
+
+export function isRestaurantIntent(intent: ChatIntent): intent is RestaurantIntent {
+  return intent.startsWith('restaurant.');
 }
 
 export interface HistoryEntry {

@@ -1,4 +1,5 @@
 import { normalizeText } from '../common/text.js';
+import type { DayPeriod } from '../contracts/conversation-state.js';
 import { ResortClock } from '../resort/resort-clock.service.js';
 
 /**
@@ -15,6 +16,15 @@ export interface MessageEntities {
   people?: number;
   // Posição em uma lista apresentada (1 = primeira).
   ordinal?: number;
+  // Período do dia, sem horário específico ("de manhã").
+  period?: DayPeriod;
+  // Faixa de horário (HH:MM): "depois das 15h", "antes das 10h".
+  after?: string;
+  before?: string;
+  // Filtros de catálogo citados na pergunta.
+  free?: true;
+  forChildren?: true;
+  bookable?: true;
 }
 
 const NUMBER_WORDS: Record<string, number> = {
@@ -123,7 +133,9 @@ export function extractDate(text: string, today: string): string | undefined {
     if (explicit) {
       const target = WEEKDAYS[name];
       const current = ResortClock.weekdayIndex(today);
-      return ResortClock.addDays(today, (target - current + 7) % 7);
+      const days = (target - current + 7) % 7;
+      // "Próximo sábado" dito num sábado é o da semana seguinte.
+      return ResortClock.addDays(today, days === 0 && /^(?:proximo|proxima)\s/.test(weekday[0]) ? 7 : days);
     }
   }
 
@@ -135,7 +147,7 @@ export function extractTime(text: string): string | undefined {
 
   const match =
     // "pra 2 pessoas" e "quero a 2" não são horários.
-    t.match(/\b(?:as|pras|por volta das|a partir das)\s+(\d{1,2})(?:\s*h\s*(\d{2})?|\s+horas?)?\b(?!\s+(?:pessoas?|adultos?|criancas?))/) ??
+    t.match(/\b(?:as|pras|por volta das)\s+(\d{1,2})(?:\s*h\s*(\d{2})?|\s+horas?)?\b(?!\s+(?:pessoas?|adultos?|criancas?))/) ??
     t.match(/\b(\d{1,2})\s*h\s*(\d{2})?\b/) ??
     t.match(/\b(\d{1,2})\s+horas?\b/);
 
@@ -151,6 +163,80 @@ export function extractTime(text: string): string | undefined {
   }
 
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+// Expressões que contêm "manhã", "tarde" ou "noite" sem indicar período.
+const NOT_A_PERIOD = /\b(?:bom dia|boa tarde|boa noite|boas noites|cafe da manha|mais tarde|ate mais tarde)\b/g;
+
+export function extractPeriod(text: string): DayPeriod | undefined {
+  const t = normalizeText(text).replace(NOT_A_PERIOD, ' ');
+
+  // "amanhã" não contém a palavra "manhã" isolada.
+  if (/\bmanha\b/.test(t)) return 'morning';
+  // "tarde" sozinha também é advérbio ("vou chegar tarde").
+  if (/\b(?:a|de|da|na|pela|esta|essa|nesta|hoje|amanha|durante a) tarde\b/.test(t)) return 'afternoon';
+  if (/\bnoite\b/.test(t)) return 'evening';
+
+  return undefined;
+}
+
+const HOUR =
+  '(\\d{1,2})(?:\\s*h\\s*(\\d{2})?|\\s+horas?)?\\b(?!\\s+(?:pessoas?|adultos?|criancas?|anos?|meses))(?:\\s+d[ae]\\s+(tarde|noite))?';
+
+// "8 da noite" = 20:00; "4 da tarde" = 16:00.
+function clock(hours: string, minutes?: string, afternoon?: string): string | undefined {
+  const h = Number(hours) + (afternoon && Number(hours) < 12 ? 12 : 0);
+  const m = Number(minutes ?? '0');
+  return h <= 23 && m <= 59 ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}` : undefined;
+}
+
+/** "depois das 15h", "a partir das 14h", "antes das 10h". */
+export function extractTimeRange(text: string): Pick<MessageEntities, 'after' | 'before'> {
+  const t = normalizeText(text.replace(/(\d)\s*:\s*(\d)/g, '$1h$2'));
+  const result: Pick<MessageEntities, 'after' | 'before'> = {};
+
+  const after = t.match(new RegExp(`\\b(?:depois d[ao]s?|apos (?:as?|o)?|a partir d[ao]s?)\\s*${HOUR}`));
+  const before = t.match(new RegExp(`\\b(?:antes d[ao]s?|ate (?:as|a))\\s+${HOUR}`));
+
+  const afterTime = after ? clock(after[1], after[2], after[3]) : undefined;
+  const beforeTime = before ? clock(before[1], before[2], before[3]) : undefined;
+
+  if (afterTime) result.after = afterTime;
+  if (beforeTime) result.before = beforeTime;
+
+  return result;
+}
+
+/**
+ * Filtros de catálogo: "gratuitas", "para crianças", "que aceitam reserva".
+ * Um número de crianças ("para 2 crianças") é composição do grupo, não filtro.
+ */
+export function extractSearchCues(text: string): Pick<MessageEntities, 'free' | 'forChildren' | 'bookable'> {
+  const t = normalizeText(text);
+  const result: Pick<MessageEntities, 'free' | 'forChildren' | 'bookable'> = {};
+
+  if (/\b(?:gratis|gratuit[ao]s?|de graca|sem custo|sem cobranca|sem pagar|all inclusive|inclus[ao]s? na diaria|incluid[ao]s? na diaria)\b/.test(t)) {
+    result.free = true;
+  }
+
+  if (
+    /\b(?:infantil|infantis|kids|criancas? pode|criancas podem|aceitam? criancas?|(?:para|pra|com) (?:as |os |meus |minhas )?(?:criancas|pequenos|filhos|filhas))\b/.test(t) &&
+    !new RegExp(`\\b${NUMBER}\\s+(?:criancas?|filhos?|filhas?)\\b`).test(t)
+  ) {
+    result.forChildren = true;
+  }
+
+  // "não precisam de reserva" / "sem reserva" pedem o contrário.
+  const negated = /\b(?:nao (?:precisa|precisam|exige|exigem|tem|aceita|aceitam|requer|requerem)(?: de)? reservas?|sem (?:necessidade de )?reservas?)\b/.test(t);
+
+  if (
+    !negated &&
+    /\b(?:vagas?|disponive(?:l|is)|disponibilidade|(?:tem|tenha|tenham|com|aceitam?|precisam?(?: de)?|exigem?) reservas?|reservave(?:l|is)|(?:posso|podemos|da pra|da para|para|pra|consigo) reservar)\b/.test(t)
+  ) {
+    result.bookable = true;
+  }
+
+  return result;
 }
 
 export function extractParty(
@@ -218,8 +304,18 @@ export function extractEntities(text: string, today: string): MessageEntities {
     entities.date = date;
   }
 
-  const time = extractTime(text);
+  // Uma faixa ("depois das 15h") ou um período não é um horário exato.
+  const range = extractTimeRange(text);
+  Object.assign(entities, range);
+
+  const time = range.after || range.before ? undefined : extractTime(text);
   if (time !== undefined) entities.time = time;
+
+  // "depois das 8 da noite" já é uma faixa; o período não a alarga.
+  const period = range.after || range.before ? undefined : extractPeriod(text);
+  if (period !== undefined) entities.period = period;
+
+  Object.assign(entities, extractSearchCues(text));
 
   for (const key of Object.keys(entities) as (keyof MessageEntities)[]) {
     if (entities[key] === undefined) delete entities[key];

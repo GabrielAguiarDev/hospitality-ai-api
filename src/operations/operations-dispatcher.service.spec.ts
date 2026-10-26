@@ -50,6 +50,11 @@ describe('OperationsDispatcherService', () => {
       reply: 'Abra Gastronomia',
       actions: [],
     })),
+    handle: vi.fn(async () => ({
+      tool: 'restaurants.list' as const,
+      reply: 'Abra Gastronomia',
+      actions: [],
+    })),
   };
 
   const CONTEXT = {
@@ -207,7 +212,26 @@ describe('OperationsDispatcherService', () => {
     );
 
     expect(result.tool).toBe('restaurants.list');
-    expect(restaurants.handleBooking).toHaveBeenCalledExactlyOnceWith('Quero reservar uma mesa', GUEST);
+    // Com a conversa, o handler resolve referências ("a segunda") antes de navegar.
+    expect(restaurants.handle).toHaveBeenCalledExactlyOnceWith(
+      'Quero reservar uma mesa',
+      { intent: 'restaurant.booking', detail: 'none' },
+      GUEST,
+      CONTEXT,
+    );
     expect(experiences.handle).not.toHaveBeenCalled();
+  });
+
+  it('routes restaurant bookings without a conversation context to navigation only', async () => {
+    await dispatcher.dispatch('Quero reservar uma mesa', { intent: 'restaurant.booking', detail: 'none' }, GUEST);
+
+    expect(restaurants.handleBooking).toHaveBeenCalledExactlyOnceWith('Quero reservar uma mesa', GUEST);
+  });
+
+  it.each(['restaurant.list', 'restaurant.details'] as const)('routes %s to the restaurant catalog', async (intent) => {
+    await dispatcher.dispatch('Quais restaurantes existem?', { intent, detail: 'none' }, GUEST, CONTEXT);
+
+    expect(restaurants.handle).toHaveBeenCalledOnce();
+    expect(reservations.ask).not.toHaveBeenCalled();
   });
 });

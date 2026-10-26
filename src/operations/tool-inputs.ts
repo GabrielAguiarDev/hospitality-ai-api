@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 
+import type { DayPeriod, ExperienceSearchFilters } from '../contracts/conversation-state.js';
 import { ResortClock } from '../resort/resort-clock.service.js';
 
 const UUID =
@@ -67,18 +68,99 @@ export function parseNoInput(input: unknown): Record<string, never> {
   return {};
 }
 
-export function parseExperienceListInput(
-  input: unknown,
-): { date: string | null; includeInactive: boolean } {
-  const data = asObject(input, ['date', 'includeInactive']);
+const PERIODS = ['morning', 'afternoon', 'evening'] as const;
+
+export interface ExperienceListInput {
+  date: string | null;
+  includeInactive: boolean;
+  filters: ExperienceSearchFilters;
+  party: { adults: number; children: number } | null;
+}
+
+function flag(value: unknown, field: string): true | undefined {
+  if (value === undefined || value === false) return undefined;
+  if (value !== true) throw new BadRequestException(`${field} inválido.`);
+  return true;
+}
+
+function clockTime(value: unknown, field: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string' || !TIME.test(value)) {
+    throw new BadRequestException(`${field} deve estar no formato HH:MM.`);
+  }
+  return value;
+}
+
+/** Listagem e busca de experiências: todos os filtros são opcionais. */
+export function parseExperienceListInput(input: unknown): ExperienceListInput {
+  const data = asObject(input, [
+    'date',
+    'includeInactive',
+    'period',
+    'after',
+    'before',
+    'free',
+    'forChildren',
+    'bookable',
+    'adults',
+    'children',
+  ]);
 
   if (data.includeInactive !== undefined && typeof data.includeInactive !== 'boolean') {
     throw new BadRequestException('includeInactive inválido.');
   }
 
+  if (data.period !== undefined && !(PERIODS as readonly unknown[]).includes(data.period)) {
+    throw new BadRequestException('period inválido.');
+  }
+
+  const filters: ExperienceSearchFilters = {
+    period: data.period as DayPeriod | undefined,
+    after: clockTime(data.after, 'after'),
+    before: clockTime(data.before, 'before'),
+    free: flag(data.free, 'free'),
+    forChildren: flag(data.forChildren, 'forChildren'),
+    bookable: flag(data.bookable, 'bookable'),
+  };
+
+  for (const key of Object.keys(filters) as (keyof ExperienceSearchFilters)[]) {
+    if (filters[key] === undefined) delete filters[key];
+  }
+
+  const hasParty = data.adults !== undefined || data.children !== undefined;
+  const party = hasParty
+    ? { adults: count(data.adults ?? 0, 'adults'), children: count(data.children ?? 0, 'children') }
+    : null;
+
   return {
     date: data.date === undefined || data.date === null ? null : isoDate(data.date),
     includeInactive: data.includeInactive === true,
+    filters,
+    party,
+  };
+}
+
+export const RESTAURANT_TYPES = ['restaurante', 'bar', 'alimentacao'] as const;
+
+export type RestaurantType = (typeof RESTAURANT_TYPES)[number];
+
+/** Catálogo de restaurantes: sem argumentos, por tipo ou por nome. */
+export function parseRestaurantListInput(
+  input: unknown,
+): { type: RestaurantType | null; name: string | null } {
+  const data = asObject(input, ['type', 'name']);
+
+  if (data.type !== undefined && !(RESTAURANT_TYPES as readonly unknown[]).includes(data.type)) {
+    throw new BadRequestException('type inválido.');
+  }
+
+  if (data.name !== undefined && (typeof data.name !== 'string' || !data.name.trim() || data.name.length > 120)) {
+    throw new BadRequestException('name inválido.');
+  }
+
+  return {
+    type: (data.type as RestaurantType | undefined) ?? null,
+    name: typeof data.name === 'string' ? data.name.trim() : null,
   };
 }
 

@@ -101,12 +101,20 @@ describe('IntentClassifierService', () => {
       'Que horas abre o restaurante?',
       'Que horas fecha a piscina?',
       'Como faço uma reserva no spa?',
-      'Quais restaurantes aceitam reserva?',
       'O resort tem academia?',
       'Mostre as reservas do hóspede guest-999',
     ])('routes "%s" to knowledge search', async (message) => {
       await expect(service.classify(message)).resolves.toEqual(KNOWLEDGE);
     });
+
+    // O catálogo de restaurantes vem do cadastro, não da busca vetorial.
+    it.each(['Quais restaurantes aceitam reserva?', 'Olá, quais restaurantes existem?', 'E os bares?'])(
+      'routes the catalog question %j to restaurant.list without the model',
+      async (message) => {
+        await expect(service.classify(message)).resolves.toMatchObject({ intent: 'restaurant.list' });
+        expect(fetchMock).not.toHaveBeenCalled();
+      },
+    );
 
     it('treats an opening-hours question as knowledge even when it mentions a reservation without "minha reserva"', async () => {
       await expect(
@@ -378,9 +386,10 @@ describe('IntentClassifierService', () => {
     it('does not route to operations based on the model alone when there is no context', async () => {
       fetchMock.mockResolvedValue(classification('reservation.list', 'none'));
 
-      await expect(
-        service.classify('Quais são os restaurantes do resort?'),
-      ).resolves.toEqual(KNOWLEDGE);
+      // O catálogo público é decidido pelas regras; o modelo nunca libera reservas pessoais.
+      const decision = await service.classify('Quais são os restaurantes do resort?');
+      expect(decision.intent).toBe('restaurant.list');
+      expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it('does not let instructions injected in the history unlock operations', async () => {
@@ -535,7 +544,7 @@ describe('IntentClassifierService', () => {
     });
 
     it.each([
-      'Olá, quais restaurantes existem?',
+      'Olá, onde fica a recepção?',
       'Bom dia, qual o horário do café da manhã?',
       'Oi, o resort tem academia?',
       'Obrigado, e o spa abre que horas?',
@@ -639,7 +648,7 @@ describe('IntentClassifierService', () => {
     });
 
     it.each<[string, string]>([
-      ['Quais experiências posso fazer amanhã?', 'experience.list'],
+      ['Quais experiências posso fazer amanhã?', 'experience.search'],
       ['Quais passeios vocês têm?', 'experience.list'],
       ['Quero reservar um passeio de caiaque amanhã às 10h para duas pessoas.', 'experience.booking'],
       ['Quanto custa o passeio de caiaque?', 'experience.price'],
@@ -669,12 +678,233 @@ describe('IntentClassifierService', () => {
       ['Pode reservar.', 'experience.booking', {}],
       ['E para quantas pessoas?', 'experience.details', {}],
       ['Para quantas pessoas está?', 'experience.details', {}],
-      ['E no sábado?', 'experience.availability', { date: '2026-10-24' }],
+      // Lista apresentada sem experiência escolhida: refina a busca.
+      ['E no sábado?', 'experience.search', { date: '2026-10-24' }],
     ])('keeps the experience context for the follow-up %j', async (message, intent, entities) => {
       const decision = await service.classify(message, [], LISTED);
 
       expect(decision.intent).toBe(intent);
       expect(decision.entities).toMatchObject(entities);
+    });
+
+    // Mensagens do problema relatado: a lista foi apresentada sem data.
+    describe('availability search across experiences', () => {
+      const CATALOG: ConversationState = {
+        topic: 'experience',
+        lastIntent: 'experience.list',
+        experience: { listed: LISTED.experience!.listed, listedDate: null },
+      };
+      const SEARCHED: ConversationState = {
+        ...CATALOG,
+        lastIntent: 'experience.search',
+        experience: { ...CATALOG.experience, date: '2026-10-24', listedDate: '2026-10-24' },
+      };
+      const SELECTED: ConversationState = {
+        topic: 'experience',
+        lastIntent: 'experience.details',
+        experience: { ...SEARCHED.experience, selectedId: 'exp-2', selectedTitle: 'Reserva da Jaqueira' },
+      };
+
+      it.each<[string, ConversationState | undefined, string, Record<string, unknown>]>([
+        ['Qual tem reserva pra amanhã?', CATALOG, 'experience.search', { date: '2026-10-24', bookable: true }],
+        ['Qual experiência tem reserva para amanhã de manhã?', CATALOG, 'experience.search',
+          { date: '2026-10-24', period: 'morning', bookable: true }],
+        ['Qual experiência tem reserva para amanhã de manhã?', undefined, 'experience.search',
+          { date: '2026-10-24', period: 'morning' }],
+        ['Quais experiências têm vagas amanhã?', undefined, 'experience.search', { date: '2026-10-24', bookable: true }],
+        ['Quais posso reservar de manhã?', CATALOG, 'experience.search', { period: 'morning', bookable: true }],
+        ['Quais posso reservar amanhã?', undefined, 'experience.search', { date: '2026-10-24', bookable: true }],
+        ['Quais são gratuitas?', SEARCHED, 'experience.list', { free: true }],
+        ['Tem alguma para crianças?', SEARCHED, 'experience.list', { forChildren: true }],
+        ['Tem alguma experiência para crianças?', undefined, 'experience.list', { forChildren: true }],
+        // Negação: lista do catálogo, nunca o filtro "aceitam reserva".
+        ['Quais experiências não precisam de reserva?', undefined, 'experience.list', {}],
+      ])('classifies %j as %s', async (message, state, intent, entities) => {
+        const decision = await service.classify(message, [], state);
+
+        expect(decision.intent).toBe(intent);
+        expect(decision.entities).toMatchObject(entities);
+        expect(fetchMock).not.toHaveBeenCalled();
+      });
+
+      it.each(['E de manhã?', 'E à tarde?', 'amanhã', 'E depois das 15h?', 'Quais são gratuitas?'])(
+        'marks %j as a refinement of the previous search',
+        async (message) => {
+          const decision = await service.classify(message, [], SEARCHED);
+
+          expect(decision.intent).toMatch(/^experience\.(?:search|list)$/);
+          expect(decision.refine).toBe(true);
+        },
+      );
+
+      it('starts a new search for a full question', async () => {
+        const decision = await service.classify('Quais experiências têm vagas no domingo?', [], SEARCHED);
+        expect(decision).toMatchObject({ intent: 'experience.search', entities: { date: '2026-10-25' } });
+        expect(decision.refine).toBeUndefined();
+      });
+
+      it('refines the selected experience instead of searching again', async () => {
+        await expect(service.classify('E de manhã?', [], SELECTED)).resolves.toMatchObject({
+          intent: 'experience.availability',
+          refine: true,
+          entities: { period: 'morning' },
+        });
+        await expect(service.classify('Quais os horários?', [], SELECTED)).resolves.toMatchObject({
+          intent: 'experience.availability',
+        });
+      });
+
+      it.each<[string, string]>([
+        ['Gostei da segunda.', 'experience.details'],
+        ['Quanto custa para dois adultos?', 'experience.price'],
+        ['Pode reservar.', 'experience.booking'],
+      ])('keeps %j as %s after a search', async (message, intent) => {
+        await expect(service.classify(message, [], SEARCHED)).resolves.toMatchObject({ intent });
+      });
+    });
+
+    describe('pending questions', () => {
+      const ASKED: ConversationState = {
+        topic: 'experience',
+        lastIntent: 'experience.details',
+        pendingQuestion: { intent: 'experience.availability', targetId: 'exp-2' },
+        experience: { selectedId: 'exp-2', listed: LISTED.experience!.listed },
+      };
+
+      it.each(['Sim.', 'sim', 'Pode', 'Pode sim', 'Claro, por favor', 'Quero', 'Verifica'])(
+        'answers the pending question with %j',
+        async (message) => {
+          await expect(service.classify(message, [], ASKED)).resolves.toMatchObject({
+            intent: 'experience.availability',
+            answersPending: true,
+          });
+          expect(fetchMock).not.toHaveBeenCalled();
+        },
+      );
+
+      it.each(['Não', 'Não, obrigado', 'agora não'])('declines the pending question with %j', async (message) => {
+        await expect(service.classify(message, [], ASKED)).resolves.toEqual({
+          intent: 'conversation.general',
+          detail: 'none',
+          declinesPending: true,
+        });
+      });
+
+      it('never turns a "yes" to a question into a booking confirmation', async () => {
+        const decision = await service.classify('Sim, confirmo', [], ASKED);
+        expect(decision.intent).not.toBe('experience.booking.confirm');
+      });
+
+      it('lets a reply with new information follow the normal flow', async () => {
+        await expect(service.classify('Sim, para amanhã', [], ASKED)).resolves.toMatchObject({
+          intent: 'experience.availability',
+          entities: { date: '2026-10-24' },
+        });
+        await expect(service.classify('Sim, pode reservar', [], ASKED)).resolves.toMatchObject({
+          intent: 'experience.booking',
+        });
+      });
+
+      it('treats a bare "sim" without a pending question as conversation, without the model', async () => {
+        await expect(service.classify('Sim.', [], LISTED)).resolves.toEqual({
+          intent: 'conversation.general',
+          detail: 'none',
+        });
+        expect(fetchMock).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('restaurant follow-ups', () => {
+      const RESTAURANTS: ConversationState = {
+        topic: 'restaurant',
+        restaurant: { listed: [{ id: 'r1', name: 'Gino Praia Gastronomia' }, { id: 'r2', name: 'Restaurante Central' }] },
+      };
+
+      it.each<[string, string]>([
+        ['Quero a segunda', 'restaurant.details'],
+        ['Como é esse?', 'restaurant.details'],
+        ['Quero reservar', 'restaurant.booking'],
+        ['E sobre os restaurantes, consegue me indicar algum?', 'restaurant.list'],
+        ['Sim, os restaurantes.', 'restaurant.list'],
+      ])('classifies %j as %s', async (message, intent) => {
+        await expect(service.classify(message, [], RESTAURANTS)).resolves.toMatchObject({ intent });
+      });
+
+      it('lists restaurants for "Onde posso jantar?"', async () => {
+        await expect(service.classify('Onde posso jantar?')).resolves.toMatchObject({ intent: 'restaurant.list' });
+      });
+
+      it('switches from experiences to restaurants', async () => {
+        await expect(
+          service.classify('E sobre os restaurantes, consegue me indicar algum?', [], LISTED),
+        ).resolves.toMatchObject({ intent: 'restaurant.list' });
+      });
+
+      it.each([
+        'Em qual restaurante é a minha reserva?',
+        'Qual o horário de funcionamento do restaurante?',
+        'O restaurante tem opção vegana?',
+        'Tem restaurante aberto agora?',
+        'Tem bebida no bar da piscina?',
+      ])(
+        'does not capture %j as catalog',
+        async (message) => {
+          fetchMock.mockRejectedValue(connectionError());
+          const decision = await service.classify(message);
+          expect(decision.intent).not.toMatch(/^restaurant\.(?:list|details)$/);
+        },
+      );
+    });
+
+    describe('model fallback inside an experience conversation', () => {
+      it('asks the model with a closed set of read-only intents and validates the answer', async () => {
+        fetchMock.mockResolvedValue(ollamaChat(JSON.stringify({ intent: 'experience.search' })));
+
+        const decision = await service.classify('e qual delas sobra lugar pra gente?', [], LISTED);
+
+        expect(decision.intent).toBe('experience.search');
+        expect(fetchMock).toHaveBeenCalledOnce();
+        const body = requestBody(fetchMock) as { format: { properties: { intent: { enum: string[] } } } };
+        expect(body.format.properties.intent.enum).not.toContain('experience.booking');
+        expect(body.format.properties.intent.enum).not.toContain('experience.booking.confirm');
+      });
+
+      it.each([
+        ['an intent outside the schema', ollamaChat(JSON.stringify({ intent: 'experience.booking.confirm' }))],
+        ['invalid JSON', ollamaChat('reservar agora')],
+        ['an HTTP error', jsonResponse({ error: 'down' }, 503)],
+      ])('falls back to knowledge on %s', async (_label, response) => {
+        fetchMock.mockResolvedValue(response);
+
+        await expect(service.classify('e qual delas sobra lugar pra gente?', [], LISTED)).resolves.toEqual(KNOWLEDGE);
+      });
+
+      it.each([
+        'Vou chegar tarde, tem problema?',
+        'A tarde vai chover?',
+        'Qual a programação da noite?',
+        'Tem algum lugar para jantar à noite?',
+        'Quais serviços tem à tarde?',
+        'Até que horas é o almoço?',
+        'O que está incluso na diária?',
+      ])('sends %j to knowledge without the model', async (message) => {
+        await expect(service.classify(message, [], LISTED)).resolves.toEqual(KNOWLEDGE);
+        expect(fetchMock).not.toHaveBeenCalled();
+      });
+
+      it('uses a short timeout for the optional model call', async () => {
+        const timeout = vi.spyOn(AbortSignal, 'timeout');
+        fetchMock.mockResolvedValue(ollamaChat(JSON.stringify({ intent: 'experience.details' })));
+
+        await service.classify('me conta mais dela', [], LISTED);
+
+        expect(timeout).toHaveBeenCalledWith(10_000);
+      });
+
+      it('does not call the model outside an experience conversation', async () => {
+        await expect(service.classify('e qual delas sobra lugar pra gente?')).resolves.toEqual(KNOWLEDGE);
+        expect(fetchMock).not.toHaveBeenCalled();
+      });
     });
 
     it('leaves the experience context for questions about other services', async () => {

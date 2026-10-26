@@ -7,6 +7,7 @@ import { OperationsDispatcherService } from '../operations/operations-dispatcher
 import { RetrievalService } from '../rag/retrieval.service.js';
 import type { RetrievedDocument } from '../rag/knowledge.service.js';
 
+import { ConversationContextService } from './conversation-context.service.js';
 import { IntentClassifierService } from './intent-classifier.service.js';
 import { extractDate } from './message-entities.js';
 import {
@@ -49,7 +50,7 @@ export type OrchestrationResult =
 
 function topicOf(decision: IntentDecision): ConversationState['topic'] {
   if (isExperienceIntent(decision.intent)) return 'experience';
-  if (decision.intent === 'restaurant.booking') return 'restaurant';
+  if (decision.intent.startsWith('restaurant.')) return 'restaurant';
   if (decision.intent.startsWith('reservation.')) return 'reservation';
   if (decision.intent.startsWith('request.')) return 'request';
   return 'knowledge';
@@ -77,6 +78,7 @@ export class ChatOrchestratorService {
     private readonly classifier: IntentClassifierService,
     private readonly dispatcher: OperationsDispatcherService,
     private readonly retrievalService: RetrievalService,
+    private readonly context: ConversationContextService,
   ) {}
 
   async resolve(
@@ -85,12 +87,18 @@ export class ChatOrchestratorService {
     history: HistoryEntry[] = [],
     context?: OrchestrationContext,
   ): Promise<OrchestrationResult> {
-    const decision = context
+    const classified = context
       ? await this.classifier.classify(message, history, context.state)
       : await this.classifier.classify(message, history);
+    // Referências ("essa", "sim") são resolvidas antes de qualquer ferramenta.
+    const decision = context ? this.context.resolve(message, classified, context.state) : classified;
 
     this.logger.log(
       `Intenção identificada: ${decision.intent} (${decision.detail})`,
+    );
+    this.logger.debug(
+      `Assunto atual: ${context?.state.topic ?? 'nenhum'} → ${isConversationIntent(decision.intent) ? 'conversa' : topicOf(decision)}` +
+        `${decision.refine ? ' (refinamento)' : ''}${decision.answersPending ? ' (resposta à pergunta pendente)' : ''}`,
     );
 
     // 1. Interações sociais: sem RAG e sem ferramentas. O estado segue
@@ -100,7 +108,7 @@ export class ChatOrchestratorService {
         mode: 'conversation',
         intent: decision.intent,
         documents: [],
-        ...(context ? { state: context.state } : {}),
+        ...(context ? { state: this.context.afterConversation(context.state, decision) } : {}),
       };
     }
 
@@ -114,6 +122,9 @@ export class ChatOrchestratorService {
         : await this.dispatcher.dispatch(message, decision, guest);
 
       this.logger.log(`Operação concluída: ${result.tool}`);
+      if (result.resultCount !== undefined) {
+        this.logger.debug(`Resultados apresentados: ${result.resultCount}.`);
+      }
 
       return {
         mode: 'operations',
@@ -121,7 +132,13 @@ export class ChatOrchestratorService {
         documents: [],
         ...(result.actions?.length ? { actions: result.actions } : {}),
         ...(context
-          ? { state: result.state ?? withTopic(context.state, topicOf(decision)) }
+          ? {
+              state: this.context.afterOperation(
+                result,
+                withTopic(context.state, topicOf(decision)),
+                decision.intent,
+              ),
+            }
           : {}),
       };
     }
@@ -143,7 +160,9 @@ export class ChatOrchestratorService {
     return {
       mode: 'knowledge',
       documents,
-      ...(context ? { state: withTopic(context.state, 'knowledge') } : {}),
+      ...(context
+        ? { state: this.context.afterKnowledge(withTopic(context.state, 'knowledge'), decision.intent) }
+        : {}),
     };
   }
 }

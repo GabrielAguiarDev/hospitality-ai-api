@@ -9,6 +9,7 @@ import { OperationsModule } from '../operations/operations.module.js';
 import { ChatController } from './chat.controller.js';
 import { ChatService } from './chat.service.js';
 import { ChatOrchestratorService } from './chat-orchestrator.service.js';
+import { ConversationContextService } from './conversation-context.service.js';
 import { IntentClassifierService } from './intent-classifier.service.js';
 
 import { ChatActionsService } from './chat-actions.service.js';
@@ -35,6 +36,7 @@ import { ResortModule } from '../resort/resort.module.js';
   providers: [
     ChatService,
     ChatOrchestratorService,
+    ConversationContextService,
     IntentClassifierService,
     ChatActionsService,
   ],

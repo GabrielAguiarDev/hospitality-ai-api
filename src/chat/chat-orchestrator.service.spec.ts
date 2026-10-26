@@ -7,7 +7,11 @@ import type { RetrievedDocument } from '../rag/knowledge.service.js';
 import { RetrievalService } from '../rag/retrieval.service.js';
 
 import type { HistoryEntry, IntentDecision } from './chat-intent.types.js';
+import { getRepositoryToken } from '@nestjs/typeorm';
+
 import { ChatOrchestratorService } from './chat-orchestrator.service.js';
+import { ConversationContextService } from './conversation-context.service.js';
+import { ChatConversationState } from './entities/chat-conversation-state.entity.js';
 import { IntentClassifierService } from './intent-classifier.service.js';
 
 const HOURS_DOCUMENT: RetrievedDocument = {
@@ -41,11 +45,14 @@ describe('ChatOrchestratorService', () => {
   beforeEach(async () => {
     vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
 
-    // Only the three collaborators are provided: if the orchestrator ever
-    // started depending on DataSource or EmbeddingsService, this would fail.
+    // Only the collaborators are provided: if the orchestrator ever started
+    // depending on DataSource or EmbeddingsService, this would fail. The
+    // context service resolves references from the given state only.
     const moduleRef = await Test.createTestingModule({
       providers: [
         ChatOrchestratorService,
+        ConversationContextService,
+        { provide: getRepositoryToken(ChatConversationState), useValue: {} },
         { provide: IntentClassifierService, useValue: classifier },
         { provide: OperationsDispatcherService, useValue: dispatcher },
         { provide: RetrievalService, useValue: retrieval },

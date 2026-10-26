@@ -110,3 +110,30 @@ export function normalizeTime(value: string | null | undefined): string | null {
 
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
+
+// Remove emojis e bandeiras de textos cadastrados ("Omakase🇯🇵").
+export function stripSymbols(value: string): string {
+  return value
+    .replace(/[\p{Extended_Pictographic}\p{Regional_Indicator}\u{FE0F}\u{200D}]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Resumo de uma descrição cadastrada: frases inteiras até `maxLength`,
+ * sem emojis nem listas de preços (os valores vêm de campos próprios).
+ */
+export function summarizeText(value: string | null | undefined, maxLength = 220): string {
+  const sentences = stripSymbols(compactText(value, 4000))
+    .split(/(?<=[.!?])\s+/)
+    .filter((sentence) => sentence && !/R\$|\bvalores?\s*:/i.test(sentence));
+
+  let summary = '';
+
+  for (const sentence of sentences) {
+    if (summary && summary.length + sentence.length + 1 > maxLength) break;
+    summary = summary ? `${summary} ${sentence}` : sentence;
+  }
+
+  return summary.length > maxLength ? `${summary.slice(0, maxLength - 1).trimEnd()}…` : summary;
+}

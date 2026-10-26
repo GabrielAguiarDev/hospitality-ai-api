@@ -9,6 +9,7 @@ import type { LlmMessage } from '../llm/ollama.service.js';
 import type { RetrievedDocument } from '../rag/knowledge.service.js';
 
 import { ChatOrchestratorService } from './chat-orchestrator.service.js';
+import { ConversationContextService } from './conversation-context.service.js';
 import { ChatService, CONVERSATION_FALLBACK_REPLIES, NO_EVIDENCE_REPLY } from './chat.service.js';
 import { ChatMessage } from './entities/chat-message.entity.js';
 
@@ -39,6 +40,7 @@ describe('ChatService', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         ChatService,
+        ConversationContextService,
         { provide: OllamaService, useValue: ollama },
         { provide: ChatOrchestratorService, useValue: orchestrator },
         ...store.providers(),
@@ -500,9 +502,25 @@ describe('ChatService', () => {
 
       expect(store.states.get(result.conversationId)).toEqual({
         conversationId: result.conversationId,
+        // O estado pertence ao resort e ao hóspede da conversa.
+        resortId: GUEST.resortId,
+        guestId: GUEST.guestId,
         state: { topic: 'experience', experience: { listed: [{ id: 'e1', title: 'Trilha' }] } },
         version: 1,
       });
+    });
+
+    it('never loads a state stored for another guest, even with the same conversation id', async () => {
+      store.seedConversation(EXISTING_ID, [{ role: 'user', content: 'Oi' }]);
+      store.seedState(EXISTING_ID, { topic: 'experience', experience: { selectedId: 'e1' } }, 1, {
+        resortId: 'demo',
+        guestId: 'other-guest',
+      });
+      orchestrator.resolve.mockResolvedValue({ mode: 'knowledge', documents: [] });
+
+      await service.sendMessage('Oi', GUEST, EXISTING_ID);
+
+      expect(orchestrator.resolve.mock.calls[0][3]?.state).toEqual({});
     });
 
     it('loads the stored state for the owner and bumps its version on change', async () => {

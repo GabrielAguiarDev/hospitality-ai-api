@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
@@ -9,7 +9,6 @@ import {
   type ChatAction,
   type ChatResponse,
 } from '../contracts/chat-actions.js';
-import type { ConversationState } from '../contracts/conversation-state.js';
 import type { GuestContext } from '../guest/guest-context.js';
 import { OllamaService } from '../llm/ollama.service.js';
 import type { LlmMessage } from '../llm/ollama.service.js';
@@ -17,15 +16,14 @@ import type { RetrievedDocument } from '../rag/knowledge.service.js';
 import { ResortClock } from '../resort/resort-clock.service.js';
 
 import { ChatConversation } from './entities/chat-conversation.entity.js';
-import { ChatConversationState } from './entities/chat-conversation-state.entity.js';
 import { ChatMessage } from './entities/chat-message.entity.js';
 import { ChatOrchestratorService } from './chat-orchestrator.service.js';
+import { ConversationContextService } from './conversation-context.service.js';
 import type { ConversationIntent, HistoryEntry } from './chat-intent.types.js';
 
 // Resposta fixa quando o RAG não encontra evidências:
 // o modelo não é chamado para não inventar informações.
-export const CONCURRENT_UPDATE_MESSAGE =
-  'A conversa foi atualizada por outra requisição. Envie a mensagem novamente.';
+export { CONCURRENT_UPDATE_MESSAGE } from './conversation-context.service.js';
 
 export const NO_EVIDENCE_REPLY =
   'Não encontrei essa informação nas fontes do resort. ' +
@@ -56,6 +54,8 @@ const CONVERSATION_KIND: Record<ConversationIntent, string> = {
 
 @Injectable()
 export class ChatService {
+  private readonly logger = new Logger(ChatService.name);
+
   private readonly systemPrompt = `
     Você é Yago, o concierge digital do resort.
 
@@ -81,8 +81,7 @@ export class ChatService {
     @InjectRepository(ChatMessage)
     private readonly messagesRepository: Repository<ChatMessage>,
 
-    @InjectRepository(ChatConversationState)
-    private readonly statesRepository: Repository<ChatConversationState>,
+    private readonly context: ConversationContextService,
 
     private readonly clock: ResortClock,
   ) {}
@@ -125,12 +124,9 @@ export class ChatService {
         content,
       }));
 
-    // Estado operacional da conversa (experiência selecionada etc.).
-    const storedState = conversationId
-      ? await this.statesRepository.findOneBy({ conversationId: id })
-      : null;
-
-    const state: ConversationState = storedState?.state ?? {};
+    // Estado estruturado da conversa, lido pelo dono (resort + hóspede).
+    const stored = await this.context.load(conversationId, guest);
+    const { state } = stored;
     const today = this.clock.today();
 
     const orchestration = await this.chatOrchestrator.resolve(
@@ -156,6 +152,7 @@ export class ChatService {
         Boolean(state.experience?.pendingPreviewId),
       );
     } else if (orchestration.documents.length === 0) {
+      this.logger.debug('Fallback: o RAG não encontrou evidências; resposta padrão sem o modelo.');
       reply = NO_EVIDENCE_REPLY;
     } else {
       documents = orchestration.documents;
@@ -199,38 +196,7 @@ export class ChatService {
 
       await manager.update(ChatConversation, { id }, { updatedAt: new Date() });
 
-      const nextState = orchestration.state;
-
-      // Grava o estado somente quando ele muda.
-      if (nextState && JSON.stringify(nextState) !== JSON.stringify(state)) {
-        // Controle otimista: outra requisição da mesma conversa
-        // alterou o estado desde a leitura; nada é gravado.
-        if (storedState) {
-          const updated = await manager.update(
-            ChatConversationState,
-            { conversationId: id, version: storedState.version },
-            { state: nextState, version: storedState.version + 1 },
-          );
-
-          if (!updated?.affected) {
-            throw new ConflictException(CONCURRENT_UPDATE_MESSAGE);
-          }
-        } else {
-          try {
-            await manager.insert(ChatConversationState, {
-              conversationId: id,
-              state: nextState,
-              version: 1,
-            });
-          } catch (error) {
-            if ((error as { code?: string })?.code === 'ER_DUP_ENTRY') {
-              throw new ConflictException(CONCURRENT_UPDATE_MESSAGE);
-            }
-
-            throw error;
-          }
-        }
-      }
+      await this.context.save(manager, id, guest, stored, orchestration.state);
     });
 
     return {

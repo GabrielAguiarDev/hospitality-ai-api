@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import { matchByName } from '../common/text.js';
 import type { GuestContext } from '../guest/guest-context.js';
 import type { SimulatedExperienceBooking } from '../experiences/entities/simulated-experience-booking.entity.js';
 import { ExperienceAvailabilityService } from '../experiences/experience-availability.service.js';
@@ -20,6 +21,11 @@ import {
   type StayExperienceReservation,
 } from '../experiences/experiences-catalog.service.js';
 import type { ExperienceInfo, ExperienceSlot } from '../experiences/experience.types.js';
+import {
+  matchesCatalogFilters,
+  slotsMatching,
+  timeWindowOf,
+} from '../experiences/experience-search.js';
 import { GuestStayService } from '../resort/guest-stay.service.js';
 import {
   RestaurantsCatalogService,
@@ -42,6 +48,7 @@ import {
   parseExperienceListInput,
   parseNoInput,
   parsePreviewInput,
+  parseRestaurantListInput,
   parsePreviewReferenceInput,
 } from './tool-inputs.js';
 
@@ -142,13 +149,14 @@ export class OperationsToolRegistryService {
     },
     {
       name: 'restaurants.list',
-      description: 'Lista restaurantes e bares ativos do resort.',
+      description: 'Lista restaurantes, bares e opções de alimentação ativos, com filtro opcional por tipo ou nome.',
       readOnly: true,
     },
     {
       name: 'experiences.list',
       description:
-        'Lista experiências ativas e, com data, as vagas registradas no snapshot.',
+        'Lista ou busca experiências ativas com filtros opcionais (data, período, faixa de horário, ' +
+        'gratuitas, para crianças, com reserva, grupo) e, com data, as vagas registradas no snapshot.',
       readOnly: true,
     },
     {
@@ -256,21 +264,31 @@ export class OperationsToolRegistryService {
       }
 
       case 'restaurants.list': {
-        parseNoInput(input);
+        const { type, name: query } = parseRestaurantListInput(input);
+        const active = await this.restaurantsCatalog.listActive();
+        const ofType = type ? active.filter((restaurant) => restaurant.type === type) : active;
 
         return {
           tool: name,
-          data: await this.restaurantsCatalog.listActive(),
+          // Pesquisa por nome sobre o cadastro, nunca por SQL livre.
+          data: query ? matchByName(query, ofType) : ofType,
         };
       }
 
       case 'experiences.list': {
-        const { date, includeInactive } = parseExperienceListInput(input);
-        const experiences = includeInactive
+        const { date, includeInactive, filters, party } = parseExperienceListInput(input);
+        const all = includeInactive
           ? await this.experiencesCatalog.listAll()
           : await this.experiencesCatalog.listActive();
+        const experiences = all.filter((experience) => matchesCatalogFilters(experience, filters));
+        const ids = new Set(experiences.map(({ id }) => id));
+        // Somente vagas com saldo, das experiências filtradas e na faixa pedida.
         const slots = date
-          ? await this.experienceAvailability.findSlots(date)
+          ? slotsMatching(
+              (await this.experienceAvailability.findSlots(date)).filter((slot) => ids.has(slot.experienceId)),
+              timeWindowOf(filters),
+              party,
+            )
           : [];
 
         return { tool: name, data: { date, experiences, slots } };

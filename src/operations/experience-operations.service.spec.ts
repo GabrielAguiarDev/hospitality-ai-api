@@ -167,6 +167,102 @@ describe('ExperienceOperationsService', () => {
     });
   });
 
+  describe('search', () => {
+    it('answers "tem vaga amanhã?" without a named experience as a search, not an error', async () => {
+      const result = await service.handle(
+        'Tem vaga amanhã?',
+        decide('experience.availability', { date: '2026-10-25', bookable: true }),
+        guest,
+        ctx({ listed: [{ id: 'e1', title: 'Passeio de barco' }], listedDate: null }),
+      );
+
+      expect(result.reply).not.toContain('Não identifiquei');
+      expect(result.intent).toBe('experience.search');
+      // A primeira chamada tenta resolver um nome; a última é a busca.
+      expect(called('experiences.list').at(-1)?.[2]).toEqual({ date: '2026-10-25', bookable: true });
+      expect(result.actions).toEqual([
+        expect.objectContaining({ type: 'experience.options', date: '2026-10-25' }),
+      ]);
+    });
+
+    it('merges a refinement with the stored filters and replaces the period', async () => {
+      const result = await service.handle(
+        'E à tarde?',
+        { ...decide('experience.search', { period: 'afternoon' }), refine: true },
+        guest,
+        ctx({ date: '2026-10-25', filters: { period: 'morning', free: true } }),
+      );
+
+      expect(called('experiences.list')[0][2]).toEqual({ date: '2026-10-25', period: 'afternoon', free: true });
+      expect(result.state?.experience?.filters).toEqual({ period: 'afternoon', free: true });
+    });
+
+    it('starts a new search from scratch and clears the previous selection', async () => {
+      const result = await service.handle(
+        'Quais experiências têm vagas no domingo?',
+        decide('experience.search', { date: '2026-10-25', bookable: true }),
+        guest,
+        ctx({ selectedId: 'e2', selectedTitle: 'Caiaque no mangue', filters: { period: 'morning' } }),
+      );
+
+      expect(called('experiences.list')[0][2]).toEqual({ date: '2026-10-25', bookable: true });
+      expect(result.state?.experience?.selectedId).toBeUndefined();
+    });
+  });
+
+  it('hands a "quais horários posso reservar" question about a restaurant over to restaurants', async () => {
+    restaurants = [{ id: 'r1', name: 'Trattoria Aurora', type: 'restaurante', openingHours: null, description: '', location: null,
+      acceptsReservations: true, minimumAge: null, reservationTimes: ['19:00'] }];
+
+    const result = await service.handle(
+      'Quais horários posso reservar na Trattoria Aurora amanhã?',
+      decide('experience.search', { date: '2026-10-24', bookable: true }),
+      guest,
+      ctx({}),
+    );
+
+    expect(result.state?.topic).toBe('restaurant');
+    expect(called('experiences.list')).toHaveLength(0);
+  });
+
+  describe('period without an exact time', () => {
+    const chosen = {
+      selectedId: 'e1',
+      selectedTitle: 'Passeio de barco',
+      date: '2026-10-25',
+      adults: 2,
+      children: 0,
+      filters: { period: 'morning' as const },
+    };
+
+    it('asks which time when the period has more than one registered time', async () => {
+      handlers['experiences.availability'] = () => ({
+        experience: BOAT,
+        date: '2026-10-25',
+        slots: [slot('e1', { time: '09:00' }), slot('e1', { time: '10:30' }), slot('e1', { time: '15:00' })],
+      });
+
+      const result = await service.handle('Pode reservar.', decide('experience.booking'), guest, ctx(chosen));
+
+      expect(result.reply).toContain('mais de um horário registrado de manhã: 09:00, 10:30');
+      expect(called('experiences.booking.preview')).toHaveLength(0);
+      expect(result.state?.experience?.pendingPreviewId).toBeUndefined();
+    });
+
+    it('uses the single registered time of the period in the summary to be confirmed', async () => {
+      handlers['experiences.availability'] = () => ({
+        experience: BOAT,
+        date: '2026-10-25',
+        slots: [slot('e1', { time: '10:00' }), slot('e1', { time: '15:00' })],
+      });
+
+      await service.handle('Pode reservar.', decide('experience.booking'), guest, ctx(chosen));
+
+      expect(called('experiences.booking.preview')[0][2]).toMatchObject({ time: '10:00' });
+      expect(called('experiences.booking.confirm')).toHaveLength(0);
+    });
+  });
+
   describe('selection', () => {
     const listedState = {
       listed: [

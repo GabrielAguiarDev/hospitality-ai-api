@@ -126,7 +126,8 @@ Compatibilidade:
 type ChatAction =
   | NavigateAction
   | ExperienceBookingPreviewAction
-  | ExperienceBookingConfirmAction;
+  | ExperienceBookingConfirmAction
+  | ExperienceOptionsAction;
 
 interface ExperienceBookingSummary {
   experienceId: string;
@@ -197,6 +198,29 @@ interface ExperienceBookingConfirmAction {
 
 Exiba o cartão de sucesso com o código e o aviso **"Reserva simulada: não registrada no sistema oficial do resort"**.
 
+### 4.4 `experience.options`: experiências selecionáveis
+
+Retornada quando a resposta apresenta uma lista numerada de experiências, seja o catálogo, uma busca de vagas ou nomes ambíguos. As opções têm a mesma ordem e a mesma numeração do texto de `reply`.
+
+```ts
+interface ExperienceOptionsAction {
+  type: 'experience.options';
+  label: string;          // "Escolher experiência"
+  date: string | null;    // AAAA-MM-DD consultada; null = catálogo sem data
+  options: {
+    position: number;     // 1, 2, 3… (igual ao texto)
+    experienceId: string; // id do cadastro do resort
+    title: string;
+    times: string[];      // HH:MM com vaga registrada na data; vazio = sem horário cadastrado
+    message: string;      // texto a enviar ao tocar, ex.: "Opção 2"
+  }[];
+}
+```
+
+- **Ao tocar:** envie `option.message` como uma mensagem normal em `POST /chat`, com o mesmo `conversationId`. O servidor resolve a posição pela lista guardada na conversa, e o app não precisa enviar o `experienceId`.
+- Use o botão da **última** resposta que trouxe a ação: uma nova busca substitui a lista guardada.
+- Clientes que ainda não tratam este tipo podem ignorá-lo (`default: return null`). O texto de `reply` continua completo.
+
 ---
 
 ## 5. `POST /chat/actions`
@@ -255,7 +279,16 @@ Exemplo real com dados do snapshot. O hóspede é um titular de teste.
   "reply": "Para sábado, 24/10/2026, o cadastro do resort registra vagas para:\n1. Reserva da Jaqueira — horário não especificado (vaga para o dia): 10 vaga(s) para adultos e 10 para crianças\nSem necessidade de reserva: Mágica da Mente, Circo Show 4+, Ritual da Lua Cheia.\nObservação: as vagas vêm do snapshot do sistema do resort e podem não refletir a disponibilidade em tempo real.",
   "conversationId": "bb39a64c-3af7-4976-abe0-4ab8500e7536",
   "retrievedSources": [],
-  "actions": []
+  "actions": [
+    {
+      "type": "experience.options",
+      "label": "Escolher experiência",
+      "date": "2026-10-24",
+      "options": [
+        { "position": 1, "experienceId": "ee86bdf8-6ed4-4ea9-bc64-1b2a909ce56f", "title": "Reserva da Jaqueira", "times": [], "message": "Opção 1" }
+      ]
+    }
+  ]
 }
 ```
 
@@ -334,7 +367,32 @@ Comportamentos importantes para a UI:
 - **"2 pessoas":** o Yago considera 2 adultos e avisa no texto. Para crianças, o hóspede pode dizer "2 adultos e 1 criança".
 - **`totalPrice: null`:** acontece, por exemplo, quando a tarifa infantil depende de uma idade que o sistema não registra. Exiba `priceNote` em vez de um valor.
 - **Experiência inativa ou sem vagas:** o Yago explica e não retorna ação.
-- **Datas relativas:** "amanhã", "sábado", "dia 25" e "25/10" são convertidas pelo servidor para datas absolutas no fuso do resort.
+- **Datas relativas:** "hoje", "amanhã", "depois de amanhã", "sábado", "sexta-feira", "próximo sábado", "dia 25" e "25/10" são convertidas pelo servidor para datas absolutas no fuso do resort.
+- **Períodos e faixas:** "de manhã" (05:00–12:00), "à tarde" (12:00–18:00), "à noite" (18:00–24:00), "depois das 15h" e "antes das 10h" filtram horários e **não** viram um horário exato. Na pré-reserva, se houver um único horário registrado no período, ele aparece no resumo para confirmação. Se houver mais de um, o Yago pergunta qual.
+
+### 6.1 Buscas e refinamentos na mesma conversa
+
+O Yago também responde a referências e a perguntas que ele mesmo fez:
+
+- **"E como é essa experiência?"** depois de uma lista com uma opção: mostra os detalhes dela. Com várias opções, pergunta qual, com `experience.options`.
+- **"Sim"** depois de "Quer que eu verifique os horários…?": consulta os horários. Um "sim" a uma pergunta nunca confirma uma reserva. A confirmação continua sendo "confirmo" ou o botão da pré-reserva.
+- **Restaurantes:** "E os restaurantes?" ou "E os bares?" listam o cadastro com a ação `navigate` para a Gastronomia. Sobre um restaurante com reserva, um "sim" devolve `navigate` com o `restaurantId`. O app conclui a reserva, como antes.
+
+
+O Yago guarda a data, o período, os filtros e a última lista **por conversa**. O hóspede não precisa repetir o que já disse:
+
+| Hóspede | O que o Yago faz |
+| --- | --- |
+| "Quais experiências têm amanhã?" | Lista as experiências com vagas registradas para amanhã (com `experience.options`). |
+| "E de manhã?" | Refaz a busca de amanhã, só de manhã. |
+| "E à tarde?" | Troca o período. Sem resultados, oferece outro período ou outra data. |
+| "Quais são gratuitas?" | Mantém data e período e filtra as experiências sem cobrança cadastrada (all inclusive). |
+| "Tem alguma para crianças?" | Filtra as experiências com indício de participação de crianças no cadastro e informa a idade mínima. |
+| "Gostei da segunda." | Seleciona a 2ª opção da **última** lista apresentada. |
+| "Quanto custa para dois adultos?" | Calcula o valor da experiência escolhida. |
+| "Pode reservar." | Prepara a pré-reserva com os dados já informados e pede confirmação explícita. |
+
+Perguntas como "Qual tem reserva pra amanhã?" ou "Quais posso reservar de manhã?" são **buscas**: nenhuma pré-reserva é criada só porque a palavra "reserva" apareceu. A reserva simulada só é registrada após "confirmo" ou o botão de confirmação.
 
 ---
 
@@ -488,6 +546,10 @@ function renderAction(action: ChatAction) {
         onCancel={() => runAction(guestHolderId, { ...action.confirm.body, type: 'experience.booking.cancel' })} />;
     case 'experience.booking.confirm':
       return <BookingConfirmedCard action={action} />;
+    case 'experience.options':
+      // Cada opção envia o próprio texto na mesma conversa.
+      return <ExperienceOptionsList action={action}
+        onSelect={(option) => sendMessage(guestHolderId, option.message, conversationId)} />;
     default:
       return null; // tipos desconhecidos são ignorados
   }

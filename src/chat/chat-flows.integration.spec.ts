@@ -38,6 +38,7 @@ import { RetrievalService } from '../rag/retrieval.service.js';
 
 import type { IntentDecision } from './chat-intent.types.js';
 import { ChatOrchestratorService } from './chat-orchestrator.service.js';
+import { ConversationContextService } from './conversation-context.service.js';
 import { ChatService } from './chat.service.js';
 import { IntentClassifierService } from './intent-classifier.service.js';
 
@@ -284,6 +285,7 @@ describe.each([
       providers: [
         ChatService,
         ChatOrchestratorService,
+        ConversationContextService,
         IntentClassifierService,
         OperationsAiService,
         OperationsDispatcherService,
@@ -496,12 +498,21 @@ describe.each([
     );
 
     it('answers a greeting followed by a question through RAG', async () => {
-      const result = await chat.sendMessage('Olá, quais restaurantes existem?', GUEST);
+      const result = await chat.sendMessage('Olá, o resort tem academia?', GUEST);
 
       expect(result.reply).toBe(RAG_ANSWER);
       expect(result.retrievedSources).toHaveLength(1);
       expect(embeddings.embed).toHaveBeenCalledOnce();
       expect(resortQuery).not.toHaveBeenCalled();
+    });
+
+    it('answers a greeting followed by a restaurant question from the catalog, not RAG', async () => {
+      const result = await chat.sendMessage('Olá, quais restaurantes existem?', GUEST);
+
+      expect(result.reply).toContain('1. Omakase');
+      expect(result.retrievedSources).toEqual([]);
+      expect(embeddings.embed).not.toHaveBeenCalled();
+      expect(requests('generation')).toHaveLength(0);
     });
 
     it.each(['Quero reservar uma experiência', 'Olá, quero reservar uma experiência'])(

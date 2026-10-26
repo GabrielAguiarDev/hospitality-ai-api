@@ -11,6 +11,13 @@ export class ChatConversationState {
   })
   conversationId!: string;
 
+  // Dono do estado: toda leitura e gravação filtra pelos três campos.
+  @Column({ name: 'resort_id', type: 'varchar', length: 50 })
+  resortId!: string;
+
+  @Column({ name: 'guest_id', type: 'varchar', length: 50 })
+  guestId!: string;
+
   @Column({ type: 'json' })
   state!: ConversationState;
 

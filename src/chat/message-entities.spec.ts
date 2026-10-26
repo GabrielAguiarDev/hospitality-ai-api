@@ -5,7 +5,10 @@ import {
   extractEntities,
   extractOrdinal,
   extractParty,
+  extractPeriod,
+  extractSearchCues,
   extractTime,
+  extractTimeRange,
 } from './message-entities.js';
 
 // 2026-10-23 is a Friday.
@@ -149,5 +152,93 @@ describe('extractEntities', () => {
 describe('weekday versus ordinal', () => {
   it('treats "na segunda" as a weekday, never as a list position', () => {
     expect(extractEntities('Tem na segunda?', '2026-10-23')).toEqual({ date: '2026-10-26' });
+  });
+});
+
+describe('extractPeriod', () => {
+  it.each([
+    ['amanhã de manhã', 'morning'],
+    ['E de manhã?', 'morning'],
+    ['pela manhã', 'morning'],
+    ['E à tarde?', 'afternoon'],
+    ['hoje à noite', 'evening'],
+  ])('%s -> %s', (text, expected) => {
+    expect(extractPeriod(text)).toBe(expected);
+  });
+
+  it.each(['Vou chegar tarde, tem problema?', 'Tarde demais?', 'amanhã', 'Boa tarde!', 'Boa noite, Yago', 'Bom dia', 'Qual o horário do café da manhã?', 'falo mais tarde'])(
+    'finds no period in %j',
+    (text) => {
+      expect(extractPeriod(text)).toBeUndefined();
+    },
+  );
+});
+
+describe('extractTimeRange', () => {
+  it.each<[string, Record<string, string>]>([
+    ['depois das 15h', { after: '15:00' }],
+    ['a partir das 14:30', { after: '14:30' }],
+    ['após as 9h', { after: '09:00' }],
+    ['antes das 10h', { before: '10:00' }],
+    ['depois das 14h e antes das 17h', { after: '14:00', before: '17:00' }],
+    ['depois das 8 da noite', { after: '20:00' }],
+    ['antes das 4 da tarde', { before: '16:00' }],
+    // Idade não é horário.
+    ['para crianças a partir dos 5 anos', {}],
+    ['depois de amanhã', {}],
+    ['às 15h', {}],
+  ])('%s -> %j', (text, expected) => {
+    expect(extractTimeRange(text)).toEqual(expected);
+  });
+});
+
+describe('extractSearchCues', () => {
+  it.each<[string, Record<string, boolean>]>([
+    ['Quais são gratuitas?', { free: true }],
+    ['Tem alguma para crianças?', { forChildren: true }],
+    ['Tem algo infantil?', { forChildren: true }],
+    ['Qual tem reserva pra amanhã?', { bookable: true }],
+    ['Quais posso reservar de manhã?', { bookable: true }],
+    ['Quais têm vagas amanhã?', { bookable: true }],
+    // Composição do grupo não é filtro de catálogo.
+    ['para 2 crianças', {}],
+    ['Tenho alguma reserva?', {}],
+    // Negação: o hóspede quer as que dispensam reserva.
+    ['Quais experiências não precisam de reserva?', {}],
+    ['Tem alguma sem reserva?', {}],
+  ])('%s -> %j', (text, expected) => {
+    expect(extractSearchCues(text)).toEqual(expected);
+  });
+});
+
+describe('temporal entities', () => {
+  // 2026-10-24 is a Saturday.
+  it('"próximo sábado" said on a Saturday is the following week', () => {
+    expect(extractDate('próximo sábado', '2026-10-24')).toBe('2026-10-31');
+    expect(extractDate('sábado', '2026-10-24')).toBe('2026-10-24');
+  });
+
+  it('keeps a period without presuming an exact time', () => {
+    expect(extractEntities('amanhã de manhã', TODAY)).toEqual({ date: '2026-10-24', period: 'morning' });
+  });
+
+  it('a time range is not an exact time', () => {
+    expect(extractEntities('depois das 15h', TODAY)).toEqual({ after: '15:00' });
+  });
+
+  it('a range with "da noite" is not widened to the whole period', () => {
+    expect(extractEntities('depois das 8 da noite', TODAY)).toEqual({ after: '20:00' });
+  });
+});
+
+describe('text summaries', () => {
+  it('keeps whole sentences, drops emojis and inline price lists', async () => {
+    const { summarizeText, stripSymbols } = await import('../common/text.js');
+    const text =
+      'Passeio ao Centro Histórico. A vista é espetacular. Saímos às 9h. 💰 Valores: • Adultos: R$ 100 • Crianças: R$ 80.';
+
+    expect(summarizeText(text, 60)).toBe('Passeio ao Centro Histórico. A vista é espetacular.');
+    expect(summarizeText(text)).not.toContain('R$');
+    expect(stripSymbols('Omakase🇯🇵')).toBe('Omakase');
   });
 });

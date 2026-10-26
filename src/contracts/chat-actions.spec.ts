@@ -182,3 +182,38 @@ describe('party size limit', () => {
     expect(isValidChatAction(action)).toBe(false);
   });
 });
+
+describe('experience.options', () => {
+  const options = (over: Record<string, unknown> = {}): ChatAction =>
+    ({
+      type: 'experience.options',
+      label: 'Escolher experiência',
+      date: '2026-10-24',
+      options: [
+        { position: 1, experienceId: 'exp-1', title: 'City Tour', times: ['08:00'], message: 'Opção 1' },
+        { position: 2, experienceId: 'exp-2', title: 'Jaqueira', times: [], message: 'Opção 2' },
+      ],
+      ...over,
+    }) as ChatAction;
+
+  it('accepts a numbered list of real options', () => {
+    expect(isValidChatAction(options())).toBe(true);
+    expect(isValidChatAction(options({ date: null }))).toBe(true);
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ['an empty list', { options: [] }],
+    ['an invalid date', { date: '24/10/2026' }],
+    ['positions out of order', {
+      options: [{ position: 2, experienceId: 'exp-1', title: 'City Tour', times: [], message: 'Opção 2' }],
+    }],
+    ['an invalid time', {
+      options: [{ position: 1, experienceId: 'exp-1', title: 'City Tour', times: ['8h'], message: 'Opção 1' }],
+    }],
+    ['a missing experience id', {
+      options: [{ position: 1, experienceId: '', title: 'City Tour', times: [], message: 'Opção 1' }],
+    }],
+  ])('rejects %s', (_label, over) => {
+    expect(sanitizeActions([options(over)])).toEqual([]);
+  });
+});

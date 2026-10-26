@@ -1,15 +1,24 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 
-import { compactText, matchByName } from '../common/text.js';
-import type { ChatAction } from '../contracts/chat-actions.js';
+import { compactText, matchByName, normalizeText, summarizeText } from '../common/text.js';
+import type { ChatAction, ExperienceOptionsAction } from '../contracts/chat-actions.js';
 import type {
   ConversationState,
   ExperienceConversationState,
+  ExperienceSearchFilters,
 } from '../contracts/conversation-state.js';
-import type { ExperienceIntent, IntentDecision } from '../chat/chat-intent.types.js';
+import type { ChatIntent, ExperienceIntent, IntentDecision } from '../chat/chat-intent.types.js';
 import type { ConfirmResult, PreviewResult } from '../experiences/experience-booking.service.js';
 import { formatCurrency, quoteExperience } from '../experiences/experience-pricing.js';
 import { MAX_PARTY_SIZE } from '../experiences/experience-rules.js';
+import {
+  describeWindow,
+  hasVacancy,
+  inWindow,
+  isFree,
+  timeWindowOf,
+  type TimeWindow,
+} from '../experiences/experience-search.js';
 import type {
   ExperienceInfo,
   ExperienceSlot,
@@ -43,10 +52,14 @@ const MAX_LISTED = 10;
 function describeSlot(slot: ExperienceSlot): string {
   const when = slot.time ? `às ${slot.time}` : 'horário não especificado (vaga para o dia)';
 
+  if (slot.remainingAdults !== null && slot.remainingChildren !== null) {
+    return `${when}: ${slot.remainingAdults} vaga(s) para adultos e ${slot.remainingChildren} para crianças`;
+  }
+
   if (slot.remainingAdults !== null || slot.remainingChildren !== null) {
-    const adults = slot.remainingAdults ?? '—';
-    const children = slot.remainingChildren ?? '—';
-    return `${when}: ${adults} vaga(s) para adultos e ${children} para crianças`;
+    return slot.remainingAdults !== null
+      ? `${when}: ${slot.remainingAdults} vaga(s) para adultos (vagas para crianças não cadastradas)`
+      : `${when}: ${slot.remainingChildren} vaga(s) para crianças (vagas para adultos não cadastradas)`;
   }
 
   if (slot.remaining !== null) {
@@ -77,6 +90,95 @@ function describePrices(experience: ExperienceInfo): string {
   return experience.prices
     .map(({ category, price }) => `${category}: ${formatCurrency(price)}`)
     .join('; ');
+}
+
+function compact<T extends object>(value: T): T {
+  for (const key of Object.keys(value) as (keyof T)[]) {
+    if (value[key] === undefined) delete value[key];
+  }
+  return value;
+}
+
+/**
+ * Filtros da busca. Uma nova busca começa do zero; uma continuação
+ * ("E à tarde?") ou uma pergunta sobre a experiência escolhida mantém
+ * os filtros anteriores, e o período novo substitui o antigo.
+ */
+function filtersFor(
+  decision: IntentDecision,
+  previous: ExperienceSearchFilters | undefined,
+): ExperienceSearchFilters {
+  const entities = decision.entities ?? {};
+  const fresh =
+    !decision.refine && (decision.intent === 'experience.list' || decision.intent === 'experience.search');
+  const next: ExperienceSearchFilters = fresh ? {} : { ...previous };
+
+  // Uma nova data para a experiência escolhida não herda o período da busca.
+  if (!fresh && !decision.refine && entities.date && !entities.period && !entities.after && !entities.before) {
+    next.period = undefined;
+    next.after = undefined;
+    next.before = undefined;
+  }
+
+  if (entities.period) {
+    next.period = entities.period;
+    next.after = undefined;
+    next.before = undefined;
+  } else if (entities.after || entities.before) {
+    next.period = undefined;
+    next.after = entities.after;
+    next.before = entities.before;
+  }
+
+  if (entities.free) next.free = true;
+  if (entities.forChildren) next.forChildren = true;
+  if (entities.bookable) next.bookable = true;
+
+  return compact(next);
+}
+
+// Com data, todo resultado já aceita reserva: o filtro não é repetido.
+function describeFilters(filters: ExperienceSearchFilters, dated: boolean): string {
+  return [
+    filters.free ? 'sem cobrança cadastrada (all inclusive)' : '',
+    filters.forChildren ? 'com indicação de participação de crianças' : '',
+    filters.bookable && !dated ? 'que aceitam reserva' : '',
+  ].filter(Boolean).join(', ');
+}
+
+function ageNote(experience: ExperienceInfo): string {
+  return experience.minimumAge ? ` (a partir de ${experience.minimumAge} anos)` : '';
+}
+
+function optionsAction(
+  listed: { id: string; title: string }[],
+  date: string | null,
+  slots: readonly ExperienceSlot[] = [],
+): ChatAction[] {
+  if (listed.length === 0) {
+    return [];
+  }
+
+  const action: ExperienceOptionsAction = {
+    type: 'experience.options',
+    label: 'Escolher experiência',
+    date,
+    options: listed.map(({ id, title }, index) => ({
+      position: index + 1,
+      experienceId: id,
+      title: title.slice(0, 160),
+      times: [
+        ...new Set(
+          slots
+            .filter((slot) => slot.experienceId === id && slot.time !== null)
+            .map((slot) => slot.time as string),
+        ),
+      ].sort(),
+      message: `Opção ${index + 1}`,
+    })),
+  };
+
+  return [action];
 }
 
 /**
@@ -132,6 +234,17 @@ export class ExperienceOperationsService {
       return experience ? { kind: 'found', experience } : { kind: 'none' };
     }
 
+    const byTarget = async (): Promise<Resolution> => {
+      const experience = await this.execute('experiences.details', guest, { experienceId: decision.target!.id });
+      return experience ? { kind: 'found', experience } : { kind: 'none' };
+    };
+    const target = decision.target?.kind === 'experience' ? decision.target : undefined;
+
+    // "Sim" à pergunta pendente: a pergunta já define a experiência.
+    if (target?.via === 'pending_question') {
+      return byTarget();
+    }
+
     const { experiences } = await this.execute('experiences.list', guest, {
       includeInactive: true,
     });
@@ -152,6 +265,11 @@ export class ExperienceOperationsService {
       return selected
         ? { kind: 'found', experience: selected }
         : { kind: 'ambiguous', candidates: matches };
+    }
+
+    // "essa experiência" / item único da lista, resolvidos pelo contexto.
+    if (target) {
+      return byTarget();
     }
 
     if (state.selectedId) {
@@ -212,11 +330,24 @@ export class ExperienceOperationsService {
       case 'experience.reservations':
         return this.reservations(guest, context.state, state);
       case 'experience.list':
-        return this.list(decision, guest, context.state, state);
+      case 'experience.search': {
+        // "Quais horários posso reservar na Trattoria?" é um pedido de restaurante.
+        if (/\breservar\b/.test(normalizeText(message))) {
+          const restaurants = await this.restaurants.findMentioned(message, guest);
+
+          if (restaurants.length > 0) {
+            const result = await this.restaurants.handleBooking(message, guest);
+            return { ...result, state: { ...context.state, topic: 'restaurant' } };
+          }
+        }
+
+        return this.search(decision, guest, context.state, state);
+      }
       default:
         break;
     }
 
+    const filters = filtersFor(decision, state.filters);
     const resolution = await this.resolveExperience(message, decision, state, guest);
 
     if (resolution.kind === 'ambiguous') {
@@ -226,7 +357,14 @@ export class ExperienceOperationsService {
         'Encontrei mais de uma experiência com esse nome:',
         ...listed.map(({ title }, index) => `${index + 1}. ${title}`),
         'Qual delas você deseja?',
-      ].join('\n'), context.state, { ...state, listed, listedDate: state.date ?? null, selectedId: undefined, selectedTitle: undefined });
+      ].join('\n'), context.state, { ...state, filters, listed, listedDate: state.date ?? null, selectedId: undefined, selectedTitle: undefined },
+      optionsAction(listed, state.date ?? null));
+    }
+
+    // "Tem vaga amanhã?" sem uma experiência definida é uma busca
+    // em todas as experiências, não um pedido incompleto.
+    if (resolution.kind === 'none' && decision.intent === 'experience.availability') {
+      return this.search({ ...decision, intent: 'experience.search' }, guest, context.state, state);
     }
 
     if (resolution.kind === 'none') {
@@ -239,7 +377,17 @@ export class ExperienceOperationsService {
         }
       }
 
-      const hint = state.listed?.length
+      const listed = state.listed ?? [];
+
+      // Ambiguidade real: "essa" com várias opções na tela.
+      if (listed.length > 1 && decision.entities?.ordinal === undefined) {
+        return this.result('experiences.list', [
+          'Você se refere a qual delas?',
+          ...listed.map(({ title }, index) => `${index + 1}. ${title}`),
+        ].join('\n'), context.state, state, optionsAction(listed, state.listedDate ?? null));
+      }
+
+      const hint = listed.length
         ? 'Informe o nome ou o número da experiência da lista.'
         : 'Informe o nome da experiência ou pergunte "Quais experiências posso fazer?".';
 
@@ -249,6 +397,7 @@ export class ExperienceOperationsService {
     const { experience } = resolution;
     const selected: ExperienceConversationState = {
       ...state,
+      filters,
       selectedId: experience.id,
       selectedTitle: experience.title,
       date: decision.entities?.date ?? state.date ?? state.listedDate ?? undefined,
@@ -288,74 +437,127 @@ export class ExperienceOperationsService {
     state: ConversationState,
     experience: ExperienceConversationState,
     actions: ChatAction[] = [],
+    intent?: ChatIntent,
   ): DispatchResult {
     return {
       tool,
       reply,
       actions,
-      state: { ...state, topic: 'experience', experience },
+      state: { ...state, topic: 'experience', experience: compact({ ...experience }) },
+      ...(intent ? { intent } : {}),
     };
   }
 
-  private async list(
+  /**
+   * Listagem do catálogo (sem data) ou busca de vagas em várias
+   * experiências (com data), sempre com filtros opcionais.
+   */
+  private async search(
     decision: IntentDecision,
     guest: GuestContext,
     conversation: ConversationState,
     state: ExperienceConversationState,
   ): Promise<DispatchResult> {
-    const date = decision.entities?.date ?? null;
-    const { experiences, slots } = await this.execute('experiences.list', guest, { date });
+    const entities = decision.entities ?? {};
+    const filters = filtersFor(decision, state.filters);
+    const window = timeWindowOf(filters);
+    const intent = decision.intent;
+    // A busca de vagas e as continuações reaproveitam a data da conversa.
+    const date =
+      entities.date ??
+      (intent === 'experience.search' || decision.refine ? state.date ?? state.listedDate ?? null : null);
+    const party =
+      entities.adults !== undefined || entities.children !== undefined
+        ? { adults: entities.adults ?? 0, children: entities.children ?? 0 }
+        : entities.people !== undefined
+          ? { adults: entities.people, children: 0 }
+          : null;
 
-    const withoutBooking = experiences.filter((experience) => !experience.bookable);
-
-    if (!date) {
-      const listed = experiences.slice(0, MAX_LISTED).map(({ id, title }) => ({ id, title }));
-
-      return this.result('experiences.list', [
-        'Estas são as experiências ativas no cadastro do resort:',
-        ...experiences.slice(0, MAX_LISTED).map((experience, index) =>
-          `${index + 1}. ${experience.title} — ${experience.bookable ? 'com reserva' : 'sem necessidade de reserva'}`,
-        ),
-        'Posso verificar os horários de alguma delas. Para qual data?',
-      ].join('\n'), conversation, { ...state, listed, listedDate: null });
+    if (party && party.adults + party.children > MAX_PARTY_SIZE) {
+      return this.result('experiences.list', `Pelo chat é possível consultar e reservar para até ${MAX_PARTY_SIZE} pessoas. Para grupos maiores, procure a recepção.`,
+        conversation, { ...state, filters, ...(date ? { date } : {}) }, [], intent);
     }
 
-    const bookableIds = new Set(
-      experiences.filter((experience) => experience.bookable).map(({ id }) => id),
-    );
+    const { experiences, slots } = await this.execute('experiences.list', guest, compact({
+      date,
+      ...filters,
+      adults: party?.adults,
+      children: party?.children,
+    }));
+
+    const criteria = describeFilters(filters, Boolean(date));
+    const next: ExperienceConversationState = {
+      ...state,
+      filters,
+      selectedId: undefined,
+      selectedTitle: undefined,
+      // O grupo informado na busca vale para a pré-reserva seguinte.
+      ...(party
+        ? { adults: party.adults, children: party.children, partyAssumed: entities.people !== undefined && entities.adults === undefined }
+        : {}),
+    };
+
+    if (!date) {
+      const shown = experiences.slice(0, MAX_LISTED);
+      const listed = shown.map(({ id, title }) => ({ id, title }));
+
+      if (shown.length === 0) {
+        return this.result('experiences.list', `Não encontrei experiências ativas ${criteria} no cadastro do resort.`, conversation,
+          { ...next, listed: [], listedDate: null }, [], intent);
+      }
+
+      return this.result('experiences.list', [
+        `Estas são as experiências ativas no cadastro do resort${criteria ? ` ${criteria}` : ''}:`,
+        ...shown.map((experience, index) =>
+          `${index + 1}. ${experience.title} — ${experience.bookable ? 'com reserva' : 'sem necessidade de reserva'}` +
+          `${filters.free && isFree(experience) ? ', sem cobrança' : ''}${filters.forChildren ? ageNote(experience) : ''}`,
+        ),
+        shown.some(({ bookable }) => bookable)
+          ? `Posso verificar os horários${window ? ` ${describeWindow(filters)}` : ''} de alguma delas. Para qual data?`
+          : '',
+      ].filter(Boolean).join('\n'), conversation, { ...next, listed, listedDate: null }, optionsAction(listed, null), intent);
+    }
+
     const available = experiences.filter(
-      (experience) =>
-        bookableIds.has(experience.id) &&
-        slots.some((slot) => slot.experienceId === experience.id),
+      (experience) => experience.bookable && slots.some((slot) => slot.experienceId === experience.id),
     );
-    const label = ResortClock.describeDate(date);
+    // Sem horários cadastrados, experiências sem reserva só são citadas sem faixa de horário.
+    const withoutBooking = filters.bookable || window
+      ? []
+      : experiences.filter((experience) => !experience.bookable);
+    const label = `${ResortClock.describeDate(date)}${window ? `, ${describeWindow(filters)}` : ''}`;
+    const dated = { ...next, date, time: undefined, listedDate: date };
+    const withoutBookingLine = withoutBooking.length
+      ? `Sem necessidade de reserva: ${withoutBooking.map(({ title }) => title).join(', ')}.`
+      : '';
 
     if (available.length === 0) {
       return this.result('experiences.list', [
-        `Não encontrei vagas de experiências com reserva registradas para ${label}.`,
-        withoutBooking.length
-          ? `Sem necessidade de reserva: ${withoutBooking.map(({ title }) => title).join(', ')}.`
-          : '',
+        `Não encontrei vagas de experiências com reserva registradas para ${label}${criteria ? ` (${criteria})` : ''}.`,
+        withoutBookingLine,
+        window ? 'Posso consultar outro período ou outra data.' : '',
         SNAPSHOT_NOTICE,
-      ].filter(Boolean).join('\n'), conversation, { ...state, listed: [], listedDate: date, date });
+      ].filter(Boolean).join('\n'), conversation, { ...dated, listed: [] }, [], intent);
     }
 
-    const listed = available.slice(0, MAX_LISTED).map(({ id, title }) => ({ id, title }));
+    const shown = available.slice(0, MAX_LISTED);
+    const listed = shown.map(({ id, title }) => ({ id, title }));
+    const untimed = window && slots.some((slot) => slot.time === null && listed.some(({ id }) => id === slot.experienceId));
 
     return this.result('experiences.list', [
-      `Para ${label}, o cadastro do resort registra vagas para:`,
-      ...available.slice(0, MAX_LISTED).map((experience, index) => {
+      `Para ${label}, o cadastro do resort registra vagas${criteria ? ` (${criteria})` : ''} ${party ? `para ${describeParty(party)} em` : 'para'}:`,
+      ...shown.map((experience, index) => {
         const times = slots
           .filter((slot) => slot.experienceId === experience.id)
           .map(describeSlot)
           .join('; ');
-        return `${index + 1}. ${experience.title} — ${times}`;
+        return `${index + 1}. ${experience.title}${filters.forChildren ? ageNote(experience) : ''} — ${times}`;
       }),
-      withoutBooking.length
-        ? `Sem necessidade de reserva: ${withoutBooking.map(({ title }) => title).join(', ')}.`
-        : '',
+      untimed ? 'Vagas para o dia não têm horário cadastrado: não é possível confirmar se atendem ao período.' : '',
+      withoutBookingLine,
+      entities.people !== undefined && entities.adults === undefined ? 'Considerei todos os participantes como adultos; se houver crianças, me avise.' : '',
       SNAPSHOT_NOTICE,
-    ].filter(Boolean).join('\n'), conversation, { ...state, listed, listedDate: date, date });
+    ].filter(Boolean).join('\n'), conversation, { ...dated, listed }, optionsAction(listed, date, slots), intent);
   }
 
   private details(
@@ -370,16 +572,31 @@ export class ExperienceOperationsService {
       experience.requiresGuardian ? 'exige um adulto responsável' : '',
       experience.bookingCutoff ? `horário-limite de marcação: ${experience.bookingCutoff}` : '',
     ].filter(Boolean);
+    // A descrição só é apresentada uma vez por experiência na conversa.
+    const described = state.describedId === experience.id;
+    // Texto só com preços: o resumo vazio não deve virar "não cadastrada".
+    const summary = described ? '' : summarizeText(experience.description) || compactText(experience.description, 220);
+    const canCheck = experience.bookable && experience.active;
+    const question = canCheck
+      ? state.date
+        ? `Quer que eu verifique os horários de ${ResortClock.describeDate(state.date)}?`
+        : 'Quer que eu verifique os horários disponíveis?'
+      : '';
 
-    return this.result('experiences.details', [
+    const result = this.result('experiences.details', [
       `${experience.title}${experience.active ? '' : ' (inativa no cadastro)'}`,
-      experience.description ? compactText(experience.description, 500) : 'Descrição não cadastrada.',
+      described ? '' : summary || 'Descrição não cadastrada.',
       `Reserva: ${experience.bookable ? 'necessária' : 'não necessária'}.`,
       `Valores: ${describePrices(experience)}`,
       rules.length ? `Regras: ${rules.join('; ')}.` : '',
       party ? `Participantes considerados até agora: ${describeParty(party)}.` : '',
-      experience.bookable && experience.active ? 'Quer que eu verifique os horários disponíveis?' : '',
-    ].filter(Boolean).join('\n'), conversation, state);
+      question,
+    ].filter(Boolean).join('\n'), conversation, { ...state, describedId: experience.id });
+
+    // Toda pergunta de sim/não fica registrada para o "sim" seguinte.
+    return canCheck
+      ? { ...result, pendingQuestion: { intent: 'experience.availability', targetId: experience.id } }
+      : result;
   }
 
   private price(
@@ -419,24 +636,37 @@ export class ExperienceOperationsService {
       return this.result('experiences.availability', `Para qual data você deseja consultar ${experience.title}?`, conversation, state);
     }
 
-    const label = ResortClock.describeDate(state.date);
-    const { slots } = await this.execute('experiences.availability', guest, {
+    const window = timeWindowOf(state.filters);
+    const label = `${ResortClock.describeDate(state.date)}${window ? `, ${describeWindow(state.filters)}` : ''}`;
+    const { slots: registered } = await this.execute('experiences.availability', guest, {
       experienceId: experience.id,
       date: state.date,
     });
+    // Vagas para o dia (sem horário) não são descartadas pelo período.
+    const slots = window
+      ? registered.filter((slot) => slot.time === null || inWindow(slot.time, window))
+      : registered;
 
     if (!experience.active || !experience.bookable) {
       return this.details(experience, party, conversation, state);
     }
 
     if (slots.length === 0) {
+      const others = [...new Set(registered.map((slot) => slot.time).filter(Boolean))];
+
       return this.result('experiences.availability', [
         `Não há horários registrados para ${experience.title} em ${label}.`,
+        others.length ? `Horários registrados nessa data: ${others.join(', ')}.` : '',
         SNAPSHOT_NOTICE,
-      ].join('\n'), conversation, state);
+      ].filter(Boolean).join('\n'), conversation, state);
     }
 
     const lines = [`${experience.title} em ${label}:`, ...slots.map((slot) => `- ${describeSlot(slot)}`)];
+    let offersBooking = false;
+
+    if (window && slots.some((slot) => slot.time === null)) {
+      lines.push('A vaga para o dia não tem horário cadastrado: não é possível confirmar o período.');
+    }
 
     if (party) {
       const total = party.adults + party.children;
@@ -462,6 +692,7 @@ export class ExperienceOperationsService {
       }
 
       if (fitting.length) {
+        offersBooking = true;
         lines.push('Se quiser, posso preparar a reserva simulada.');
       }
     } else {
@@ -470,7 +701,34 @@ export class ExperienceOperationsService {
 
     lines.push(SNAPSHOT_NOTICE);
 
-    return this.result('experiences.availability', lines.join('\n'), conversation, state);
+    const result = this.result('experiences.availability', lines.join('\n'), conversation, state);
+    return offersBooking
+      ? { ...result, pendingQuestion: { intent: 'experience.booking', targetId: experience.id } }
+      : result;
+  }
+
+  /**
+   * Horário de uma pré-reserva quando o hóspede citou só um período.
+   * Nunca escolhe entre horários: com mais de um, pergunta.
+   */
+  private async timeWithin(
+    experience: ExperienceInfo,
+    date: string,
+    window: TimeWindow,
+    guest: GuestContext,
+    party: PartyComposition,
+  ): Promise<{ kind: 'time'; time: string | null } | { kind: 'choose' | 'none'; options: string[] }> {
+    const { slots: registered } = await this.execute('experiences.availability', guest, { experienceId: experience.id, date });
+    const slots = registered.filter((slot) => hasVacancy(slot, party));
+    const all = [...new Set(slots.map((slot) => slot.time).filter((time): time is string => time !== null))].sort();
+    const within = all.filter((time) => inWindow(time, window));
+
+    if (within.length === 1) return { kind: 'time', time: within[0] };
+    if (within.length > 1) return { kind: 'choose', options: within };
+    // Vaga para o dia: o horário não é presumido e a regra de reserva decide.
+    if (slots.some((slot) => slot.time === null)) return { kind: 'time', time: null };
+
+    return { kind: 'none', options: all };
   }
 
   private async preview(
@@ -502,6 +760,26 @@ export class ExperienceOperationsService {
 
     if (party!.adults + party!.children > MAX_PARTY_SIZE) {
       return this.result('experiences.details', `Pelo chat é possível reservar para até ${MAX_PARTY_SIZE} pessoas. Para grupos maiores, procure a recepção.`, context.state, state);
+    }
+
+    const window = timeWindowOf(state.filters);
+
+    if (!state.time && window) {
+      const choice = await this.timeWithin(experience, state.date!, window, guest, party!);
+
+      if (choice.kind !== 'time') {
+        const period = describeWindow(state.filters);
+        return this.result('experiences.availability', choice.kind === 'choose'
+          ? `${experience.title} tem mais de um horário registrado ${period}: ${choice.options.join(', ')}. Qual você prefere?`
+          : [
+              `Não há horários registrados para ${experience.title} ${period} em ${ResortClock.describeDate(state.date!)}.`,
+              choice.options.length ? `Horários registrados nessa data: ${choice.options.join(', ')}.` : '',
+            ].filter(Boolean).join(' '),
+        context.state, state);
+      }
+
+      // Único horário registrado no período: aparece no resumo para confirmação.
+      state = { ...state, time: choice.time };
     }
 
     const result: PreviewResult = await this.execute('experiences.booking.preview', guest, {

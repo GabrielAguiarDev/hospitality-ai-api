@@ -86,9 +86,8 @@ export class ChatActionsService {
       status = 'cancelled';
     }
 
-    const stored = await this.statesRepository.findOneBy({
-      conversationId: dto.conversationId,
-    });
+    const owner = { conversationId: dto.conversationId, resortId: guest.resortId, guestId: guest.guestId };
+    const stored = await this.statesRepository.findOneBy(owner);
 
     await this.dataSource.transaction(async (manager) => {
       await manager.insert(ChatMessage, {
@@ -105,7 +104,7 @@ export class ChatActionsService {
       if (stored?.state.experience?.pendingPreviewId === dto.previewId) {
         await manager.update(
           ChatConversationState,
-          { conversationId: dto.conversationId, version: stored.version },
+          { ...owner, version: stored.version },
           {
             state: {
               ...stored.state,

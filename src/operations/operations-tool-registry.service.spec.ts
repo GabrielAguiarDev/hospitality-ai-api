@@ -88,7 +88,7 @@ describe('OperationsToolRegistryService', () => {
     );
   });
 
-  it.each(['reservations.list', 'requests.list', 'restaurants.list', 'experiences.reservations'])(
+  it.each(['reservations.list', 'requests.list', 'experiences.reservations'])(
     '%s accepts no arguments',
     async (tool) => {
       await expect(createRegistry().execute(tool, GUEST, { guestId: 'other' })).rejects.toThrow(
@@ -100,6 +100,13 @@ describe('OperationsToolRegistryService', () => {
   it.each<[string, Record<string, unknown>]>([
     ['experiences.list', { date: '24/10/2026' }],
     ['experiences.list', { sql: 'SELECT 1' }],
+    ['restaurants.list', { guestId: 'other' }],
+    ['restaurants.list', { type: 'boate' }],
+    ['restaurants.list', { name: '' }],
+    ['experiences.list', { period: 'madrugada' }],
+    ['experiences.list', { after: '15h' }],
+    ['experiences.list', { free: 'sim' }],
+    ['experiences.list', { date: '2026-10-24', adults: 11 }],
     ['experiences.details', { experienceId: '' }],
     ['experiences.availability', { experienceId: 'exp-1', date: '2026-02-30' }],
     ['experiences.booking.preview', { conversationId: 'not-a-uuid', experienceId: 'e', date: '2026-10-24', adults: 2 }],
@@ -111,6 +118,23 @@ describe('OperationsToolRegistryService', () => {
     await expect(createRegistry().execute(tool, GUEST, input)).rejects.toBeInstanceOf(BadRequestException);
     expect(booking.preview).not.toHaveBeenCalled();
     expect(booking.confirm).not.toHaveBeenCalled();
+  });
+
+  it('filters the restaurant catalog by type and by name, without SQL from the caller', async () => {
+    const base = { openingHours: null, description: '', location: null, acceptsReservations: false, minimumAge: null, reservationTimes: [] };
+    restaurants.listActive.mockResolvedValueOnce([
+      { ...base, id: 'r1', name: 'Restaurante Central', type: 'restaurante' },
+      { ...base, id: 'r2', name: 'Bar Mirante', type: 'bar' },
+    ] as never).mockResolvedValueOnce([
+      { ...base, id: 'r1', name: 'Restaurante Central', type: 'restaurante' },
+      { ...base, id: 'r2', name: 'Bar Mirante', type: 'bar' },
+    ] as never);
+
+    const bars = await createRegistry().execute('restaurants.list', GUEST, { type: 'bar' });
+    const byName = await createRegistry().execute('restaurants.list', GUEST, { name: 'central' });
+
+    expect((bars.data as { id: string }[]).map(({ id }) => id)).toEqual(['r2']);
+    expect((byName.data as { id: string }[]).map(({ id }) => id)).toEqual(['r1']);
   });
 
   it('resolves the stay on the server before previewing a booking', async () => {

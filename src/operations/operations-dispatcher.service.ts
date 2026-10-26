@@ -3,6 +3,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import {
   isConversationIntent,
   isExperienceIntent,
+  isRestaurantIntent,
   type ChatIntent,
   type ConversationIntent,
   type IntentDecision,
@@ -31,8 +32,12 @@ const INTENT_TOOL_MAP = {
   'request.status': 'requests.list',
 
   'restaurant.booking': 'restaurants.list',
+  'restaurant.list': 'restaurants.list',
+  'restaurant.details': 'restaurants.list',
 
   'experience.list': 'experiences.list',
+  // A busca usa a mesma ferramenta, com filtros opcionais.
+  'experience.search': 'experiences.list',
   'experience.details': 'experiences.details',
   'experience.availability': 'experiences.availability',
   'experience.price': 'experiences.details',
@@ -76,8 +81,18 @@ export class OperationsDispatcherService {
 
     this.logger.log(`Intenção: ${decision.intent} → Ferramenta: ${tool}`);
 
-    if (decision.intent === 'restaurant.booking') {
-      return this.restaurantOperationsService.handleBooking(message, guest);
+    if (isRestaurantIntent(decision.intent)) {
+      // Sem a conversa, a reserva só é encaminhada; o catálogo usa um estado vazio.
+      if (!context && decision.intent === 'restaurant.booking') {
+        return this.restaurantOperationsService.handleBooking(message, guest);
+      }
+
+      return this.restaurantOperationsService.handle(
+        message,
+        { ...decision, intent: decision.intent },
+        guest,
+        context ?? { conversationId: '', state: {} },
+      );
     }
 
     if (isExperienceIntent(decision.intent)) {

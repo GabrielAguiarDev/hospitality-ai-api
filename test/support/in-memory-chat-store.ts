@@ -29,7 +29,15 @@ type StoredConversation = Pick<ChatConversation, 'id' | 'resortId' | 'guestId'> 
   updatedAt?: Date;
 };
 
-type StoredState = Pick<ChatConversationState, 'conversationId' | 'state' | 'version'>;
+type StoredState = Pick<ChatConversationState, 'conversationId' | 'resortId' | 'guestId' | 'state' | 'version'>;
+
+type StateOwner = Partial<Pick<StoredState, 'conversationId' | 'resortId' | 'guestId'>>;
+
+// Como no banco: todo critério informado precisa coincidir.
+const ownedBy = (stored: StoredState | undefined, where: StateOwner): stored is StoredState =>
+  !!stored &&
+  (where.resortId === undefined || stored.resortId === where.resortId) &&
+  (where.guestId === undefined || stored.guestId === where.guestId);
 
 /** Fixed resort date used by the chat tests: Friday, 2026-10-23. */
 export const TEST_TODAY = '2026-10-23';
@@ -52,9 +60,9 @@ export class InMemoryChatStore {
   })();
 
   readonly statesRepository = {
-    findOneBy: vi.fn(async ({ conversationId }: { conversationId: string }) => {
-      const stored = this.states.get(conversationId);
-      return stored ? structuredClone(stored) : null;
+    findOneBy: vi.fn(async (where: StateOwner) => {
+      const stored = this.states.get(where.conversationId ?? '');
+      return ownedBy(stored, where) ? structuredClone(stored) : null;
     }),
   };
 
@@ -108,8 +116,19 @@ export class InMemoryChatStore {
     }
   }
 
-  seedState(conversationId: string, state: ConversationState, version = 1) {
-    this.states.set(conversationId, { conversationId, state, version });
+  seedState(
+    conversationId: string,
+    state: ConversationState,
+    version = 1,
+    owner: GuestContext = this.conversations.get(conversationId) ?? DEMO_GUEST_CONTEXT,
+  ) {
+    this.states.set(conversationId, {
+      conversationId,
+      resortId: owner.resortId,
+      guestId: owner.guestId,
+      state,
+      version,
+    });
   }
 
   providers(): Provider[] {
@@ -170,15 +189,15 @@ export class InMemoryChatStore {
       update: vi.fn(
         async (
           entity: unknown,
-          where: { id?: string; conversationId?: string; version?: number },
+          where: { id?: string; version?: number } & StateOwner,
           values: { updatedAt?: Date; state?: ConversationState; version?: number },
         ) => {
           if (entity === ChatConversationState) {
             const stored = this.states.get(where.conversationId ?? '');
             const matches =
-              !!stored && (where.version === undefined || stored.version === where.version);
+              ownedBy(stored, where) && (where.version === undefined || stored.version === where.version);
 
-            if (matches) {
+            if (matches && stored) {
               staged.push(() => Object.assign(stored, structuredClone(values)));
             }
 
