@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import { matchByName, normalizeText } from '../common/text.js';
-import type { ConversationState } from '../contracts/conversation-state.js';
+import { pendingConfirmation, type ConversationState } from '../contracts/conversation-state.js';
 import { chatRequest, llmSettings } from '../llm/llm-config.js';
 import { CUISINE_CUE } from '../operations/restaurant-search.js';
 import { ResortClock } from '../resort/resort-clock.service.js';
@@ -13,6 +13,8 @@ import type {
   IntentDecision,
   ReservationDetail,
 } from './chat-intent.types.js';
+import { detectModule } from './intent-detectors/modules.js';
+import { detectRequestCatalogOrCreate, detectRequestFollowUp } from './intent-detectors/requests.js';
 import { extractEntities } from './message-entities.js';
 
 const INTENTS: ChatIntent[] = [
@@ -128,7 +130,7 @@ const NOW_CUE = /\b(?:agora|neste momento|nesse momento)\b/;
 
 // Eventos, shows e programação do dia (tb_evento e tb_programacaolazer).
 const EVENT_NOUN =
-  /\b(?:eventos?|shows?|apresentac(?:ao|oes)|musica ao vivo|festas?|atrac(?:ao|oes)|programacao|recreac(?:ao|oes)|atividades de lazer)\b/;
+  /\b(?:eventos?|shows?|apresentac(?:ao|oes)|musica ao vivo|festas?|atrac(?:ao|oes)|programacao|recreac(?:ao|oes)|atividades de lazer|atividades? (?:para|pra) (?:as |os )?(?:criancas|adultos|teens|adolescentes|jovens))\b/;
 // O substantivo só vira programação com um pedido de lista ou uma data:
 // "O resort faz festa de casamento?" e "Onde fica o espaço de eventos?" vão ao RAG.
 const EVENT_LIST_CUE = /\b(?:quais|qual|que horas|o que|tem|ha|vai ter|rola|programacao|mostra|mostre|lista|agenda)\b/;
@@ -468,7 +470,7 @@ export class IntentClassifierService {
     // Com uma pré-reserva pendente, "sim"/"não" nunca vão ao modelo livre,
     // que poderia afirmar uma confirmação que não aconteceu.
     if (
-      state?.experience?.pendingPreviewId &&
+      pendingConfirmation(state) &&
       text.split(' ').some((word) => CONFIRM_TRIGGERS.has(word) || CANCEL_TRIGGERS.has(word))
     ) {
       return null;
@@ -511,14 +513,17 @@ export class IntentClassifierService {
     const entities = extractEntities(message, this.clock.today());
     const listed = state?.experience?.listed?.map(({ id, title }) => ({ id, name: title })) ?? [];
 
+    // "Obrigado, não preciso de mais toalhas" recusa, não pede.
+    const declined = text.replace(/\bnao (?:preciso|precisa|precisamos|quero)\b(?: (?:de|mais|nada|disso|mais nada))*(?: [a-z]+)?/g, ' ');
+
     if (
-      REQUEST_CUE.test(text.replace(EXCLAMATION, ' ')) ||
+      REQUEST_CUE.test(declined.replace(EXCLAMATION, ' ')) ||
       Object.keys(entities).length > 0 ||
-      BOOKING_VERB.test(text) ||
-      EXPERIENCE_NOUN.test(text) ||
-      RESTAURANT_CATALOG.test(text) ||
-      OTHER_SERVICES.test(text) ||
-      matchByName(message, listed).length > 0
+      BOOKING_VERB.test(declined) ||
+      EXPERIENCE_NOUN.test(declined) ||
+      RESTAURANT_CATALOG.test(declined) ||
+      OTHER_SERVICES.test(declined) ||
+      matchByName(declined, listed).length > 0
     ) {
       return null;
     }
@@ -573,7 +578,7 @@ export class IntentClassifierService {
     const only = (allowed: Set<string>) =>
       words.length > 0 && words.length <= 6 && words.every((word) => allowed.has(word));
 
-    if (state?.experience?.pendingPreviewId) {
+    if (pendingConfirmation(state)) {
       return null;
     }
 
@@ -624,21 +629,24 @@ export class IntentClassifierService {
     const confirmation = only(CONFIRM_WORDS) && words.some((word) => CONFIRM_TRIGGERS.has(word));
     const cancellation = only(CANCEL_WORDS) && words.some((word) => CANCEL_TRIGGERS.has(word));
 
-    if (!state?.experience?.pendingPreviewId) {
-      // Confirmação sem pré-reserva: responde que não há nada pendente
+    const pending = pendingConfirmation(state);
+
+    if (!pending) {
+      // Confirmação sem pendência: responde que não há nada a confirmar
       // em vez de tratar a mensagem como pergunta de conhecimento.
       // Também depois de outro assunto: a confirmação por texto expirou, mas o card não.
-      return (state?.topic === 'experience' || state?.experience) && confirmation && /\bconfirm/.test(text)
-        ? this.decision('experience.booking.confirm', message)
-        : null;
+      if (!confirmation || !/\bconfirm/.test(text)) return null;
+      if (state?.topic === 'request' || (state?.request && state.topic !== 'experience')) return this.decision('request.confirm', message);
+      return state?.topic === 'experience' || state?.experience ? this.decision('experience.booking.confirm', message) : null;
     }
 
+    // "confirmo" vai para a única pendência da conversa.
     if (cancellation) {
-      return this.decision('experience.booking.cancel', message);
+      return this.decision(pending.kind === 'request' ? 'request.cancel' : 'experience.booking.cancel', message);
     }
 
     if (confirmation) {
-      return this.decision('experience.booking.confirm', message);
+      return this.decision(pending.kind === 'request' ? 'request.confirm' : 'experience.booking.confirm', message);
     }
 
     return null;
@@ -1008,16 +1016,35 @@ export class IntentClassifierService {
       return requestIntent;
     }
 
+    // Catálogo e novas solicitações ("Preciso de toalhas", "Solicitações.").
+    const requestModule = detectRequestCatalogOrCreate(normalizeText(message), state);
+
+    if (requestModule) {
+      return this.decision(requestModule, message);
+    }
+
     const conversation = this.detectConversation(message, state);
 
     if (conversation) {
       return conversation;
     }
 
+    const itemAnswer = detectRequestFollowUp(normalizeText(message), state, message.includes('?'));
+
+    if (itemAnswer) {
+      return this.decision(itemAnswer, message);
+    }
+
     const event = this.detectEvent(message, state);
 
     if (event) {
       return event;
+    }
+
+    const module = detectModule(normalizeText(message));
+
+    if (module) {
+      return this.decision(module, message);
     }
 
     const experienceIntent = this.detectExperienceOrRestaurant(message, state);

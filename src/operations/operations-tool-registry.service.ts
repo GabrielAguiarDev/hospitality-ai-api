@@ -29,6 +29,21 @@ import {
   upcomingSlots,
 } from '../experiences/experience-search.js';
 import { EventsCatalogService, type ResortEvent } from '../resort/events-catalog.service.js';
+import {
+  ModulesCatalogService,
+  type BoutiqueProduct,
+  type EsgInfo,
+  type QuizInfo,
+  type SpaService,
+  type Tip,
+} from '../resort/modules-catalog.service.js';
+import { RequestsCatalogService, type RequestDepartment } from '../resort/requests-catalog.service.js';
+import {
+  GuestRequestService,
+  type RequestCardState,
+  type RequestConfirmResult,
+  type RequestPreviewResult,
+} from '../requests/guest-request.service.js';
 import { ResortClock } from '../resort/resort-clock.service.js';
 import { GuestStayService } from '../resort/guest-stay.service.js';
 import {
@@ -56,11 +71,22 @@ import {
   parsePreviewInput,
   parseRestaurantListInput,
   parsePreviewReferenceInput,
+  parseRequestPreviewInput,
 } from './tool-inputs.js';
 
 export type OperationToolName =
   | 'reservations.list'
   | 'requests.list'
+  | 'requests.catalog'
+  | 'requests.preview'
+  | 'requests.confirm'
+  | 'requests.cancel'
+  | 'requests.cards'
+  | 'boutique.list'
+  | 'spa.list'
+  | 'tips.list'
+  | 'quiz.list'
+  | 'esg.info'
   | 'restaurants.list'
   | 'events.list'
   | 'experiences.list'
@@ -87,6 +113,16 @@ export type OperationToolResult =
       tool: 'requests.list';
       data: GuestRequest[];
     }
+  | { tool: 'requests.catalog'; data: RequestDepartment[] }
+  | { tool: 'requests.preview'; data: RequestPreviewResult }
+  | { tool: 'requests.confirm'; data: RequestConfirmResult }
+  | { tool: 'requests.cancel'; data: { cancelled: boolean } }
+  | { tool: 'requests.cards'; data: RequestCardState[] }
+  | { tool: 'boutique.list'; data: BoutiqueProduct[] }
+  | { tool: 'spa.list'; data: SpaService[] }
+  | { tool: 'tips.list'; data: Tip[] }
+  | { tool: 'quiz.list'; data: QuizInfo[] }
+  | { tool: 'esg.info'; data: EsgInfo[] }
   | {
       tool: 'restaurants.list';
       data: RestaurantInfo[];
@@ -164,6 +200,56 @@ export class OperationsToolRegistryService {
       readOnly: true,
     },
     {
+      name: 'requests.catalog',
+      description: 'Lista departamentos que aceitam solicitação, seus itens ativos e avisos.',
+      readOnly: true,
+    },
+    {
+      name: 'requests.preview',
+      description: 'Prepara uma solicitação SIMULADA com itens do catálogo (banco interno da IA).',
+      readOnly: false,
+    },
+    {
+      name: 'requests.confirm',
+      description: 'Confirma uma solicitação simulada da conversa (não envia ao departamento).',
+      readOnly: false,
+    },
+    {
+      name: 'requests.cancel',
+      description: 'Descarta uma solicitação simulada pendente.',
+      readOnly: false,
+    },
+    {
+      name: 'requests.cards',
+      description: 'Consulta o estado atual dos cards de solicitação da conversa.',
+      readOnly: true,
+    },
+    {
+      name: 'boutique.list',
+      description: 'Lista produtos ativos da boutique e da conveniência, com preços.',
+      readOnly: true,
+    },
+    {
+      name: 'spa.list',
+      description: 'Lista serviços ativos do SPA e do salão de beleza.',
+      readOnly: true,
+    },
+    {
+      name: 'tips.list',
+      description: 'Lista as dicas publicadas para a estadia.',
+      readOnly: true,
+    },
+    {
+      name: 'quiz.list',
+      description: 'Lista quizzes ativos (sem participações nem PIN).',
+      readOnly: true,
+    },
+    {
+      name: 'esg.info',
+      description: 'Textos publicados de ESG do resort.',
+      readOnly: true,
+    },
+    {
       name: 'restaurants.list',
       description: 'Lista restaurantes, bares e opções de alimentação ativos, com filtro opcional por tipo ou nome.',
       readOnly: true,
@@ -228,6 +314,9 @@ export class OperationsToolRegistryService {
     private readonly guestStay: GuestStayService,
     private readonly clock: ResortClock,
     private readonly eventsCatalog: EventsCatalogService,
+    private readonly requestsCatalog: RequestsCatalogService,
+    private readonly modulesCatalog: ModulesCatalogService,
+    private readonly guestRequests: GuestRequestService,
   ) {}
 
   // Vagas do snapshot filtradas pelo relógio atual do resort.
@@ -292,12 +381,77 @@ export class OperationsToolRegistryService {
 
       case 'requests.list': {
         parseNoInput(input);
+        const stay = await this.guestStay.resolve(guest);
+        const [official, simulated] = await Promise.all([
+          this.requestsService.listForGuest(guest),
+          this.guestRequests.listForStay(guest, stay),
+        ]);
 
         return {
           tool: name,
-          data: await this.requestsService.listForGuest(guest),
+          // Simuladas primeiro (mais recentes) e sempre identificadas.
+          data: [
+            ...simulated.map((request): GuestRequest => ({
+              id: request.id,
+              category: request.departmentName,
+              description: request.items.map(({ name, quantity }) => (quantity > 1 ? `${quantity}x ${name}` : name)).join('; '),
+              status: 'simulada',
+              createdAt: `${ResortClock.formatDate(this.clock.dateAt(request.confirmedAt))} ${this.clock.timeAt(request.confirmedAt)}`,
+              updatedAt: null,
+              simulated: true,
+              protocol: request.protocol,
+            })),
+            ...official,
+          ],
         };
       }
+
+      case 'requests.catalog': {
+        parseNoInput(input);
+        return { tool: name, data: await this.requestsCatalog.departments() };
+      }
+
+      case 'requests.preview': {
+        const draft = parseRequestPreviewInput(input);
+        const stay = await this.guestStay.resolve(guest);
+        return { tool: name, data: await this.guestRequests.preview(guest, stay, draft) };
+      }
+
+      case 'requests.confirm': {
+        const { conversationId, previewId } = parsePreviewReferenceInput(input);
+        const stay = await this.guestStay.resolve(guest);
+        return { tool: name, data: await this.guestRequests.confirm(guest, stay, conversationId, previewId) };
+      }
+
+      case 'requests.cancel': {
+        const { conversationId, previewId } = parsePreviewReferenceInput(input);
+        return { tool: name, data: { cancelled: await this.guestRequests.cancel(guest, conversationId, previewId) } };
+      }
+
+      case 'requests.cards': {
+        const { conversationId, previewIds } = parseBookingCardsInput(input);
+        return { tool: name, data: await this.guestRequests.cards(guest, conversationId, previewIds) };
+      }
+
+      case 'boutique.list':
+        parseNoInput(input);
+        return { tool: name, data: await this.modulesCatalog.boutique() };
+
+      case 'spa.list':
+        parseNoInput(input);
+        return { tool: name, data: await this.modulesCatalog.spa() };
+
+      case 'tips.list':
+        parseNoInput(input);
+        return { tool: name, data: await this.modulesCatalog.tips() };
+
+      case 'quiz.list':
+        parseNoInput(input);
+        return { tool: name, data: await this.modulesCatalog.activeQuizzes() };
+
+      case 'esg.info':
+        parseNoInput(input);
+        return { tool: name, data: await this.modulesCatalog.esg() };
 
       case 'restaurants.list': {
         const { type, name: query } = parseRestaurantListInput(input);

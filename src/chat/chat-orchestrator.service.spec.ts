@@ -37,6 +37,7 @@ describe('ChatOrchestratorService', () => {
   };
   const dispatcher = {
     dispatch: vi.fn<OperationsDispatcherService['dispatch']>(),
+    findProducts: vi.fn<OperationsDispatcherService['findProducts']>(async () => null),
   };
   const retrieval = { search: vi.fn<RetrievalService['search']>() };
 
@@ -195,6 +196,101 @@ describe('ChatOrchestratorService', () => {
       await orchestrator.resolve('confirmo', GUEST, [], CTX(pending));
 
       expect(dispatcher.dispatch.mock.calls[0][3]?.state.experience?.pendingPreviewId).toBe('preview-1');
+    });
+  });
+
+  describe('pending confirmations across domains', () => {
+    const CTX = (state: object) => ({ conversationId: 'conv-1', state, today: '2026-10-23' });
+    const pendingRequest = { topic: 'request' as const, request: { pendingPreviewId: 'req-1', departmentId: '3' } };
+    const pendingExperience = { topic: 'experience' as const, experience: { selectedId: 'exp-1', pendingPreviewId: 'preview-1' } };
+
+    it('clears a pending request before dispatching an unrelated intent', async () => {
+      classifier.classify.mockResolvedValue({ intent: 'event.list', detail: 'none' });
+      dispatcher.dispatch.mockResolvedValue({ tool: 'events.list', reply: 'ok' });
+
+      const result = await orchestrator.resolve('Tem algum evento hoje?', GUEST, [], CTX(pendingRequest));
+
+      expect(dispatcher.dispatch.mock.calls[0][3]?.state.request?.pendingPreviewId).toBeUndefined();
+      expect(result.state?.request?.pendingPreviewId).toBeUndefined();
+    });
+
+    it('keeps the pending request for request intents so "confirmo" reaches its handler', async () => {
+      classifier.classify.mockResolvedValue({ intent: 'request.confirm', detail: 'none' });
+      dispatcher.dispatch.mockResolvedValue({ tool: 'requests.confirm', reply: 'ok' });
+
+      await orchestrator.resolve('confirmo', GUEST, [], CTX(pendingRequest));
+
+      expect(dispatcher.dispatch.mock.calls[0][3]?.state.request?.pendingPreviewId).toBe('req-1');
+    });
+
+    it('drops a pending experience pre-booking when the guest starts a request, and vice versa', async () => {
+      classifier.classify.mockResolvedValue({ intent: 'request.create', detail: 'none' });
+      dispatcher.dispatch.mockResolvedValue({ tool: 'requests.preview', reply: 'ok' });
+      await orchestrator.resolve('Preciso de toalhas', GUEST, [], CTX(pendingExperience));
+      expect(dispatcher.dispatch.mock.calls[0][3]?.state.experience?.pendingPreviewId).toBeUndefined();
+      expect(dispatcher.dispatch.mock.calls[0][3]?.state.experience?.selectedId).toBe('exp-1');
+
+      classifier.classify.mockResolvedValue({ intent: 'experience.list', detail: 'none' });
+      dispatcher.dispatch.mockResolvedValue({ tool: 'experiences.list', reply: 'ok' });
+      await orchestrator.resolve('Quais experiências?', GUEST, [], CTX(pendingRequest));
+      expect(dispatcher.dispatch.mock.calls[1][3]?.state.request?.pendingPreviewId).toBeUndefined();
+    });
+
+    it('does not keep either confirmation when the product fallback answers (no stray "confirmo")', async () => {
+      classifier.classify.mockResolvedValue({ intent: 'knowledge.search', detail: 'none' });
+      retrieval.search.mockResolvedValue([]);
+      dispatcher.findProducts.mockResolvedValue({ tool: 'boutique.list', reply: 'Na Boutique: Protetor solar.', state: { topic: 'module' } });
+
+      for (const pending of [pendingRequest, pendingExperience]) {
+        const result = await orchestrator.resolve('Tem protetor solar?', GUEST, [], CTX(pending));
+
+        const passed = dispatcher.findProducts.mock.lastCall?.[2];
+        expect(passed?.state.request?.pendingPreviewId).toBeUndefined();
+        expect(passed?.state.experience?.pendingPreviewId).toBeUndefined();
+        expect(result.state?.request?.pendingPreviewId).toBeUndefined();
+        expect(result.state?.experience?.pendingPreviewId).toBeUndefined();
+      }
+    });
+  });
+
+  describe('product fallback when the RAG finds nothing', () => {
+    const CTX = { conversationId: 'conv-1', state: {}, today: '2026-10-23' };
+
+    beforeEach(() => {
+      classifier.classify.mockResolvedValue({ intent: 'knowledge.search', detail: 'none' });
+      retrieval.search.mockResolvedValue([]);
+    });
+
+    it('answers from the Boutique, in operations mode, with its actions and the module topic', async () => {
+      const navigate = { type: 'navigate' as const, label: 'Abrir Boutique', screen: 'Boutique' as const, params: {} };
+      dispatcher.findProducts.mockResolvedValue({ tool: 'boutique.list', reply: 'Na Boutique: Protetor solar, R$ 59,90.', actions: [navigate], state: { topic: 'module' } });
+
+      const result = await orchestrator.resolve('Tem protetor solar?', GUEST, [], CTX);
+
+      expect(result).toMatchObject({ mode: 'operations', reply: 'Na Boutique: Protetor solar, R$ 59,90.', documents: [], actions: [navigate] });
+      expect(result.state?.topic).toBe('module');
+    });
+
+    it('falls back to knowledge mode without documents when no product matches', async () => {
+      dispatcher.findProducts.mockResolvedValue(null);
+
+      await expect(orchestrator.resolve('Vocês têm heliponto?', GUEST, [], CTX)).resolves.toMatchObject({ mode: 'knowledge', documents: [] });
+    });
+
+    it('does not look for products when the RAG found documents', async () => {
+      retrieval.search.mockResolvedValue([HOURS_DOCUMENT]);
+
+      await orchestrator.resolve('Que horas abre o spa?', GUEST, [], CTX);
+
+      expect(dispatcher.findProducts).not.toHaveBeenCalled();
+    });
+
+    it('works without a conversation context', async () => {
+      dispatcher.findProducts.mockResolvedValue(null);
+
+      await orchestrator.resolve('Vocês têm heliponto?', GUEST);
+
+      expect(dispatcher.findProducts).toHaveBeenCalledWith('Vocês têm heliponto?', GUEST, undefined);
     });
   });
 

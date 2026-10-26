@@ -15,6 +15,8 @@ import type { RestaurantOperationsService } from './restaurant-operations.servic
 
 import type { EventOperationsService } from './event-operations.service.js';
 
+import type { ModuleOperationsService } from './module-operations.service.js';
+
 import { OperationsDispatcherService } from './operations-dispatcher.service.js';
 
 describe('OperationsDispatcherService', () => {
@@ -34,7 +36,20 @@ describe('OperationsDispatcherService', () => {
   };
 
   const requests = {
-    ask: vi.fn(async () => 'Solicitação encontrada'),
+    handle: vi.fn(async () => ({
+      tool: 'requests.list' as const,
+      reply: 'Solicitação encontrada',
+      actions: [],
+    })),
+  };
+
+  const modules = {
+    handle: vi.fn(async () => ({
+      tool: 'boutique.list' as const,
+      reply: 'Boutique',
+      actions: [],
+    })),
+    findProducts: vi.fn(async () => null),
   };
 
   const experiences = {
@@ -78,6 +93,7 @@ describe('OperationsDispatcherService', () => {
     experiences as unknown as ExperienceOperationsService,
     restaurants as unknown as RestaurantOperationsService,
     events as unknown as EventOperationsService,
+    modules as unknown as ModuleOperationsService,
   );
 
   beforeEach(() => {
@@ -119,7 +135,7 @@ describe('OperationsDispatcherService', () => {
       decision,
     );
 
-    expect(requests.ask).not.toHaveBeenCalled();
+    expect(requests.handle).not.toHaveBeenCalled();
   });
 
   it.each(['request.list', 'request.status'] as const)(
@@ -139,10 +155,11 @@ describe('OperationsDispatcherService', () => {
       expect(result.tool).toBe('requests.list');
       expect(result.reply).toBe('Solicitação encontrada');
 
-      expect(requests.ask).toHaveBeenCalledWith(
+      expect(requests.handle).toHaveBeenCalledWith(
         'Minha solicitação',
-        intent,
+        decision,
         GUEST,
+        undefined,
       );
 
       expect(reservations.ask).not.toHaveBeenCalled();
@@ -162,7 +179,7 @@ describe('OperationsDispatcherService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
 
     expect(reservations.ask).not.toHaveBeenCalled();
-    expect(requests.ask).not.toHaveBeenCalled();
+    expect(requests.handle).not.toHaveBeenCalled();
   });
 
   it.each(['conversation.greeting', 'conversation.general'] as const)(
@@ -173,7 +190,7 @@ describe('OperationsDispatcherService', () => {
       ).rejects.toBeInstanceOf(BadRequestException);
 
       expect(reservations.ask).not.toHaveBeenCalled();
-      expect(requests.ask).not.toHaveBeenCalled();
+      expect(requests.handle).not.toHaveBeenCalled();
       expect(experiences.handle).not.toHaveBeenCalled();
       expect(restaurants.handleBooking).not.toHaveBeenCalled();
     },

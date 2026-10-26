@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import type { EntityManager, Repository } from 'typeorm';
 
 import { normalizeText } from '../common/text.js';
-import type { ConversationPhase, ConversationState } from '../contracts/conversation-state.js';
+import { pendingConfirmation, type ConversationPhase, type ConversationState } from '../contracts/conversation-state.js';
 import type { GuestContext } from '../guest/guest-context.js';
 import type { DispatchResult } from '../operations/operations.types.js';
 
@@ -162,7 +162,7 @@ export class ConversationContextService {
    */
   afterOperation(result: DispatchResult, fallback: ConversationState, intent: ChatIntent): ConversationState {
     const { pendingQuestion: _previous, ...base } = result.state ?? fallback;
-    const phase: ConversationPhase = base.experience?.pendingPreviewId
+    const phase: ConversationPhase = pendingConfirmation(base)
       ? 'awaiting_confirmation'
       : result.completed
         ? 'completed'
@@ -189,7 +189,7 @@ export class ConversationContextService {
     const { pendingQuestion: _closed, ...rest } = state;
     // Uma conversa livre depois de uma operação concluída mantém a
     // fase "concluída", para que nada reabra a operação anterior.
-    const phase: ConversationPhase = rest.experience?.pendingPreviewId
+    const phase: ConversationPhase = pendingConfirmation(rest)
       ? 'awaiting_confirmation'
       : rest.phase === 'completed'
         ? 'completed'

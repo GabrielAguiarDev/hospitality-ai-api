@@ -1,3 +1,4 @@
+import { capabilitiesOverview } from '../capabilities/capabilities.js';
 import { normalizeText } from '../common/text.js';
 
 import type { ConversationIntent, HistoryEntry } from './chat-intent.types.js';
@@ -24,6 +25,8 @@ export interface SocialContext {
   history: HistoryEntry[];
   // Pré-reserva aguardando confirmação nesta conversa.
   pendingBooking: boolean;
+  // Tipo da pendência: o lembrete fala de reserva ou de solicitação.
+  pendingKind?: 'experience' | 'request';
   // "Não" a uma pergunta do Yago.
   declinesPending?: boolean;
 }
@@ -63,7 +66,7 @@ const VARIANTS: Record<Exclude<SocialKind, 'greeting' | 'identity' | 'external'>
   ],
   farewell: ['Até mais! Aproveite a estadia.', 'Até logo! Se precisar, estou por aqui.'],
   compliment: ['Que bom que gostou! Precisa de mais alguma coisa?', 'Fico feliz em ajudar! Se precisar, é só chamar.'],
-  help: ['Posso ajudar com restaurantes, experiências, eventos, suas reservas e solicitações. Do que você precisa?'],
+  help: [`Posso ajudar com ${capabilitiesOverview()}. Do que você precisa?`],
   acknowledgement: ['Combinado! Se precisar, é só chamar.', 'Certo! Estou por aqui se precisar.'],
   decline: ['Tudo bem! Se precisar, é só chamar.', 'Sem problemas! Estou por aqui se precisar.'],
 };
@@ -71,10 +74,10 @@ const VARIANTS: Record<Exclude<SocialKind, 'greeting' | 'identity' | 'external'>
 export const EXTERNAL_REPLY =
   'Não tenho acesso a previsão do tempo, notícias ou outras informações em tempo real. A recepção pode ajudar com isso.';
 
-const IDENTITY_REPLY =
-  'Sou o Yago, concierge digital do resort. Posso ajudar com restaurantes, experiências, eventos e suas reservas.';
+const IDENTITY_REPLY = `Sou o Yago, concierge digital do resort. Posso ajudar com ${capabilitiesOverview()}.`;
 
 const PENDING_BOOKING = 'A pré-reserva continua aguardando: confirme pelo card ou responda "confirmo".';
+const PENDING_REQUEST = 'A solicitação continua aguardando: confirme pelo card ou responda "confirmo".';
 
 // Alterna as variações sem repetir a última resposta do Yago.
 function pick(options: string[], history: HistoryEntry[]): string {
@@ -116,7 +119,7 @@ export function socialReply(message: string, intent: ConversationIntent, context
       acknowledgement: 'Certo!',
       decline: 'Tudo bem!',
     }[kind];
-    return `${opening} ${PENDING_BOOKING}`;
+    return `${opening} ${context.pendingKind === 'request' ? PENDING_REQUEST : PENDING_BOOKING}`;
   }
 
   return kind === 'greeting' ? greeting(message, context.history) : pick(VARIANTS[kind], context.history);

@@ -1,12 +1,14 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import type { Repository } from 'typeorm';
 
 import { sanitizeActions, type ChatResponse } from '../contracts/chat-actions.js';
+import { pendingConfirmation, withoutPendingConfirmation } from '../contracts/conversation-state.js';
 import type { GuestContext } from '../guest/guest-context.js';
 import { ExperienceOperationsService } from '../operations/experience-operations.service.js';
 import { OperationsToolRegistryService } from '../operations/operations-tool-registry.service.js';
+import { RequestsOperationsService } from '../operations/requests-operations.service.js';
 
 import type { ChatActionDto } from './dto/chat-action.dto.js';
 import { ChatConversation } from './entities/chat-conversation.entity.js';
@@ -35,6 +37,7 @@ export class ChatActionsService {
     private readonly dataSource: DataSource,
     private readonly experienceOperations: ExperienceOperationsService,
     private readonly registry: OperationsToolRegistryService,
+    private readonly requestOperations: RequestsOperationsService,
 
     @InjectRepository(ChatConversation)
     private readonly conversationsRepository: Repository<ChatConversation>,
@@ -57,37 +60,75 @@ export class ChatActionsService {
     let reply: string;
     let status: ChatActionStatus;
     let response: ChatResponse['actions'] = [];
+    const type: ChatActionDto['type'] = dto.type;
 
-    if (dto.type === 'experience.booking.confirm') {
-      const outcome = await this.experienceOperations.confirmPreview(
-        guest,
-        dto.conversationId,
-        dto.previewId,
-      );
+    // Um handler por tipo: um tipo novo nunca cai no ramo de outro.
+    switch (type) {
+      case 'experience.booking.confirm': {
+        const outcome = await this.experienceOperations.confirmPreview(guest, dto.conversationId, dto.previewId);
 
-      if (outcome.result.status === 'not_found') {
-        throw new NotFoundException('Pré-reserva não encontrada');
+        if (outcome.result.status === 'not_found') {
+          throw new NotFoundException('Pré-reserva não encontrada');
+        }
+
+        reply = outcome.reply;
+        status = outcome.result.status;
+        response = sanitizeActions(outcome.actions);
+        break;
       }
 
-      reply = outcome.reply;
-      status = outcome.result.status;
-      response = sanitizeActions(outcome.actions);
-    } else {
-      const result = await this.registry.execute('experiences.booking.cancel', guest, {
-        conversationId: dto.conversationId,
-        previewId: dto.previewId,
-      });
+      case 'experience.booking.cancel': {
+        const result = await this.registry.execute('experiences.booking.cancel', guest, {
+          conversationId: dto.conversationId,
+          previewId: dto.previewId,
+        });
 
-      if (result.tool !== 'experiences.booking.cancel' || !result.data.cancelled) {
-        throw new NotFoundException('Pré-reserva pendente não encontrada');
+        if (result.tool !== 'experiences.booking.cancel' || !result.data.cancelled) {
+          throw new NotFoundException('Pré-reserva pendente não encontrada');
+        }
+
+        reply = 'Tudo bem, descartei a pré-reserva. Nada foi registrado.';
+        status = 'cancelled';
+        // O mesmo card passa para "cancelled".
+        response = sanitizeActions(
+          await this.experienceOperations.bookingCards(guest, dto.conversationId, [dto.previewId]),
+        );
+        break;
       }
 
-      reply = 'Tudo bem, descartei a pré-reserva. Nada foi registrado.';
-      status = 'cancelled';
-      // O mesmo card passa para "cancelled".
-      response = sanitizeActions(
-        await this.experienceOperations.bookingCards(guest, dto.conversationId, [dto.previewId]),
-      );
+      case 'request.confirm': {
+        const outcome = await this.requestOperations.confirmPreview(guest, dto.conversationId, dto.previewId);
+
+        if (outcome.result.status === 'not_found') {
+          throw new NotFoundException('Solicitação não encontrada');
+        }
+
+        reply = outcome.reply;
+        status = outcome.result.status;
+        response = sanitizeActions(outcome.actions);
+        break;
+      }
+
+      case 'request.cancel': {
+        const result = await this.registry.execute('requests.cancel', guest, {
+          conversationId: dto.conversationId,
+          previewId: dto.previewId,
+        });
+
+        if (result.tool !== 'requests.cancel' || !result.data.cancelled) {
+          throw new NotFoundException('Solicitação pendente não encontrada');
+        }
+
+        reply = 'Tudo bem, descartei a solicitação. Nada foi registrado.';
+        status = 'cancelled';
+        response = sanitizeActions(await this.requestOperations.cards(guest, dto.conversationId, [dto.previewId]));
+        break;
+      }
+
+      default: {
+        const unknown: never = type;
+        throw new BadRequestException(`Ação não suportada: ${String(unknown)}`);
+      }
     }
 
     const owner = { conversationId: dto.conversationId, resortId: guest.resortId, guestId: guest.guestId };
@@ -106,17 +147,16 @@ export class ChatActionsService {
       // A pré-reserva tratada deixa de aguardar confirmação por texto.
       // Versão conferida: se o estado mudou em paralelo, a pendência
       // já foi substituída e não há o que limpar.
-      if (stored?.state.experience?.pendingPreviewId === dto.previewId) {
+      if (stored && pendingConfirmation(stored.state)?.id === dto.previewId) {
         await manager.update(
           ChatConversationState,
           { ...owner, version: stored.version },
           {
             // Operação concluída: nada mais aguarda confirmação nem resposta.
             state: {
-              ...stored.state,
+              ...withoutPendingConfirmation(stored.state),
               phase: 'completed',
               pendingQuestion: undefined,
-              experience: { ...stored.state.experience, pendingPreviewId: undefined },
             },
             version: stored.version + 1,
           },

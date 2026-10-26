@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import type { ChatAction } from '../contracts/chat-actions.js';
-import type { ConversationState } from '../contracts/conversation-state.js';
+import { withoutPendingConfirmation, type ConversationState } from '../contracts/conversation-state.js';
 import { OperationsDispatcherService } from '../operations/operations-dispatcher.service.js';
 
 import { RetrievalService } from '../rag/retrieval.service.js';
@@ -15,6 +15,7 @@ import { extractDate } from './message-entities.js';
 import {
   isConversationIntent,
   isExperienceIntent,
+  isModuleIntent,
   type ConversationIntent,
   type HistoryEntry,
   type IntentDecision,
@@ -56,6 +57,7 @@ function topicOf(decision: IntentDecision): ConversationState['topic'] {
   if (isExperienceIntent(decision.intent)) return 'experience';
   if (decision.intent.startsWith('restaurant.')) return 'restaurant';
   if (decision.intent === 'event.list') return 'event';
+  if (isModuleIntent(decision.intent)) return 'module';
   if (decision.intent.startsWith('reservation.')) return 'reservation';
   if (decision.intent.startsWith('request.')) return 'request';
   return 'knowledge';
@@ -81,12 +83,15 @@ function retrievalQuery(message: string, history: HistoryEntry[], state: Convers
  * descarta a confirmação por texto de uma pré-reserva pendente.
  */
 function withTopic(state: ConversationState, topic: ConversationState['topic']): ConversationState {
+  const cleared = withoutPendingConfirmation(state);
+
+  // A pendência do próprio assunto continua: "confirmo" chega ao seu handler,
+  // que decide (qualquer outra interação do domínio também a descarta).
   return {
-    ...state,
+    ...cleared,
     topic,
-    ...(state.experience
-      ? { experience: { ...state.experience, pendingPreviewId: undefined } }
-      : {}),
+    ...(topic === 'experience' && state.experience ? { experience: state.experience } : {}),
+    ...(topic === 'request' && state.request ? { request: state.request } : {}),
   };
 }
 
@@ -140,7 +145,7 @@ export class ChatOrchestratorService {
             conversationId: context.conversationId,
             // Outro assunto descarta a confirmação por texto da pré-reserva:
             // um "sim" a "Quer ver todas?" nunca confirma a reserva.
-            state: topicOf(decision) === 'experience' ? context.state : withTopic(context.state, topicOf(decision)),
+            state: withTopic(context.state, topicOf(decision)),
           })
         : await this.dispatcher.dispatch(message, decision, guest);
 
@@ -180,6 +185,26 @@ export class ChatOrchestratorService {
           date ? { date } : {},
         )
       : await this.retrievalService.search(message, guest.resortId);
+
+    // Sem evidências: um produto citado pelo nome ainda pode estar na Boutique.
+    if (documents.length === 0) {
+      // Outro assunto: o estado chega sem as confirmações por texto pendentes.
+      const product = await this.dispatcher.findProducts(
+        message,
+        guest,
+        context ? { conversationId: context.conversationId, state: withTopic(context.state, 'module') } : undefined,
+      );
+
+      if (product) {
+        return {
+          mode: 'operations',
+          reply: product.reply,
+          documents: [],
+          ...(product.actions?.length ? { actions: product.actions } : {}),
+          ...(context ? { state: this.context.afterOperation(product, withTopic(context.state, 'module'), 'boutique.info') } : {}),
+        };
+      }
+    }
 
     return {
       mode: 'knowledge',

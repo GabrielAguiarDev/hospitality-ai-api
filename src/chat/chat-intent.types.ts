@@ -7,6 +7,18 @@ export type ChatIntent =
   | 'reservation.status'
   | 'request.list'
   | 'request.status'
+  // Departamentos e itens que podem ser pedidos (tb_departamento/tb_itemdepartamento).
+  | 'request.catalog'
+  // Nova solicitação simulada: prepara o card; a gravação exige confirmação.
+  | 'request.create'
+  | 'request.confirm'
+  | 'request.cancel'
+  // Módulos informativos do app (somente leitura + navegação).
+  | 'boutique.info'
+  | 'spa.info'
+  | 'tips.list'
+  | 'quiz.info'
+  | 'esg.info'
   | 'restaurant.booking'
   // Catálogo e detalhes de restaurantes e bares (sem reserva pelo chat).
   | 'restaurant.list'
@@ -77,4 +89,18 @@ export function isExperienceIntent(intent: ChatIntent): intent is ExperienceInte
 
 export function isConversationIntent(intent: ChatIntent): intent is ConversationIntent {
   return intent.startsWith('conversation.');
+}
+
+export type RequestIntent = Extract<ChatIntent, `request.${string}`>;
+
+export function isRequestIntent(intent: ChatIntent): intent is RequestIntent {
+  return intent.startsWith('request.');
+}
+
+export type ModuleIntent = Extract<ChatIntent, 'boutique.info' | 'spa.info' | 'tips.list' | 'quiz.info' | 'esg.info'>;
+
+export const MODULE_INTENTS: readonly ModuleIntent[] = ['boutique.info', 'spa.info', 'tips.list', 'quiz.info', 'esg.info'];
+
+export function isModuleIntent(intent: ChatIntent): intent is ModuleIntent {
+  return (MODULE_INTENTS as readonly ChatIntent[]).includes(intent);
 }

@@ -22,6 +22,20 @@ Alterações **obrigatórias** no React Native:
 
 Nada precisa mudar no envio de mensagens, nos headers, no `conversationId` nem no card de reserva.
 
+### 0.1 Concierge de todo o aplicativo (versão atual)
+
+O Yago passou a atender todos os módulos: Solicitações, Gastronomia, Experiências, Eventos, Lazer, Boutique, SPA, ESG, Dicas e Quiz. O mapa completo, com fontes e limitações, está em [app-capabilities.md](app-capabilities.md).
+
+Alterações **obrigatórias** no React Native:
+
+1. **Mapear as novas telas de `navigate` (seção 4.1).** Agora `screen` pode ser `Gastronomy`, `Requests`, `Experiences`, `Events`, `Leisure`, `Boutique`, `Spa`, `Esg`, `Tips` ou `Quiz`, com parâmetros por tela (`restaurantId`, `departmentId`, `experienceId`). Mapeie cada uma para a rota real e ignore as que não existirem.
+2. **Renderizar o card `request.card` (seção 4.6).** É uma solicitação **simulada** com os botões Confirmar e Descartar. O ciclo é o mesmo do card de reserva: um card por `cardId`, atualizado no lugar.
+3. **Enviar os novos tipos em `POST /chat/actions` (seção 5):** `request.confirm` e `request.cancel`. Use o `confirm.body` e o `cancel.body` do card sem alterá-los.
+4. **Incluir `request.card` em `KNOWN_ACTION_TYPES`** e no mapa de cards por `cardId` (seção 12). O histórico também traz o card no estado atual.
+5. **Exibir o aviso de simulação:** em `confirmed`, mostre o `request.protocol` (`SIM-…`) e o texto "Solicitação simulada: não foi enviada ao departamento".
+
+Boutique, SPA, ESG, Dicas e Quiz respondem com texto curto e um botão `navigate` para a tela do módulo; não há cards novos para eles.
+
 ---
 
 ## 1. Visão geral
@@ -147,7 +161,8 @@ type ChatAction =
   | ExperienceBookingCardAction
   | ExperienceOptionsAction
   | RestaurantOptionsAction   // novo
-  | EventListAction;          // novo
+  | EventListAction           // novo
+  | GuestRequestCardAction;   // novo: solicitação simulada
 
 interface ExperienceBookingSummary {
   experienceId: string;
@@ -163,20 +178,36 @@ interface ExperienceBookingSummary {
 }
 ```
 
-### 4.1 `navigate`: abrir Gastronomia
+### 4.1 `navigate`: abrir uma tela do app
 
 ```ts
+type NavigationScreen =
+  | 'Gastronomy' | 'Requests' | 'Experiences' | 'Events' | 'Leisure'
+  | 'Boutique' | 'Spa' | 'Esg' | 'Tips' | 'Quiz';
+
 interface NavigateAction {
   type: 'navigate';
-  label: string;            // texto do botão, ex.: "Abrir Gastronomia"
-  screen: 'Gastronomy';     // lista fechada no servidor
-  params: { restaurantId?: string }; // ID real de tb_restaurante, quando identificado
+  label: string;            // texto do botão, ex.: "Abrir Solicitações"
+  screen: NavigationScreen; // lista fechada no servidor
+  params: {
+    restaurantId?: string;  // somente em Gastronomy (id de tb_restaurante)
+    departmentId?: string;  // somente em Requests (id de tb_departamento)
+    experienceId?: string;  // somente em Experiences (id de tb_experiencia)
+  };
 }
 ```
 
-- `screen: 'Gastronomy'` é **provisório**. Mapeie para a rota real do app em um único lugar, por exemplo `{ Gastronomy: 'GastronomiaScreen' }`.
-- Telas fora do mapa devem ser ignoradas.
-- Use `params.restaurantId` para abrir direto no restaurante. Sem ele, abra a lista de Gastronomia.
+| `screen` | Quando vem | Parâmetro |
+| --- | --- | --- |
+| `Gastronomy` | Listas e reserva de restaurantes | `restaurantId` opcional |
+| `Requests` | Catálogo, nova solicitação, status | `departmentId` opcional (abre o departamento) |
+| `Experiences` | Reservado para navegação de experiências | `experienceId` opcional |
+| `Events`, `Leisure` | Reservado (a programação vem em `event.list`) | — |
+| `Boutique`, `Spa`, `Esg`, `Tips`, `Quiz` | Respostas desses módulos | — |
+
+- Os nomes de tela são **provisórios**. Mapeie para as rotas reais em um único lugar, por exemplo `{ Gastronomy: 'GastronomiaScreen', Requests: 'SolicitacoesScreen' }`.
+- Ignore telas fora do mapa.
+- O servidor só envia os parâmetros permitidos para cada tela, sempre com ids do cadastro.
 
 ### 4.2 `experience.booking.card`: card único da reserva
 
@@ -308,6 +339,39 @@ interface EventListAction {
 
 ---
 
+### 4.6 `request.card`: solicitação simulada (novo)
+
+Retornado quando o hóspede pede algo a um departamento ("Preciso de toalhas", "O ar não está gelando"). O card mostra o departamento, os itens e os avisos do departamento (horário de atendimento, prazos). A solicitação só é registrada (de forma **simulada**) após Confirmar ou "confirmo".
+
+```ts
+type RequestCardStatus = 'preview' | 'confirming' | 'confirmed' | 'expired' | 'cancelled';
+
+interface GuestRequestCardAction {
+  type: 'request.card';
+  cardId: string;               // UUID estável (= previewId)
+  status: RequestCardStatus;
+  label: string;                // "Confirmar solicitação simulada", "Solicitação simulada registrada"…
+  summary: {
+    departmentId: string;
+    departmentName: string;     // "Governança"
+    items: { itemId: string; name: string; quantity: number }[]; // 1 a 10 itens do cadastro
+    note: string | null;        // texto do próprio hóspede, até 200 caracteres
+    simulated: true;
+  };
+  notes: string[];              // avisos do departamento (até 4)
+  expiresAt: string | null;     // somente em "preview"
+  request: { requestId: string; protocol: string } | null; // somente em "confirmed"; protocol = "SIM-…"
+  reason: string | null;        // motivo em "expired" e "cancelled"
+  confirm: { method: 'POST'; path: '/chat/actions'; body: { type: 'request.confirm'; conversationId: string; previewId: string } } | null;
+  cancel:  { method: 'POST'; path: '/chat/actions'; body: { type: 'request.cancel';  conversationId: string; previewId: string } } | null;
+  updatedAt: string;
+}
+```
+
+- **Mesmo ciclo do card de reserva (seção 4.2):** um card por `cardId`, atualizado no lugar; botões só em `preview`; estado local `confirming` durante o pedido.
+- **Texto:** "confirmo" ou "sim" confirmam; "não" ou "cancelar" descartam. Há no máximo **uma** confirmação por texto pendente na conversa (reserva **ou** solicitação). A mais recente vale; o botão do card anterior continua até `expiresAt`.
+- **Confirmado:** exiba `request.protocol` e o aviso de simulação. Nada é enviado ao departamento; a resposta oferece `navigate` para `Requests`.
+
 ## 5. `POST /chat/actions`
 
 Executa ações de botão. O servidor lê a pré-reserva **persistida**. O app nunca envia data, valor ou participantes.
@@ -324,7 +388,7 @@ Executa ações de botão. O servidor lê a pré-reserva **persistida**. O app n
 
 | Campo | Valores |
 | --- | --- |
-| `type` | `experience.booking.confirm` ou `experience.booking.cancel` |
+| `type` | `experience.booking.confirm`, `experience.booking.cancel`, `request.confirm` ou `request.cancel` |
 | `conversationId` | UUID v4 da conversa |
 | `previewId` | `cardId` do card (o mesmo valor já vem pronto em `confirm.body` e `cancel.body`; envie o body sem alterá-lo) |
 
@@ -723,7 +787,11 @@ export const sendMessage = (guestHolderId: string, message: string, conversation
 
 export const runAction = (
   guestHolderId: string,
-  body: { type: 'experience.booking.confirm' | 'experience.booking.cancel'; conversationId: string; previewId: string },
+  body: {
+    type: 'experience.booking.confirm' | 'experience.booking.cancel' | 'request.confirm' | 'request.cancel';
+    conversationId: string;
+    previewId: string;
+  },
 ) => request<ChatResponse & { status: string }>('/chat/actions', guestHolderId, {
   method: 'POST',
   body: JSON.stringify(body),
@@ -737,6 +805,7 @@ const KNOWN_ACTION_TYPES: ReadonlyArray<ChatAction['type']> = [
   'experience.options',
   'restaurant.options', // novo
   'event.list',         // novo
+  'request.card',       // novo: solicitação simulada
 ];
 const knownActions = (actions: ChatAction[] | undefined) =>
   (actions ?? []).filter((action) => KNOWN_ACTION_TYPES.includes(action?.type));
@@ -833,7 +902,19 @@ export async function loadHistory(guestHolderId: string, conversationId: string)
 }
 
 // Renderização das ações
-const SCREENS: Record<string, string> = { Gastronomy: 'GastronomiaScreen' }; // ajustar para a rota real
+// Ajustar para as rotas reais; telas ausentes são ignoradas.
+const SCREENS: Record<string, string> = {
+  Gastronomy: 'GastronomiaScreen',
+  Requests: 'SolicitacoesScreen',
+  Experiences: 'ExperienciasScreen',
+  Events: 'EventosScreen',
+  Leisure: 'LazerScreen',
+  Boutique: 'BoutiqueScreen',
+  Spa: 'SpaScreen',
+  Esg: 'EsgScreen',
+  Tips: 'DicasScreen',
+  Quiz: 'QuizScreen',
+};
 
 function renderAction(messageId: string, action: ChatAction) {
   switch (action.type) {
@@ -859,6 +940,12 @@ function renderAction(messageId: string, action: ChatAction) {
     case 'event.list':
       // Somente leitura: horário, título, local; destaque para kind === 'event'.
       return <EventList action={action} />;
+    case 'request.card':
+      // Mesmo padrão do card de reserva: mapa por cardId, botões só em "preview".
+      if (cardOwner.get(action.cardId) !== messageId) return null;
+      return <RequestCard card={requestCards.get(action.cardId) ?? action}
+        onConfirm={(card) => runAction(guestHolderId, card.confirm!.body)}
+        onCancel={(card) => runAction(guestHolderId, card.cancel!.body)} />;
     default:
       return null; // tipos desconhecidos são ignorados
   }
@@ -899,7 +986,10 @@ curl -s http://localhost:3000/chat/<conversationId>/messages -H "X-Demo-Guest-Id
 - [ ] `experience.options` renderizado como cards (`title`, `times`, `summary`), com toque enviando `option.message`. O `reply` não traz mais a lista.
 - [ ] `restaurant.options` renderizado como cards (nome, tipo, `openingHours` ou "Horário não cadastrado", local, idade mínima, selo de reserva), com toque enviando `option.message`.
 - [ ] `event.list` renderizado como lista somente leitura, em ordem de horário.
-- [ ] `KNOWN_ACTION_TYPES` com os cinco tipos (seção 12), aplicado também ao histórico.
+- [ ] `KNOWN_ACTION_TYPES` com os seis tipos (seção 12), aplicado também ao histórico.
+- [ ] `navigate`: as dez telas mapeadas para rotas reais; `departmentId` abre o departamento em Solicitações; telas desconhecidas ignoradas.
+- [ ] `request.card`: mapa `cardId → card` (como o card de reserva), botões só em `preview`, `confirming` local, `confirm.body`/`cancel.body` sem alteração, protocolo `SIM-…` e aviso "simulada" em `confirmed`, `reason` em `expired`/`cancelled`.
+- [ ] `POST /chat/actions` aceita `request.confirm`/`request.cancel`; 404 trata a solicitação como inexistente.
 - [ ] `experience.booking.preview` e `experience.booking.confirm` removidos: um único `experience.booking.card` por `cardId`.
 - [ ] Cards guardados em `cardId → card` e **atualizados no lugar** a cada resposta (`POST /chat`, `POST /chat/actions` e histórico), respeitando `updatedAt`.
 - [ ] Estado local `confirming` ao tocar em Confirmar; volta para `preview` em erro de rede.

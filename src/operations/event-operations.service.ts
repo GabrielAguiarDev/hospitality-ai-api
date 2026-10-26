@@ -17,6 +17,14 @@ const MAX_HIGHLIGHTS = 3;
 
 // Somente shows e eventos, ou somente a recreação semanal.
 const EVENTS_ONLY = /\b(?:eventos?|shows?|apresentac(?:ao|oes)|musica ao vivo|ao vivo|festas?|atrac(?:ao|oes))\b/;
+// Público citado → categorias de lazer ("4 a 7 anos", "Teens", "Adulto", "Sports").
+const AUDIENCES: { key: NonNullable<EventConversationState['audience']>; cue: RegExp; category: RegExp; label: string }[] = [
+  { key: 'kids', cue: /\b(?:criancas?|infantil|infantis|kids|filhos?|pequenos)\b/, category: /^\d+ a (?:[1-9]|1[01]) anos$/, label: 'para crianças' },
+  { key: 'teens', cue: /\b(?:teens?|adolescentes?|jovens)\b/, category: /\bteens?\b/, label: 'para adolescentes' },
+  { key: 'adults', cue: /\badult[oa]s?\b/, category: /\badult[oa]s?\b/, label: 'para adultos' },
+  { key: 'sports', cue: /\b(?:esportes?|esportivas?|sports?)\b/, category: /\b(?:sports?|esportes?)\b/, label: 'de esportes' },
+];
+
 const LEISURE_ONLY = /\b(?:recreac(?:ao|oes)|atividades(?: de lazer)?|lazer)\b/;
 // Palavras genéricas não identificam um evento pelo nome.
 const GENERIC = /\b(?:show|shows|evento|eventos|hoje|amanha|noite|tarde|manha|programacao|que|horas|onde|vai|ter|tem)\b/g;
@@ -90,21 +98,24 @@ export class EventOperationsService {
     const text = normalizeText(message);
     const asked = EVENTS_ONLY.test(text) && !LEISURE_ONLY.test(text) ? 'event' : LEISURE_ONLY.test(text) && !EVENTS_ONLY.test(text) ? 'leisure' : null;
     // "Quais shows amanhã?" → "E à noite?" continua só com shows.
-    const kind = asked ?? (decision.refine ? (previous.kind ?? null) : null);
+    const audience = AUDIENCES.find(({ cue }) => cue.test(text)) ?? (decision.refine ? AUDIENCES.find(({ key }) => key === previous.audience) : undefined);
+    // Público só existe nas atividades de lazer.
+    const kind = audience ? 'leisure' : (asked ?? (decision.refine ? (previous.kind ?? null) : null));
     // Hoje, o que já passou não é oferecido.
     const now = date === today ? this.clock.time() : null;
     const upcoming = result.data.events.filter(
       (event) =>
         (!kind || event.kind === kind) &&
+        (!audience || (event.category !== null && audience.category.test(normalizeText(event.category)))) &&
         (!window || (event.time !== null && inWindow(event.time, window))) &&
         (!now || event.time === null || event.time >= now),
     );
 
-    const label = `${dayLabel(date, today)}${window ? ` ${describeWindow(filters)}` : ''}`;
+    const label = `${dayLabel(date, today)}${window ? ` ${describeWindow(filters)}` : ''}${audience ? `, ${audience.label}` : ''}`;
     const state: ConversationState = {
       ...context.state,
       topic: 'event',
-      event: { date, ...(Object.keys(filters).length ? { filters } : {}), ...(kind ? { kind } : {}) },
+      event: { date, ...(Object.keys(filters).length ? { filters } : {}), ...(kind ? { kind } : {}), ...(audience ? { audience: audience.key } : {}) },
     };
 
     // "Que horas é o show de circo?": responde sobre o evento citado.

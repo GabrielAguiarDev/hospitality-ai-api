@@ -586,7 +586,8 @@ export class ExperienceOperationsService {
     // A descrição só é apresentada uma vez por experiência na conversa.
     const described = state.describedId === experience.id;
     // Texto só com preços: o resumo vazio não deve virar "não cadastrada".
-    const summary = described ? '' : summarizeText(experience.description) || compactText(experience.description, 220);
+    // Resumo inicial curto; o restante da descrição só se o hóspede pedir.
+    const summary = described ? '' : summarizeText(experience.description, 160) || compactText(experience.description, 160);
     const canCheck = experience.bookable && experience.active;
     const question = canCheck
       ? state.date
@@ -595,9 +596,9 @@ export class ExperienceOperationsService {
       : '';
 
     const result = this.result('experiences.details', [
-      `${experience.title}${experience.active ? '' : ' (inativa no cadastro)'}`,
-      described ? '' : summary || 'Descrição não cadastrada.',
-      `Reserva: ${experience.bookable ? 'necessária' : 'não necessária'}.`,
+      `${experience.title}${experience.active ? '' : ' (inativa no cadastro)'}${described ? '' : `: ${summary || 'descrição não cadastrada.'}`}`,
+      // Com reserva, a pergunta final já indica o próximo passo.
+      experience.bookable ? '' : 'Não precisa de reserva.',
       `Valores: ${describePrices(experience)}`,
       rules.length ? `Regras: ${rules.join('; ')}.` : '',
       party ? `Participantes considerados até agora: ${describeParty(party)}.` : '',

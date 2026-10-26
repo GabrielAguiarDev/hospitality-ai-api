@@ -4,14 +4,18 @@ import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import type { Repository } from 'typeorm';
 
+import { selectCapabilities } from '../capabilities/capabilities.js';
 import {
   bookingCard,
+  navigateAction,
   sanitizeActions,
   type ChatAction,
   type ChatResponse,
 } from '../contracts/chat-actions.js';
+import { pendingConfirmation } from '../contracts/conversation-state.js';
 import type { GuestContext } from '../guest/guest-context.js';
 import { ExperienceOperationsService } from '../operations/experience-operations.service.js';
+import { RequestsOperationsService } from '../operations/requests-operations.service.js';
 import { OllamaService } from '../llm/ollama.service.js';
 import type { LlmMessage } from '../llm/ollama.service.js';
 import { toPlainText } from '../common/text.js';
@@ -31,9 +35,18 @@ import { socialReply } from './social-replies.js';
 export { CONCURRENT_UPDATE_MESSAGE } from './conversation-context.service.js';
 
 export const NO_EVIDENCE_REPLY =
-  'Não encontrei essa informação nas fontes do resort. ' +
-  'Posso ajudar com restaurantes, experiências, programação de lazer, ' +
-  'suas reservas ou solicitações. Para outros assuntos, procure a recepção.';
+  'Não encontrei essa informação nas fontes do resort. A recepção pode ajudar com isso.';
+
+// Pergunta sobre um módulo sem resposta nas fontes: diz qual e leva à tela.
+export function moduleFallback(message: string): { reply: string; actions: ChatAction[] } | null {
+  const [capability] = selectCapabilities(message, 1);
+  return capability
+    ? {
+        reply: `Não encontrei essa informação sobre ${capability.label}. Os detalhes estão na tela de ${capability.label}.`,
+        actions: [navigateAction(capability.screen, `Abrir ${capability.label}`)],
+      }
+    : null;
+}
 
 @Injectable()
 export class ChatService {
@@ -55,6 +68,8 @@ export class ChatService {
     private readonly clock: ResortClock,
 
     private readonly experienceOperations: ExperienceOperationsService,
+
+    private readonly requestOperations: RequestsOperationsService,
   ) {}
 
   async sendMessage(
@@ -118,12 +133,15 @@ export class ChatService {
       // Interações sociais não chamam o modelo: resposta curta e imediata.
       reply = socialReply(message, orchestration.intent, {
         history,
-        pendingBooking: Boolean(state.experience?.pendingPreviewId),
+        pendingBooking: Boolean(pendingConfirmation(state)),
+        pendingKind: pendingConfirmation(state)?.kind,
         declinesPending: orchestration.declinesPending,
       });
     } else if (orchestration.documents.length === 0) {
       this.logger.debug('Fallback: o RAG não encontrou evidências; resposta padrão sem o modelo.');
-      reply = NO_EVIDENCE_REPLY;
+      const fallback = moduleFallback(message);
+      reply = fallback?.reply ?? NO_EVIDENCE_REPLY;
+      actions = sanitizeActions(fallback?.actions);
     } else {
       documents = orchestration.documents;
 
@@ -210,6 +228,17 @@ export class ChatService {
     const current = new Map(
       (await this.experienceOperations.bookingCards(guest, conversationId, cardIds)).map((card) => [card.cardId, card]),
     );
+    // Cards de solicitação: sempre o estado atual do banco, do próprio dono.
+    const requestIds = [
+      ...new Set(
+        messages.flatMap(({ actions }) => (actions ?? []).flatMap((action) => (action.type === 'request.card' ? [action.cardId] : []))),
+      ),
+    ];
+    const currentRequests = new Map(
+      (await this.requestOperations.cards(guest, conversationId, requestIds)).flatMap((card) =>
+        card.type === 'request.card' ? [[card.cardId, card] as const] : [],
+      ),
+    );
     const shown = new Set<string>();
 
     return {
@@ -218,6 +247,14 @@ export class ChatService {
         ...message,
         actions: sanitizeActions(
           (actions ?? []).flatMap((action): ChatAction[] => {
+            if (action.type === 'request.card') {
+              if (shown.has(action.cardId)) return [];
+              shown.add(action.cardId);
+              const fresh = currentRequests.get(action.cardId);
+              // Sem registro atual (outro dono, removido): o card não é exibido.
+              return fresh ? [{ ...fresh, notes: action.notes }] : [];
+            }
+
             if (action.type !== 'experience.booking.card') return [action];
             if (shown.has(action.cardId)) return [];
 

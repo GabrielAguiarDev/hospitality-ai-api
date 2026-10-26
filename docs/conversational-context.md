@@ -508,3 +508,29 @@ Medições no Ollama local (Apple Silicon, `qwen3.5:2b-q4_K_M`) que motivaram as
 - O log de debug do `OllamaService` registra, a cada geração, a carga, os tokens de prompt e de resposta e as durações.
 
 Modelos compatíveis, trocados só pelo `.env` (`OLLAMA_CHAT_MODEL`, `OLLAMA_CLASSIFIER_MODEL` vazio = mesmo modelo): `qwen3.5:2b-q4_K_M`, `qwen3.5:4b` e `qwen3:1.7b`. `pnpm models:evaluate` compara os três com os mesmos prompts, mede concisão, fórmulas, gênero e fidelidade às fontes no RAG, e descarrega cada modelo ao terminar.
+
+---
+
+## 7. Concierge de todo o aplicativo (4ª etapa)
+
+O mapa de módulos, as fontes, as limitações e os exemplos estão em [app-capabilities.md](app-capabilities.md). Em resumo, para quem mantém o código:
+
+- **Capacidades:** `src/capabilities/capabilities.ts` é a fonte única de módulo, tela, parâmetros de navegação e pistas de roteamento. A relação intenção → ferramenta fica em `src/operations/intent-tool-map.ts`. Um teste confere a cobertura entre os dois e o Registry.
+- **Detecção:** `src/chat/intent-detectors/requests.ts` e `modules.ts` são funções puras chamadas pelo `IntentClassifierService`, nesta ordem:
+  1. pendências (pergunta ou confirmação);
+  2. solicitações pessoais;
+  3. catálogo e criação de solicitações;
+  4. conversa social;
+  5. resposta curta de item a um departamento;
+  6. eventos;
+  7. Boutique, SPA, Dicas, Quiz e ESG;
+  8. experiências e restaurantes;
+  9. reservas;
+  10. RAG.
+  Perguntas de horário, local ou agendamento desses módulos continuam no RAG.
+- **Solicitações:**
+  - O catálogo vem de `RequestsCatalogService` (snapshot).
+  - A correspondência de itens fica em `src/operations/request-matching.ts`: palavras do nome cadastrado com singular e plural, departamento citado e sintomas ("não funciona" → Manutenção, "wi-fi não conecta" → TI).
+  - A escrita simulada fica em `GuestRequestService` (`simulated_guest_requests`).
+- **Uma confirmação por texto por conversa:** `pendingConfirmation(state)` é a única leitura da pendência (solicitação ou pré-reserva). `withTopic` descarta as pendências dos outros assuntos antes do despacho.
+- **Sem evidência no RAG:** primeiro há uma busca de produto da Boutique pelo nome. Depois, se a mensagem cita um módulo, a resposta é específica e traz a tela; senão, uma frase curta.

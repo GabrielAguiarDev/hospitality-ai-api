@@ -4,19 +4,29 @@
  * verificados; nunca a partir de texto do modelo.
  */
 
-// Telas que o aplicativo pode abrir. O nome "Gastronomy" é provisório
-// e deve ser ajustado à rota real do React Native.
-export const NAVIGATION_SCREENS = ['Gastronomy'] as const;
+import { SCREEN_PARAMS, type NavigationScreen } from '../capabilities/capabilities.js';
 
-export type NavigationScreen = (typeof NAVIGATION_SCREENS)[number];
+export type { NavigationScreen } from '../capabilities/capabilities.js';
+
+// Telas que o aplicativo pode abrir (nomes provisórios, mapeados pelo app
+// para as rotas reais) e os parâmetros aceitos em cada uma.
+export const NAVIGATION_SCREENS = Object.keys(SCREEN_PARAMS) as NavigationScreen[];
 
 export interface NavigateAction {
   type: 'navigate';
   label: string;
   screen: NavigationScreen;
+  // Somente os parâmetros da tela (SCREEN_PARAMS), com IDs do cadastro.
   params: {
     restaurantId?: string;
+    departmentId?: string;
+    experienceId?: string;
   };
+}
+
+// Ponto único de montagem de navegação: o rótulo vem do módulo.
+export function navigateAction(screen: NavigationScreen, label: string, params: NavigateAction['params'] = {}): NavigateAction {
+  return { type: 'navigate', label, screen, params };
 }
 
 export interface ExperienceBookingSummary {
@@ -196,12 +206,99 @@ export interface EventListAction {
   items: EventItem[];
 }
 
+/**
+ * Solicitação SIMULADA (Governança, Manutenção, TI…). Mesmo ciclo do card
+ * de reserva: um card por `cardId`, atualizado no lugar; botões só em
+ * "preview". Nada é enviado ao departamento.
+ */
+export const REQUEST_CARD_STATUSES = ['preview', 'confirming', 'confirmed', 'expired', 'cancelled'] as const;
+
+export type RequestCardStatus = (typeof REQUEST_CARD_STATUSES)[number];
+
+interface RequestCardRequest<T extends 'request.confirm' | 'request.cancel'> {
+  method: 'POST';
+  path: '/chat/actions';
+  body: { type: T; conversationId: string; previewId: string };
+}
+
+export interface GuestRequestSummary {
+  departmentId: string;
+  departmentName: string;
+  items: { itemId: string; name: string; quantity: number }[];
+  // Texto do próprio hóspede, resumido.
+  note: string | null;
+  simulated: true;
+}
+
+export interface GuestRequestCardAction {
+  type: 'request.card';
+  cardId: string;
+  status: RequestCardStatus;
+  label: string;
+  summary: GuestRequestSummary;
+  // Avisos do departamento (horário de atendimento, prazo).
+  notes: string[];
+  expiresAt: string | null;
+  // Somente em "confirmed": protocolo da simulação (SIM-…).
+  request: { requestId: string; protocol: string } | null;
+  reason: string | null;
+  confirm: RequestCardRequest<'request.confirm'> | null;
+  cancel: RequestCardRequest<'request.cancel'> | null;
+  updatedAt: string;
+}
+
+export const REQUEST_CARD_LABELS: Record<RequestCardStatus, string> = {
+  preview: 'Confirmar solicitação simulada',
+  confirming: 'Confirmando…',
+  confirmed: 'Solicitação simulada registrada',
+  expired: 'Solicitação expirada',
+  cancelled: 'Solicitação descartada',
+};
+
+export interface RequestCardInput {
+  conversationId: string;
+  previewId: string;
+  status: Exclude<RequestCardStatus, 'confirming'>;
+  summary: GuestRequestSummary;
+  notes?: string[];
+  expiresAt?: Date | null;
+  protocol?: string | null;
+  reason?: string | null;
+  updatedAt?: Date;
+}
+
+// Ponto único de montagem do card de solicitação: botões só em "preview".
+export function requestCard(input: RequestCardInput): GuestRequestCardAction {
+  const request = <T extends 'request.confirm' | 'request.cancel'>(type: T): RequestCardRequest<T> => ({
+    method: 'POST',
+    path: '/chat/actions',
+    body: { type, conversationId: input.conversationId, previewId: input.previewId },
+  });
+  const preview = input.status === 'preview';
+
+  return {
+    type: 'request.card',
+    cardId: input.previewId,
+    status: input.status,
+    label: REQUEST_CARD_LABELS[input.status],
+    summary: input.summary,
+    notes: input.notes ?? [],
+    expiresAt: preview && input.expiresAt ? input.expiresAt.toISOString() : null,
+    request: input.status === 'confirmed' && input.protocol ? { requestId: input.previewId, protocol: input.protocol } : null,
+    reason: preview || input.status === 'confirmed' ? null : (input.reason ?? null),
+    confirm: preview ? request('request.confirm') : null,
+    cancel: preview ? request('request.cancel') : null,
+    updatedAt: (input.updatedAt ?? new Date()).toISOString(),
+  };
+}
+
 export type ChatAction =
   | NavigateAction
   | ExperienceBookingCardAction
   | ExperienceOptionsAction
   | RestaurantOptionsAction
-  | EventListAction;
+  | EventListAction
+  | GuestRequestCardAction;
 
 export interface RetrievedSource {
   id: string;
@@ -251,14 +348,52 @@ function validSummary(summary: ExperienceBookingSummary | undefined): boolean {
  */
 export function isValidChatAction(action: ChatAction): boolean {
   switch (action?.type) {
-    case 'navigate':
+    case 'navigate': {
+      const allowed: readonly string[] = SCREEN_PARAMS[action.screen] ?? [];
       return (
         isText(action.label, 60) &&
         (NAVIGATION_SCREENS as readonly string[]).includes(action.screen) &&
-        Object.keys(action.params ?? {}).every((key) => key === 'restaurantId') &&
-        (action.params.restaurantId === undefined ||
-          isText(action.params.restaurantId))
+        Object.entries(action.params ?? {}).every(
+          ([key, value]) => allowed.includes(key) && isText(value) && /^[\w-]+$/.test(value as string),
+        )
       );
+    }
+
+    case 'request.card': {
+      const preview = action.status === 'preview';
+      const request = (value: GuestRequestCardAction['confirm'] | GuestRequestCardAction['cancel'], type: string) =>
+        value?.path === '/chat/actions' &&
+        value.body.type === type &&
+        value.body.previewId === action.cardId &&
+        UUID.test(value.body.conversationId);
+      const summary = action.summary;
+
+      return (
+        UUID.test(action.cardId) &&
+        (REQUEST_CARD_STATUSES as readonly string[]).includes(action.status) &&
+        isText(action.label, 60) &&
+        !!summary &&
+        isText(summary.departmentId) &&
+        isText(summary.departmentName, 120) &&
+        Array.isArray(summary.items) &&
+        summary.items.length >= 1 &&
+        summary.items.length <= 10 &&
+        summary.items.every((item) => isText(item.itemId) && isText(item.name, 160) && Number.isInteger(item.quantity) && item.quantity >= 1 && item.quantity <= 10) &&
+        (summary.note === null || isText(summary.note, 200)) &&
+        summary.simulated === true &&
+        Array.isArray(action.notes) &&
+        action.notes.length <= 4 &&
+        action.notes.every((note) => isText(note, 200)) &&
+        (action.expiresAt === null || !Number.isNaN(Date.parse(action.expiresAt))) &&
+        !Number.isNaN(Date.parse(action.updatedAt)) &&
+        (action.status === 'confirmed'
+          ? !!action.request && UUID.test(action.request.requestId) && /^SIM-[A-Z0-9]{4,16}$/.test(action.request.protocol)
+          : action.request === null) &&
+        (preview
+          ? request(action.confirm, 'request.confirm') && request(action.cancel, 'request.cancel')
+          : action.confirm === null && action.cancel === null)
+      );
+    }
 
     case 'experience.booking.card': {
       const preview = action.status === 'preview';

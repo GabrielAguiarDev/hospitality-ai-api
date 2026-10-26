@@ -240,3 +240,43 @@ export function parseBookingCardsInput(input: unknown): { conversationId: string
     previewIds: [...new Set(data.previewIds.map((id) => uuid(id, 'previewId')))],
   };
 }
+
+export interface RequestPreviewInput {
+  conversationId: string;
+  departmentId: string;
+  items: { itemId: string; quantity: number }[];
+  note: string | null;
+}
+
+/** Nova solicitação simulada: IDs do catálogo, nunca nomes livres. */
+export function parseRequestPreviewInput(input: unknown): RequestPreviewInput {
+  const data = asObject(input, ['conversationId', 'departmentId', 'items', 'note']);
+
+  if (!Array.isArray(data.items) || data.items.length === 0 || data.items.length > 10) {
+    throw new BadRequestException('items inválido.');
+  }
+
+  const items = data.items.map((item: unknown) => {
+    const entry = asObject(item, ['itemId', 'quantity']);
+    const quantity = Number(entry.quantity ?? 1);
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10) {
+      throw new BadRequestException('quantity inválido.');
+    }
+    return { itemId: identifier(entry.itemId, 'itemId'), quantity };
+  });
+
+  if (new Set(items.map(({ itemId }) => itemId)).size !== items.length) {
+    throw new BadRequestException('items repetidos.');
+  }
+
+  if (data.note !== undefined && data.note !== null && (typeof data.note !== 'string' || data.note.length > 2000)) {
+    throw new BadRequestException('note inválido.');
+  }
+
+  return {
+    conversationId: uuid(data.conversationId, 'conversationId'),
+    departmentId: identifier(data.departmentId, 'departmentId'),
+    items,
+    note: typeof data.note === 'string' ? data.note : null,
+  };
+}

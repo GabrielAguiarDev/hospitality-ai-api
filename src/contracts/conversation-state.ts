@@ -70,6 +70,18 @@ export interface EventConversationState {
   filters?: Pick<ExperienceSearchFilters, 'period' | 'after' | 'before'>;
   // Somente shows/eventos ou somente lazer, quando a pergunta pediu.
   kind?: 'event' | 'leisure';
+  // Público da recreação (categoria de tb_categorialazer).
+  audience?: 'kids' | 'teens' | 'adults' | 'sports';
+}
+
+// Solicitações: pré-visualização pendente e o departamento em conversa.
+export interface RequestConversationState {
+  // Solicitação simulada aguardando "confirmo" (id do card).
+  pendingPreviewId?: string;
+  // Departamento citado sem item: a próxima mensagem pode ser só o item.
+  departmentId?: string;
+  // Última solicitação apresentada ("e ela?", "a anterior").
+  lastRequestId?: string;
 }
 
 /**
@@ -95,13 +107,35 @@ export type ConversationPhase =
 
 export interface ConversationState {
   phase?: ConversationPhase;
-  topic?: 'experience' | 'restaurant' | 'event' | 'reservation' | 'request' | 'knowledge';
+  topic?: 'experience' | 'restaurant' | 'event' | 'reservation' | 'request' | 'module' | 'knowledge';
   // Última intenção operacional ou de conhecimento (interações sociais não contam).
   lastIntent?: ChatIntent;
   pendingQuestion?: PendingQuestion;
   experience?: ExperienceConversationState;
   restaurant?: RestaurantConversationState;
   event?: EventConversationState;
+  request?: RequestConversationState;
+}
+
+export type PendingConfirmation = { kind: 'experience' | 'request'; id: string };
+
+/**
+ * A confirmação por texto ("confirmo") pendente na conversa. Existe no
+ * máximo uma: criar uma pré-visualização de um tipo descarta a do outro.
+ */
+export function pendingConfirmation(state: ConversationState | undefined): PendingConfirmation | null {
+  if (state?.request?.pendingPreviewId) return { kind: 'request', id: state.request.pendingPreviewId };
+  if (state?.experience?.pendingPreviewId) return { kind: 'experience', id: state.experience.pendingPreviewId };
+  return null;
+}
+
+/** Remove qualquer confirmação por texto pendente, mantendo o resto do estado. */
+export function withoutPendingConfirmation(state: ConversationState): ConversationState {
+  return {
+    ...state,
+    ...(state.experience ? { experience: { ...state.experience, pendingPreviewId: undefined } } : {}),
+    ...(state.request ? { request: { ...state.request, pendingPreviewId: undefined } } : {}),
+  };
 }
 
 export const EMPTY_CONVERSATION_STATE: Readonly<ConversationState> =

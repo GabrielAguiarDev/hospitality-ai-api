@@ -10,6 +10,9 @@ import type { GuestContext } from '../guest/guest-context.js';
 import type { GuestStay, GuestStayService } from '../resort/guest-stay.service.js';
 import type { EventsCatalogService } from '../resort/events-catalog.service.js';
 import type { RestaurantsCatalogService } from '../resort/restaurants-catalog.service.js';
+import type { ModulesCatalogService } from '../resort/modules-catalog.service.js';
+import type { RequestsCatalogService } from '../resort/requests-catalog.service.js';
+import type { GuestRequestService } from '../requests/guest-request.service.js';
 
 import { OperationsToolRegistryService } from './operations-tool-registry.service.js';
 import type { RequestsService } from './requests.service.js';
@@ -50,9 +53,24 @@ describe('OperationsToolRegistryService', () => {
   };
   const eventsCatalog = { forDate: vi.fn(async () => []) };
   const stay = { resolve: vi.fn(async () => STAY) };
+  const requestsCatalog = { departments: vi.fn(async () => []) };
+  const modulesCatalog = {
+    boutique: vi.fn(async () => []),
+    spa: vi.fn(async () => []),
+    tips: vi.fn(async () => []),
+    activeQuizzes: vi.fn(async () => []),
+    esg: vi.fn(async () => []),
+  };
+  const guestRequests = {
+    listForStay: vi.fn(async () => [] as unknown[]),
+    preview: vi.fn(async () => ({ status: 'rejected', message: 'x' })),
+    confirm: vi.fn(async () => ({ status: 'not_found', message: 'x' })),
+    cancel: vi.fn(async () => true),
+    cards: vi.fn(async () => []),
+  };
 
   // Sexta-feira, 23/10/2026, 10:30 no resort.
-  const clock = { today: () => '2026-10-23', time: () => '10:30' };
+  const clock = { today: () => '2026-10-23', time: () => '10:30', dateAt: () => '2026-10-23', timeAt: () => '10:00' };
 
   function createRegistry(nodeEnv = 'development') {
     return new OperationsToolRegistryService(
@@ -66,6 +84,9 @@ describe('OperationsToolRegistryService', () => {
       stay as unknown as GuestStayService,
       clock as unknown as ResortClock,
       eventsCatalog as unknown as EventsCatalogService,
+      requestsCatalog as unknown as RequestsCatalogService,
+      modulesCatalog as unknown as ModulesCatalogService,
+      guestRequests as unknown as GuestRequestService,
     );
   }
 
@@ -209,9 +230,97 @@ describe('OperationsToolRegistryService', () => {
       .map(({ name }) => name);
 
     expect(writable).toEqual([
+      'requests.preview',
+      'requests.confirm',
+      'requests.cancel',
       'experiences.booking.preview',
       'experiences.booking.confirm',
       'experiences.booking.cancel',
     ]);
+  });
+
+  describe('requests and modules tools', () => {
+    const SIMULATED = {
+      id: 'sim-1',
+      protocol: 'SIM-AAAA1111',
+      departmentName: 'Governança',
+      items: [{ itemId: '1', name: 'Toalha', quantity: 2 }, { itemId: '2', name: 'Travesseiro', quantity: 1 }],
+      confirmedAt: new Date('2026-10-23T13:00:00Z'),
+    };
+
+    it('merges confirmed simulated requests first, flagged and with protocol', async () => {
+      guestRequests.listForStay.mockResolvedValue([SIMULATED]);
+      requests.listForGuest.mockResolvedValue([
+        { id: '9', category: 'Manutenção', description: 'Lâmpada', status: 'atendida', createdAt: '2026-10-22 10:00', updatedAt: null },
+      ] as never);
+
+      const result = await createRegistry().execute('requests.list', GUEST, {});
+
+      expect(result.tool).toBe('requests.list');
+      if (result.tool !== 'requests.list') return;
+      expect(result.data).toHaveLength(2);
+      expect(result.data[0]).toMatchObject({
+        id: 'sim-1',
+        category: 'Governança',
+        description: '2x Toalha; Travesseiro',
+        status: 'simulada',
+        simulated: true,
+        protocol: 'SIM-AAAA1111',
+      });
+      expect(result.data[0].createdAt).toBe('23/10/2026 10:00');
+      expect(result.data[1]).toMatchObject({ id: '9', status: 'atendida' });
+      expect(result.data[1]).not.toHaveProperty('simulated', true);
+    });
+
+    it('scopes the simulated lookup to the resolved stay and the guest', async () => {
+      await createRegistry().execute('requests.list', GUEST, {});
+
+      expect(guestRequests.listForStay).toHaveBeenCalledExactlyOnceWith(GUEST, STAY);
+    });
+
+    it.each([
+      ['requests.catalog', requestsCatalog.departments],
+      ['boutique.list', modulesCatalog.boutique],
+      ['spa.list', modulesCatalog.spa],
+      ['tips.list', modulesCatalog.tips],
+      ['quiz.list', modulesCatalog.activeQuizzes],
+      ['esg.info', modulesCatalog.esg],
+    ] as const)('%s reads its catalog and rejects extra input', async (tool, source) => {
+      await expect(createRegistry().execute(tool, GUEST, {})).resolves.toMatchObject({ tool, data: [] });
+      expect(source).toHaveBeenCalledOnce();
+      await expect(createRegistry().execute(tool, GUEST, { sql: 'DROP TABLE x' })).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('validates the preview draft before touching the database', async () => {
+      await expect(
+        createRegistry().execute('requests.preview', GUEST, { conversationId: 'nope', departmentId: '1', items: [] }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(guestRequests.preview).not.toHaveBeenCalled();
+    });
+
+    it('passes a valid preview, confirm and cancel through with the stay and guest', async () => {
+      const registry = createRegistry();
+      await registry.execute('requests.preview', GUEST, {
+        conversationId: CONVERSATION,
+        departmentId: '3',
+        items: [{ itemId: '10', quantity: 2 }],
+        note: 'Quarto 12',
+      });
+      await registry.execute('requests.confirm', GUEST, { conversationId: CONVERSATION, previewId: PREVIEW });
+      const cancelled = await registry.execute('requests.cancel', GUEST, { conversationId: CONVERSATION, previewId: PREVIEW });
+
+      expect(guestRequests.preview).toHaveBeenCalledExactlyOnceWith(
+        GUEST,
+        STAY,
+        expect.objectContaining({ conversationId: CONVERSATION, departmentId: '3', items: [{ itemId: '10', quantity: 2 }] }),
+      );
+      expect(guestRequests.confirm).toHaveBeenCalledExactlyOnceWith(GUEST, STAY, CONVERSATION, PREVIEW);
+      expect(guestRequests.cancel).toHaveBeenCalledExactlyOnceWith(GUEST, CONVERSATION, PREVIEW);
+      expect(cancelled).toEqual({ tool: 'requests.cancel', data: { cancelled: true } });
+    });
+
+    it('refuses request tools outside development', async () => {
+      await expect(createRegistry('production').execute('requests.catalog', GUEST, {})).rejects.toBeInstanceOf(ForbiddenException);
+    });
   });
 });

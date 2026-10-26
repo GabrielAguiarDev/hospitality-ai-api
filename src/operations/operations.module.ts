@@ -2,6 +2,7 @@
 import { Module } from '@nestjs/common';
 
 import { ExperiencesModule } from '../experiences/experiences.module.js';
+import { RequestsModule } from '../requests/requests.module.js';
 import { ResortModule } from '../resort/resort.module.js';
 
 import { OperationsController } from './operations.controller.js';
@@ -12,6 +13,7 @@ import { RequestsOperationsService } from './requests-operations.service.js';
 import { ReservationsService } from './reservations.service.js';
 import { RequestsService } from './requests.service.js';
 import { EventOperationsService } from './event-operations.service.js';
+import { ModuleOperationsService } from './module-operations.service.js';
 import { ExperienceOperationsService } from './experience-operations.service.js';
 import { RestaurantOperationsService } from './restaurant-operations.service.js';
 
@@ -19,6 +21,7 @@ import { RestaurantOperationsService } from './restaurant-operations.service.js'
   imports: [
     ResortModule,
     ExperiencesModule,
+    RequestsModule,
   ],
   controllers: [
     OperationsController,
@@ -33,6 +36,7 @@ import { RestaurantOperationsService } from './restaurant-operations.service.js'
     ExperienceOperationsService,
     RestaurantOperationsService,
     EventOperationsService,
+    ModuleOperationsService,
   ],
   exports: [
     OperationsAiService,

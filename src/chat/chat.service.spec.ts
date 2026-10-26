@@ -8,8 +8,9 @@ import { OllamaService } from '../llm/ollama.service.js';
 import type { LlmMessage } from '../llm/ollama.service.js';
 import type { RetrievedDocument } from '../rag/knowledge.service.js';
 
-import { bookingCard, type ExperienceBookingCardAction } from '../contracts/chat-actions.js';
+import { bookingCard, requestCard, type ExperienceBookingCardAction } from '../contracts/chat-actions.js';
 import { ExperienceOperationsService } from '../operations/experience-operations.service.js';
+import { RequestsOperationsService } from '../operations/requests-operations.service.js';
 import { ChatOrchestratorService } from './chat-orchestrator.service.js';
 import { ConversationContextService } from './conversation-context.service.js';
 import { ChatService, NO_EVIDENCE_REPLY } from './chat.service.js';
@@ -37,6 +38,7 @@ describe('ChatService', () => {
   const orchestrator = { resolve: vi.fn<ChatOrchestratorService['resolve']>() };
   // Estado atual dos cards, usado ao reconstruir o histórico.
   const experienceOperations = { bookingCards: vi.fn(async () => [] as ExperienceBookingCardAction[]) };
+  const requestOperations = { cards: vi.fn(async () => [] as ChatAction[]) };
   let service: ChatService;
 
   beforeEach(async () => {
@@ -48,6 +50,7 @@ describe('ChatService', () => {
         ConversationContextService,
         { provide: OllamaService, useValue: ollama },
         { provide: ExperienceOperationsService, useValue: experienceOperations },
+        { provide: RequestsOperationsService, useValue: requestOperations },
         { provide: ChatOrchestratorService, useValue: orchestrator },
         ...store.providers(),
       ],
@@ -429,6 +432,28 @@ describe('ChatService', () => {
       expect(result.actions).toEqual([]);
     });
 
+    it('uses the exact reception reply when no module is cited', async () => {
+      orchestrator.resolve.mockResolvedValue({ mode: 'knowledge', documents: [] });
+
+      const result = await service.sendMessage('Vocês têm heliponto?', GUEST);
+
+      expect(result.reply).toBe('Não encontrei essa informação nas fontes do resort. A recepção pode ajudar com isso.');
+    });
+
+    it.each([
+      ['Qual o valor do tratamento de ozônio no spa?', 'SPA', 'Spa'],
+      ['Tem algo sobre sustentabilidade que eu não achei?', 'ESG', 'Esg'],
+      ['Vocês têm cuidados com águas-vivas?', 'Dicas', 'Tips'],
+    ])('names the module and opens its screen when "%s" has no sources', async (message, label, screen) => {
+      orchestrator.resolve.mockResolvedValue({ mode: 'knowledge', documents: [] });
+
+      const result = await service.sendMessage(message, GUEST);
+
+      expect(ollama.generate).not.toHaveBeenCalled();
+      expect(result.reply).toBe(`Não encontrei essa informação sobre ${label}. Os detalhes estão na tela de ${label}.`);
+      expect(result.actions).toEqual([{ type: 'navigate', label: `Abrir ${label}`, screen, params: {} }]);
+    });
+
     it('includes the current resort date in the knowledge prompt', async () => {
       orchestrator.resolve.mockResolvedValue({ mode: 'knowledge', documents: [HOURS_DOCUMENT] });
 
@@ -651,6 +676,90 @@ describe('ChatService', () => {
           notes: ['Idade mínima: 4 anos.'],
         }),
       ]);
+    });
+
+    describe('request cards', () => {
+      const REQUEST_ID = '5c1c2a5e-8c1d-4b7a-9e2f-3a4b5c6d7e8f';
+      const GONE_ID = '6d1c2a5e-8c1d-4b7a-9e2f-3a4b5c6d7e8f';
+      const summary = {
+        departmentId: '3',
+        departmentName: 'Governança',
+        items: [{ itemId: '30', name: 'Toalha de banho', quantity: 2 }],
+        note: null,
+        simulated: true as const,
+      };
+      const stored = (previewId: string) =>
+        requestCard({ conversationId: EXISTING_ID, previewId, status: 'preview', summary, notes: ['Atendimento: Das 7h às 22h'], expiresAt: new Date('2026-10-23T12:00:00Z') });
+
+      it('refreshes the request card with the current database state, keeping the department notices', async () => {
+        store.seedConversation(EXISTING_ID, [
+          { role: 'user', content: 'Preciso de toalhas' },
+          { role: 'assistant', content: 'Preparei a solicitação.', actions: [stored(REQUEST_ID)] },
+        ]);
+        requestOperations.cards.mockResolvedValue([
+          requestCard({ conversationId: EXISTING_ID, previewId: REQUEST_ID, status: 'confirmed', summary, protocol: 'SIM-AAAA1111' }),
+        ]);
+
+        const { messages } = await service.getMessages(EXISTING_ID, GUEST);
+
+        expect(requestOperations.cards).toHaveBeenCalledExactlyOnceWith(GUEST, EXISTING_ID, [REQUEST_ID]);
+        expect(messages[1].actions).toEqual([
+          expect.objectContaining({
+            type: 'request.card',
+            cardId: REQUEST_ID,
+            status: 'confirmed',
+            confirm: null,
+            cancel: null,
+            request: { requestId: REQUEST_ID, protocol: 'SIM-AAAA1111' },
+            notes: ['Atendimento: Das 7h às 22h'],
+          }),
+        ]);
+      });
+
+      it('drops a request card without a current record (another owner or removed), keeping the message', async () => {
+        store.seedConversation(EXISTING_ID, [
+          { role: 'assistant', content: 'Preparei a solicitação.', actions: [stored(GONE_ID)] },
+        ]);
+        requestOperations.cards.mockResolvedValue([]);
+
+        const { messages } = await service.getMessages(EXISTING_ID, GUEST);
+
+        expect(messages).toHaveLength(1);
+        expect(messages[0].content).toBe('Preparei a solicitação.');
+        expect(messages[0].actions).toEqual([]);
+      });
+
+      it('shows a repeated card once, where it was created, and keeps unrelated actions', async () => {
+        const navigate = { type: 'navigate' as const, label: 'Abrir Solicitações', screen: 'Requests' as const, params: {} };
+        store.seedConversation(EXISTING_ID, [
+          { role: 'assistant', content: 'Preparei.', actions: [stored(REQUEST_ID)] },
+          { role: 'assistant', content: 'Pronto.', actions: [stored(REQUEST_ID), navigate] },
+        ]);
+        requestOperations.cards.mockResolvedValue([stored(REQUEST_ID)]);
+
+        const { messages } = await service.getMessages(EXISTING_ID, GUEST);
+
+        expect(messages[0].actions).toHaveLength(1);
+        expect(messages[1].actions).toEqual([navigate]);
+      });
+
+      it('asks for no request cards when the history has none', async () => {
+        store.seedConversation(EXISTING_ID, [{ role: 'user', content: 'Olá' }]);
+
+        await service.getMessages(EXISTING_ID, GUEST);
+
+        expect(requestOperations.cards).toHaveBeenCalledExactlyOnceWith(GUEST, EXISTING_ID, []);
+      });
+
+      it('validates the persisted card before sending it', async () => {
+        const broken = { ...stored(REQUEST_ID), request: { requestId: REQUEST_ID, protocol: 'nope' } };
+        store.seedConversation(EXISTING_ID, [{ role: 'assistant', content: 'x', actions: [stored(REQUEST_ID)] }]);
+        requestOperations.cards.mockResolvedValue([broken as never]);
+
+        const { messages } = await service.getMessages(EXISTING_ID, GUEST);
+
+        expect(messages[0].actions).toEqual([]);
+      });
     });
 
     it('throws NotFoundException for an unknown conversation', async () => {

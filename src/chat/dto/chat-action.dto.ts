@@ -3,6 +3,8 @@ import { IsIn, IsUUID } from 'class-validator';
 export const CHAT_ACTION_TYPES = [
   'experience.booking.confirm',
   'experience.booking.cancel',
+  'request.confirm',
+  'request.cancel',
 ] as const;
 
 export type ChatActionType = (typeof CHAT_ACTION_TYPES)[number];

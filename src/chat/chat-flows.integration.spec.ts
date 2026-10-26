@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 
 import { InMemoryChatStore } from '../../test/support/in-memory-chat-store.js';
+import { requestProviders } from '../../test/support/request-fixtures.js';
 import {
   classification,
   installFetchMock,
@@ -332,6 +333,7 @@ describe.each([
             RAG_MAX_DISTANCE: '',
           }),
         },
+        ...requestProviders().providers,
         ...store.providers(),
       ],
     }).compile();
@@ -518,7 +520,8 @@ describe.each([
           actions: [],
         });
         expect(sentences(result.reply).length).toBeLessThanOrEqual(2);
-        expect(result.reply.length).toBeLessThanOrEqual(120);
+        // A identidade cita os módulos do app (capabilitiesOverview), então tem um teto maior.
+        expect(result.reply.length).toBeLessThanOrEqual(message === 'Quem é você?' ? 160 : 120);
         expect(result.reply).not.toMatch(/senhor|senhora|bem-vind|querid/i);
         expectNoLookups(execute);
         expect(store.messages.map(({ role, content }) => ({ role, content }))).toEqual([

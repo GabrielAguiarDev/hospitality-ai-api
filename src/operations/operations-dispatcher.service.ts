@@ -3,52 +3,24 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import {
   isConversationIntent,
   isExperienceIntent,
+  isModuleIntent,
+  isRequestIntent,
   isRestaurantIntent,
-  type ChatIntent,
-  type ConversationIntent,
   type IntentDecision,
 } from '../chat/chat-intent.types.js';
 
 import { EventOperationsService } from './event-operations.service.js';
 import { ExperienceOperationsService } from './experience-operations.service.js';
+import { INTENT_TOOL_MAP } from './intent-tool-map.js';
+import { ModuleOperationsService } from './module-operations.service.js';
 import { OperationsAiService } from './operations-ai.service.js';
 import { RequestsOperationsService } from './requests-operations.service.js';
 import { RestaurantOperationsService } from './restaurant-operations.service.js';
 
-import type { OperationToolName } from './operations-tool-registry.service.js';
 import type { DispatchContext, DispatchResult } from './operations.types.js';
 import { GuestContext } from '../guest/guest-context.js';
 
 export type { DispatchContext, DispatchResult } from './operations.types.js';
-
-type OperationalIntent = Exclude<ChatIntent, 'knowledge.search' | ConversationIntent>;
-
-// Mapeamento centralizado entre intenções e ferramentas.
-const INTENT_TOOL_MAP = {
-  'reservation.list': 'reservations.list',
-  'reservation.details': 'reservations.list',
-  'reservation.status': 'reservations.list',
-
-  'request.list': 'requests.list',
-  'request.status': 'requests.list',
-
-  'restaurant.booking': 'restaurants.list',
-  'restaurant.list': 'restaurants.list',
-  'restaurant.details': 'restaurants.list',
-
-  'event.list': 'events.list',
-
-  'experience.list': 'experiences.list',
-  // A busca usa a mesma ferramenta, com filtros opcionais.
-  'experience.search': 'experiences.list',
-  'experience.details': 'experiences.details',
-  'experience.availability': 'experiences.availability',
-  'experience.price': 'experiences.details',
-  'experience.booking': 'experiences.booking.preview',
-  'experience.booking.confirm': 'experiences.booking.confirm',
-  'experience.booking.cancel': 'experiences.booking.cancel',
-  'experience.reservations': 'experiences.reservations',
-} as const satisfies Record<OperationalIntent, OperationToolName>;
 
 @Injectable()
 export class OperationsDispatcherService {
@@ -60,7 +32,13 @@ export class OperationsDispatcherService {
     private readonly experienceOperationsService: ExperienceOperationsService,
     private readonly restaurantOperationsService: RestaurantOperationsService,
     private readonly eventOperationsService: EventOperationsService,
+    private readonly moduleOperationsService: ModuleOperationsService,
   ) {}
+
+  /** Produto da Boutique citado numa pergunta que o RAG não respondeu. */
+  findProducts(message: string, guest: GuestContext, context?: DispatchContext): Promise<DispatchResult | null> {
+    return this.moduleOperationsService.findProducts(message, guest, context);
+  }
 
   async dispatch(
     message: string,
@@ -99,6 +77,15 @@ export class OperationsDispatcherService {
       );
     }
 
+    if (isRequestIntent(decision.intent)) {
+      // A escrita simulada exige a conversa; o handler recusa sem ela.
+      return this.requestsOperationsService.handle(message, { ...decision, intent: decision.intent }, guest, context);
+    }
+
+    if (isModuleIntent(decision.intent)) {
+      return this.moduleOperationsService.handle(message, { ...decision, intent: decision.intent }, guest, context);
+    }
+
     if (decision.intent === 'event.list') {
       return this.eventOperationsService.handle(message, decision, guest, context ?? { conversationId: '', state: {} });
     }
@@ -119,37 +106,21 @@ export class OperationsDispatcherService {
       );
     }
 
-    if (tool === 'reservations.list') {
-      const result = await this.operationsAiService.ask(
-        message,
-        guest,
-        decision,
-      );
-
-      return {
-        tool,
-        reply: result.reply,
-      };
-    }
-
-    if (
-      decision.intent !== 'request.list' &&
-      decision.intent !== 'request.status'
-    ) {
+    if (tool !== 'reservations.list') {
       throw new BadRequestException(
         'Combinação de intenção e ferramenta inválida.',
       );
     }
 
-    const reply = await this.requestsOperationsService.ask(
+    const result = await this.operationsAiService.ask(
       message,
-      decision.intent,
       guest,
+      decision,
     );
 
     return {
       tool,
-      reply,
+      reply: result.reply,
     };
   }
 }

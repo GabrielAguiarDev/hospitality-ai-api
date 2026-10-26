@@ -20,6 +20,9 @@ export interface GuestRequest {
   createdAt: string;
   // O snapshot não registra a data da última atualização.
   updatedAt: string | null;
+  // Solicitação simulada pelo chat (banco interno), nunca enviada ao resort.
+  simulated?: true;
+  protocol?: string;
 }
 
 interface RequestRow {
