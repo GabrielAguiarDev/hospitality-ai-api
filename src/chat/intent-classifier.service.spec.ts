@@ -458,6 +458,14 @@ describe('IntentClassifierService', () => {
       });
     });
 
+    it('uses the shared chat request: same num_ctx and keep_alive as the response model', async () => {
+      await service.classify('Tenho alguma reserva?');
+
+      const body = requestBody(fetchMock);
+      expect(body.keep_alive).toBe('30m');
+      expect(body.options).toMatchObject({ num_ctx: 8192, temperature: 0 });
+    });
+
     it('sends only the last 6 history entries, truncated to 400 characters', async () => {
       const history: HistoryEntry[] = Array.from({ length: 8 }, (_, index) => ({
         role: index % 2 === 0 ? 'user' : 'assistant',
@@ -763,6 +771,117 @@ describe('IntentClassifierService', () => {
       });
     });
 
+    describe('model configuration', () => {
+      it('sends structured classification to OLLAMA_CLASSIFIER_MODEL with a JSON schema', async () => {
+        const configured = new IntentClassifierService(
+          new ConfigService({
+            OLLAMA_BASE_URL: 'http://ollama.test:11434',
+            OLLAMA_CHAT_MODEL: 'qwen3.5:4b',
+            OLLAMA_CLASSIFIER_MODEL: 'qwen3:1.7b',
+          }),
+        );
+        fetchMock.mockResolvedValue(ollamaChat(JSON.stringify({ intent: 'experience.search' })));
+
+        await configured.classify('e qual delas sobra lugar pra gente?', [], LISTED);
+
+        const body = requestBody(fetchMock) as { model: string; think: boolean; format: { type: string } };
+        expect(body).toMatchObject({ model: 'qwen3:1.7b', think: false, format: { type: 'object' } });
+      });
+
+      it('uses the chat model for classification when no classifier model is set', async () => {
+        const configured = new IntentClassifierService(
+          new ConfigService({ OLLAMA_BASE_URL: 'http://ollama.test:11434', OLLAMA_CHAT_MODEL: 'qwen3.5:4b' }),
+        );
+        fetchMock.mockResolvedValue(ollamaChat(JSON.stringify({ intent: 'experience.search' })));
+
+        await configured.classify('e qual delas sobra lugar pra gente?', [], LISTED);
+
+        expect(requestBody(fetchMock)).toMatchObject({ model: 'qwen3.5:4b' });
+      });
+    });
+
+    describe('closings, praise and external facts', () => {
+      it.each([
+        'Muito legal! Me ajudou muito, obrigado.',
+        'Valeu, até mais!',
+        'Que legal, obrigada!',
+        'Você é ótimo!',
+        'Perfeito, muito obrigado pela ajuda',
+      ])('treats %j as conversation even inside an experience context', async (message) => {
+        await expect(service.classify(message, [], LISTED)).resolves.toEqual({ intent: 'conversation.general', detail: 'none' });
+        expect(fetchMock).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        'Obrigado, e o spa abre que horas?',
+        'Muito legal, quanto custa?',
+        'Obrigado! Quero reservar a segunda',
+        'Legal, e amanhã?',
+        'É legal?',
+      ])('keeps the request in %j', async (message) => {
+        const decision = await service.classify(message, [], LISTED);
+        expect(decision.intent).not.toBe('conversation.general');
+      });
+
+      it.each(['Vai chover amanhã?', 'A tarde vai chover?', 'Qual a previsão do tempo?', 'Como está o dólar hoje?', 'Vai fazer frio à noite?'])(
+        'routes %j to the external-facts conversation',
+        async (message) => {
+          await expect(service.classify(message, [], LISTED)).resolves.toEqual({ intent: 'conversation.external', detail: 'none' });
+        },
+      );
+
+      it.each([
+        'O passeio de barco acontece com chuva?',
+        'A Cidade Histórica acontece se chover?',
+        'Tem alguma experiência para dia de chuva?',
+        'O ar condicionado está muito frio, podem ajustar?',
+        'Esqueci minha bolsa na praia',
+        'Aceitam pagamento em dólar?',
+        'Qual a previsão de chegada do transfer?',
+      ])('does not treat the resort question %j as an external fact', async (message) => {
+        const decision = await service.classify(message, [], LISTED);
+        expect(decision.intent).not.toBe('conversation.external');
+      });
+
+      it.each(['Legal, me fala mais sobre ela', 'Ótimo, me conta mais', 'Perfeito, mostra todas'])(
+        'keeps the follow-up request in %j',
+        async (message) => {
+          const decision = await service.classify(message, [], LISTED);
+          expect(decision.intent).not.toBe('conversation.general');
+        },
+      );
+
+      it('still answers a pending "ver todas" question after praise', async () => {
+        const asked: ConversationState = {
+          topic: 'restaurant',
+          lastIntent: 'restaurant.list',
+          pendingQuestion: { intent: 'restaurant.list', targetId: 'all' },
+        };
+        const decision = await service.classify('Legal, mostra todas', [], asked);
+        expect(decision.intent).toBe('restaurant.list');
+      });
+
+      it.each(['knowledge', 'conversation'] as const)(
+        'keeps the model fallback after an interleaved %s turn',
+        async (phase) => {
+          fetchMock.mockResolvedValue(ollamaChat(JSON.stringify({ intent: 'experience.price' })));
+          const decision = await service.classify('e essa sai muito caro?', [], { ...LISTED, phase });
+          expect(fetchMock).toHaveBeenCalled();
+          expect(decision.intent).toBe('experience.price');
+        },
+      );
+
+      it('keeps "Qual a temperatura da piscina?" as a resort question', async () => {
+        await expect(service.classify('Qual a temperatura da piscina?')).resolves.toEqual(KNOWLEDGE);
+      });
+
+      it('does not ask the model after a completed operation', async () => {
+        const completed: ConversationState = { ...LISTED, phase: 'completed', experience: { ...LISTED.experience, selectedId: 'exp-2' } };
+        await expect(service.classify('e qual delas sobra lugar pra gente?', [], completed)).resolves.toEqual(KNOWLEDGE);
+        expect(fetchMock).not.toHaveBeenCalled();
+      });
+    });
+
     describe('pending questions', () => {
       const ASKED: ConversationState = {
         topic: 'experience',
@@ -820,6 +939,13 @@ describe('IntentClassifierService', () => {
         restaurant: { listed: [{ id: 'r1', name: 'Gino Praia Gastronomia' }, { id: 'r2', name: 'Restaurante Central' }] },
       };
 
+      it('classifies "Tem restaurante aberto agora?" as a catalog question (opening filter)', async () => {
+        fetchMock.mockRejectedValue(connectionError());
+
+        await expect(service.classify('Tem restaurante aberto agora?')).resolves.toMatchObject({ intent: 'restaurant.list' });
+        expect(fetchMock).not.toHaveBeenCalled();
+      });
+
       it.each<[string, string]>([
         ['Quero a segunda', 'restaurant.details'],
         ['Como é esse?', 'restaurant.details'],
@@ -844,7 +970,6 @@ describe('IntentClassifierService', () => {
         'Em qual restaurante é a minha reserva?',
         'Qual o horário de funcionamento do restaurante?',
         'O restaurante tem opção vegana?',
-        'Tem restaurante aberto agora?',
         'Tem bebida no bar da piscina?',
       ])(
         'does not capture %j as catalog',
@@ -881,14 +1006,19 @@ describe('IntentClassifierService', () => {
 
       it.each([
         'Vou chegar tarde, tem problema?',
-        'A tarde vai chover?',
-        'Qual a programação da noite?',
         'Tem algum lugar para jantar à noite?',
         'Quais serviços tem à tarde?',
         'Até que horas é o almoço?',
         'O que está incluso na diária?',
       ])('sends %j to knowledge without the model', async (message) => {
         await expect(service.classify(message, [], LISTED)).resolves.toEqual(KNOWLEDGE);
+        expect(fetchMock).not.toHaveBeenCalled();
+      });
+
+      it('routes "Qual a programação da noite?" to the events catalog, without the model', async () => {
+        await expect(service.classify('Qual a programação da noite?', [], LISTED)).resolves.toMatchObject({
+          intent: 'event.list',
+        });
         expect(fetchMock).not.toHaveBeenCalled();
       });
 
@@ -974,6 +1104,174 @@ describe('IntentClassifierService', () => {
         });
         await expect(service.classify('confirmo')).resolves.toEqual(KNOWLEDGE);
       });
+    });
+  });
+
+  describe('events (deterministic)', () => {
+    const EVENTS: ConversationState = { topic: 'event', lastIntent: 'event.list', event: { date: '2026-10-23' } };
+
+    beforeEach(() => {
+      fetchMock.mockRejectedValue(connectionError());
+      vi.useFakeTimers({ toFake: ['Date'] });
+      // Sexta-feira, 23/10/2026, 12h no fuso do resort.
+      vi.setSystemTime(new Date('2026-10-23T15:00:00Z'));
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it.each([
+      'Quais eventos tem hoje?',
+      'Tem show hoje?',
+      'Qual a programação de hoje?',
+      'O que tem de recreação?',
+      'Tem música ao vivo?',
+      'O que tem hoje à noite?',
+      'Tem alguma festa amanhã?',
+    ])('classifies %j as event.list without the model', async (message) => {
+      await expect(service.classify(message)).resolves.toMatchObject({ intent: 'event.list' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      'Tem algum show para crianças? Quero reservar uma experiência',
+      'Quais passeios tem hoje?',
+      'Quero reservar uma mesa para o show',
+      'Quais restaurantes tem hoje à noite?',
+      'Qual o horário da minha reserva do show?',
+    ])('does not capture %j as an event', async (message) => {
+      expect((await service.classify(message)).intent).not.toBe('event.list');
+    });
+
+    it('routes a greeting followed by an explicit programming question to the events catalog', async () => {
+      await expect(service.classify('Oi, qual a programação de hoje?')).resolves.toMatchObject({ intent: 'event.list' });
+      await expect(service.classify('Olá, que horas é o show de circo?')).resolves.toMatchObject({ intent: 'event.list' });
+    });
+
+    it.each([
+      'E o show?',
+      'Onde fica o espaço de eventos?',
+      'O resort faz festa de casamento?',
+      'Quanto custa o show?',
+      'O show é pago?',
+      'Tem sala para eventos corporativos?',
+    ])('keeps the ambiguous or attribute question %j in knowledge (no event catalog)', async (message) => {
+      await expect(service.classify(message)).resolves.toEqual(KNOWLEDGE);
+    });
+
+    it.each(['E amanhã?', 'e à noite?', 'E depois das 20h?'])('treats %j after an event list as a refinement', async (message) => {
+      await expect(service.classify(message, [], EVENTS)).resolves.toMatchObject({ intent: 'event.list', refine: true });
+    });
+
+    it('carries the date and period entities of the follow-up', async () => {
+      const decision = await service.classify('E amanhã à noite?', [], EVENTS);
+
+      expect(decision).toMatchObject({ intent: 'event.list', refine: true });
+      expect(decision.entities).toMatchObject({ date: '2026-10-24', period: 'evening' });
+    });
+
+    it('does not treat a temporal follow-up as an event outside an event conversation', async () => {
+      expect((await service.classify('E amanhã?')).intent).not.toBe('event.list');
+      expect((await service.classify('E amanhã?', [], { topic: 'event' })).intent).not.toBe('event.list');
+    });
+
+    it('does not capture a long or unrelated message after an event list', async () => {
+      expect((await service.classify('E amanhã, o spa abre que horas?', [], EVENTS)).intent).not.toBe('event.list');
+      expect((await service.classify('Obrigado', [], EVENTS)).intent).toMatch(/^conversation\./);
+    });
+
+    it('keeps "E à noite?" after a restaurant list as a restaurant refinement, not an event', async () => {
+      const state: ConversationState = {
+        topic: 'restaurant',
+        lastIntent: 'restaurant.list',
+        restaurant: { listed: [{ id: 'r1', name: 'Omakase' }], filters: { type: 'restaurante' } },
+      };
+
+      const decision = await service.classify('E à noite?', [], state);
+
+      expect(decision.intent).toBe('restaurant.list');
+      expect(decision.refine).toBe(true);
+      expect(decision.entities?.period).toBe('evening');
+    });
+  });
+
+  describe('review regressions (events, requests and external facts)', () => {
+    beforeEach(() => {
+      fetchMock.mockRejectedValue(connectionError());
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-10-23T15:00:00Z'));
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it.each([
+      'O resort faz festa de casamento?',
+      'O show de hoje é pago?',
+      'A recreação infantil tem monitor?',
+      'Qual o dress code do show de hoje?',
+      'Onde fica o espaço de eventos?',
+      'Qual a idade permitida no show?',
+    ])('sends the attribute question %j to knowledge, not to the events catalog', async (message) => {
+      await expect(service.classify(message)).resolves.toEqual(KNOWLEDGE);
+    });
+
+    it.each([
+      'Reservei o show de hoje, pode confirmar?',
+      'Quero reservar uma mesa para o show',
+      'Quais são minhas reservas do show?',
+    ])('does not capture %j as event.list', async (message) => {
+      expect((await service.classify(message)).intent).not.toBe('event.list');
+    });
+
+    it.each(['Quais eventos têm amanhã?', 'Tem show?', 'Que horas é o show?', 'Mostre a programação', 'O que tem hoje à noite?'])(
+      'keeps %j as event.list thanks to an explicit list cue',
+      async (message) => {
+        await expect(service.classify(message)).resolves.toMatchObject({ intent: 'event.list' });
+      },
+    );
+
+    it.each([
+      'Obrigado, me traga um travesseiro extra',
+      'Valeu, bora pedir toalhas para o quarto',
+      'Obrigado, envie uma toalha extra',
+      'Obrigado, providencie o transporte',
+    ])('does not treat the request %j as social', async (message) => {
+      expect((await service.classify(message)).intent).not.toMatch(/^conversation\./);
+    });
+
+    it.each(['Obrigado!', 'Valeu, Yago!', 'Muito obrigado pela ajuda'])('still treats %j as social', async (message) => {
+      expect((await service.classify(message)).intent).toMatch(/^conversation\./);
+    });
+
+    it.each(['Vai chover amanhã?', 'Qual a previsão do tempo?'])('treats %j as external', async (message) => {
+      await expect(service.classify(message)).resolves.toMatchObject({ intent: 'conversation.external' });
+    });
+
+    it.each([
+      'Alguma notícia da minha reserva?',
+      'Como está o meu check-in?',
+      'Tem notícia do meu traslado?',
+    ])('does not treat %j as an external fact', async (message) => {
+      expect((await service.classify(message)).intent).not.toBe('conversation.external');
+    });
+
+    it('refines a restaurant list after an empty result ("E à noite?")', async () => {
+      const state: ConversationState = {
+        topic: 'restaurant',
+        lastIntent: 'restaurant.list',
+        restaurant: { listed: [], filters: { type: 'bar' } },
+      };
+
+      await expect(service.classify('E à noite?', [], state)).resolves.toMatchObject({ intent: 'restaurant.list', refine: true });
+    });
+
+    it('keeps a bare "confirmo" with an experience state as a confirmation, even after a topic change', async () => {
+      const state: ConversationState = { topic: 'restaurant', experience: { selectedId: 'e1' } };
+
+      await expect(service.classify('confirmo', [], state)).resolves.toMatchObject({ intent: 'experience.booking.confirm' });
     });
   });
 });

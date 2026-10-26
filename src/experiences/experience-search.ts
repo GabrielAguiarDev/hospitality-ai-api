@@ -112,3 +112,18 @@ export function slotsMatching(
       (!window || slot.time === null || inWindow(slot.time, window)),
   );
 }
+
+/**
+ * Vagas que ainda podem ser oferecidas: datas passadas não têm vagas e,
+ * hoje, só horários futuros (ou vagas para o dia, sem horário).
+ * O snapshot é histórico; o relógio do resort decide o que já passou.
+ */
+export function upcomingSlots(
+  slots: readonly ExperienceSlot[],
+  today: string,
+  now: string,
+): ExperienceSlot[] {
+  return slots.filter(
+    (slot) => slot.date > today || (slot.date === today && (slot.time === null || slot.time > now)),
+  );
+}

@@ -23,7 +23,7 @@ interface FindMessagesOptions {
   take?: number;
 }
 
-type MessageInput = Pick<ChatMessage, 'conversationId' | 'role' | 'content'>;
+type MessageInput = Pick<ChatMessage, 'conversationId' | 'role' | 'content'> & Partial<Pick<ChatMessage, 'actions'>>;
 
 type StoredConversation = Pick<ChatConversation, 'id' | 'resortId' | 'guestId'> & {
   updatedAt?: Date;

@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import type { EntityManager, Repository } from 'typeorm';
 
 import { normalizeText } from '../common/text.js';
-import type { ConversationState } from '../contracts/conversation-state.js';
+import type { ConversationPhase, ConversationState } from '../contracts/conversation-state.js';
 import type { GuestContext } from '../guest/guest-context.js';
 import type { DispatchResult } from '../operations/operations.types.js';
 
@@ -114,7 +114,8 @@ export class ConversationContextService {
   resolve(message: string, decision: IntentDecision, state: ConversationState): IntentDecision {
     const pending = state.pendingQuestion;
 
-    if (decision.answersPending && pending?.targetId) {
+    // "all" (ou "all:<tipo>") é uma opção da pergunta ("ver todas"), não uma entidade.
+    if (decision.answersPending && pending?.targetId && !pending.targetId.startsWith('all')) {
       const kind = decision.intent.startsWith('restaurant.') ? 'restaurant' : 'experience';
       return this.withTarget(decision, kind, pending.targetId, 'pending_question');
     }
@@ -161,17 +162,22 @@ export class ConversationContextService {
    */
   afterOperation(result: DispatchResult, fallback: ConversationState, intent: ChatIntent): ConversationState {
     const { pendingQuestion: _previous, ...base } = result.state ?? fallback;
+    const phase: ConversationPhase = base.experience?.pendingPreviewId
+      ? 'awaiting_confirmation'
+      : result.completed
+        ? 'completed'
+        : 'operation';
 
-    return {
+    return this.withPhase({
       ...base,
       lastIntent: result.intent ?? intent,
       ...(result.pendingQuestion ? { pendingQuestion: result.pendingQuestion } : {}),
-    };
+    }, phase);
   }
 
   afterKnowledge(state: ConversationState, intent: ChatIntent): ConversationState {
     const { pendingQuestion: _unanswered, ...rest } = state;
-    return { ...rest, lastIntent: intent };
+    return this.withPhase({ ...rest, lastIntent: intent }, 'knowledge');
   }
 
   /**
@@ -181,7 +187,23 @@ export class ConversationContextService {
    */
   afterConversation(state: ConversationState, _decision: IntentDecision): ConversationState {
     const { pendingQuestion: _closed, ...rest } = state;
-    return rest;
+    // Uma conversa livre depois de uma operação concluída mantém a
+    // fase "concluída", para que nada reabra a operação anterior.
+    const phase: ConversationPhase = rest.experience?.pendingPreviewId
+      ? 'awaiting_confirmation'
+      : rest.phase === 'completed'
+        ? 'completed'
+        : 'conversation';
+
+    return this.withPhase(rest, phase);
+  }
+
+  private withPhase(state: ConversationState, phase: ConversationPhase): ConversationState {
+    if (state.phase !== phase) {
+      this.logger.debug(`Fase da conversa: ${state.phase ?? 'inicial'} → ${phase}.`);
+    }
+
+    return { ...state, phase };
   }
 
   private withTarget(

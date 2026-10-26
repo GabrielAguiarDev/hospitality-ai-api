@@ -157,12 +157,84 @@ describe('ChatOrchestratorService', () => {
         today: '2026-10-23',
       });
 
+      // A pré-reserva continua aguardando confirmação.
       expect(result).toEqual({
         mode: 'conversation',
         intent: 'conversation.general',
         documents: [],
-        state,
+        state: { ...state, phase: 'awaiting_confirmation' },
       });
+    });
+  });
+
+  describe('pending pre-booking and topic changes', () => {
+    const CTX = (state: object) => ({ conversationId: 'conv-1', state, today: '2026-10-23' });
+    const pending = { topic: 'experience' as const, experience: { selectedId: 'exp-1', pendingPreviewId: 'preview-1' } };
+
+    it.each<[IntentDecision]>([
+      [{ intent: 'restaurant.list', detail: 'none' }],
+      [{ intent: 'event.list', detail: 'none' }],
+      [{ intent: 'reservation.list', detail: 'none' }],
+      [{ intent: 'request.list', detail: 'none' }],
+    ])('clears the pending preview before dispatching %j, keeping the selected experience', async (decision) => {
+      classifier.classify.mockResolvedValue(decision);
+      dispatcher.dispatch.mockResolvedValue({ tool: 'restaurants.list', reply: 'ok' });
+
+      const result = await orchestrator.resolve('Quais restaurantes tem?', GUEST, [], CTX(pending));
+
+      const dispatched = dispatcher.dispatch.mock.calls[0][3];
+      expect(dispatched?.state.experience?.pendingPreviewId).toBeUndefined();
+      expect(dispatched?.state.experience?.selectedId).toBe('exp-1');
+      expect(result.state?.experience?.pendingPreviewId).toBeUndefined();
+    });
+
+    it('keeps the pending preview for experience intents', async () => {
+      classifier.classify.mockResolvedValue({ intent: 'experience.booking.confirm', detail: 'none' });
+      dispatcher.dispatch.mockResolvedValue({ tool: 'experiences.booking.confirm', reply: 'ok' });
+
+      await orchestrator.resolve('confirmo', GUEST, [], CTX(pending));
+
+      expect(dispatcher.dispatch.mock.calls[0][3]?.state.experience?.pendingPreviewId).toBe('preview-1');
+    });
+  });
+
+  describe('knowledge follow-ups', () => {
+    const CTX = (lastIntent?: 'knowledge.search' | 'restaurant.list') => ({
+      conversationId: 'conv-1',
+      state: { topic: 'knowledge' as const, ...(lastIntent ? { lastIntent } : {}) },
+      today: '2026-10-23',
+    });
+    const history: HistoryEntry[] = [
+      { role: 'user', content: 'Que horas abre o spa?' },
+      { role: 'assistant', content: 'O spa abre às 9h.' },
+    ];
+
+    beforeEach(() => {
+      classifier.classify.mockResolvedValue({ intent: 'knowledge.search', detail: 'none' });
+      retrieval.search.mockResolvedValue([HOURS_DOCUMENT]);
+    });
+
+    it.each(['E a academia?', 'Então e a piscina?', 'Mas e o salão de jogos?'])(
+      'prepends the previous question to the retrieval query of %j',
+      async (message) => {
+        await orchestrator.resolve(message, GUEST, history, CTX('knowledge.search'));
+
+        expect(retrieval.search.mock.calls[0][0]).toBe(`Que horas abre o spa? ${message}`);
+      },
+    );
+
+    it('does not rewrite a long follow-up, a full question or a follow-up without knowledge context', async () => {
+      await orchestrator.resolve('E a academia fica aberta até que horas durante a semana inteira?', GUEST, history, CTX('knowledge.search'));
+      await orchestrator.resolve('Onde fica a academia?', GUEST, history, CTX('knowledge.search'));
+      await orchestrator.resolve('E a academia?', GUEST, history, CTX('restaurant.list'));
+      await orchestrator.resolve('E a academia?', GUEST, history, CTX());
+
+      expect(retrieval.search.mock.calls.map(([query]) => query)).toEqual([
+        'E a academia fica aberta até que horas durante a semana inteira?',
+        'Onde fica a academia?',
+        'E a academia?',
+        'E a academia?',
+      ]);
     });
   });
 

@@ -1,11 +1,14 @@
 import { BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import type { ResortClock } from '../resort/resort-clock.service.js';
+
 import type { ExperienceAvailabilityService } from '../experiences/experience-availability.service.js';
 import type { ExperienceBookingService } from '../experiences/experience-booking.service.js';
 import type { ExperiencesCatalogService } from '../experiences/experiences-catalog.service.js';
 import type { GuestContext } from '../guest/guest-context.js';
 import type { GuestStay, GuestStayService } from '../resort/guest-stay.service.js';
+import type { EventsCatalogService } from '../resort/events-catalog.service.js';
 import type { RestaurantsCatalogService } from '../resort/restaurants-catalog.service.js';
 
 import { OperationsToolRegistryService } from './operations-tool-registry.service.js';
@@ -45,7 +48,11 @@ describe('OperationsToolRegistryService', () => {
     cancelPreview: vi.fn(async () => true),
     listSimulated: vi.fn(async () => []),
   };
+  const eventsCatalog = { forDate: vi.fn(async () => []) };
   const stay = { resolve: vi.fn(async () => STAY) };
+
+  // Sexta-feira, 23/10/2026, 10:30 no resort.
+  const clock = { today: () => '2026-10-23', time: () => '10:30' };
 
   function createRegistry(nodeEnv = 'development') {
     return new OperationsToolRegistryService(
@@ -57,6 +64,8 @@ describe('OperationsToolRegistryService', () => {
       availability as unknown as ExperienceAvailabilityService,
       booking as unknown as ExperienceBookingService,
       stay as unknown as GuestStayService,
+      clock as unknown as ResortClock,
+      eventsCatalog as unknown as EventsCatalogService,
     );
   }
 
@@ -107,6 +116,8 @@ describe('OperationsToolRegistryService', () => {
     ['experiences.list', { after: '15h' }],
     ['experiences.list', { free: 'sim' }],
     ['experiences.list', { date: '2026-10-24', adults: 11 }],
+    ['events.list', { date: '24/10/2026' }],
+    ['events.list', { sql: 'SELECT 1' }],
     ['experiences.details', { experienceId: '' }],
     ['experiences.availability', { experienceId: 'exp-1', date: '2026-02-30' }],
     ['experiences.booking.preview', { conversationId: 'not-a-uuid', experienceId: 'e', date: '2026-10-24', adults: 2 }],
@@ -135,6 +146,17 @@ describe('OperationsToolRegistryService', () => {
 
     expect((bars.data as { id: string }[]).map(({ id }) => id)).toEqual(['r2']);
     expect((byName.data as { id: string }[]).map(({ id }) => id)).toEqual(['r1']);
+  });
+
+  it('lists events by date through the events catalog, read-only', async () => {
+    const event = { id: 'e1', kind: 'event', title: 'Show de Circo', date: '2026-10-24', time: '20:00', location: null, category: null, description: null };
+    eventsCatalog.forDate.mockResolvedValueOnce([event] as never);
+
+    const result = await createRegistry().execute('events.list', GUEST, { date: '2026-10-24' });
+
+    expect(result).toEqual({ tool: 'events.list', data: { date: '2026-10-24', events: [event] } });
+    expect(eventsCatalog.forDate).toHaveBeenCalledExactlyOnceWith('2026-10-24');
+    expect(createRegistry().listTools().find(({ name }) => name === 'events.list')?.readOnly).toBe(true);
   });
 
   it('resolves the stay on the server before previewing a booking', async () => {

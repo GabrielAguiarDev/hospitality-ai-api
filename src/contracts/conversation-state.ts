@@ -42,6 +42,8 @@ export interface ExperienceConversationState {
   filters?: ExperienceSearchFilters;
   // Experiência cuja descrição já foi apresentada (evita repeti-la).
   describedId?: string;
+  // O aviso de que as vagas vêm do snapshot já foi dado nesta conversa.
+  snapshotNoticeShown?: boolean;
   pendingPreviewId?: string;
 }
 
@@ -51,6 +53,23 @@ export interface RestaurantConversationState {
   selectedId?: string;
   selectedName?: string;
   describedId?: string;
+  // Filtros da última lista, para continuações ("E à noite?").
+  filters?: RestaurantSearchFilters;
+}
+
+export interface RestaurantSearchFilters {
+  type?: 'restaurante' | 'bar' | 'alimentacao';
+  // Rótulo da cozinha pedida ("japonesa"), reaplicado nas continuações.
+  cuisine?: string;
+  reservations?: boolean;
+}
+
+// Programação consultada: "E amanhã?" repete a busca com a nova data.
+export interface EventConversationState {
+  date?: string;
+  filters?: Pick<ExperienceSearchFilters, 'period' | 'after' | 'before'>;
+  // Somente shows/eventos ou somente lazer, quando a pergunta pediu.
+  kind?: 'event' | 'leisure';
 }
 
 /**
@@ -63,13 +82,26 @@ export interface PendingQuestion {
   targetId?: string;
 }
 
+/**
+ * Fase da conversa: conversa livre, consulta de conhecimento, operação
+ * em andamento, confirmação pendente ou operação concluída.
+ */
+export type ConversationPhase =
+  | 'conversation'
+  | 'knowledge'
+  | 'operation'
+  | 'awaiting_confirmation'
+  | 'completed';
+
 export interface ConversationState {
-  topic?: 'experience' | 'restaurant' | 'reservation' | 'request' | 'knowledge';
+  phase?: ConversationPhase;
+  topic?: 'experience' | 'restaurant' | 'event' | 'reservation' | 'request' | 'knowledge';
   // Última intenção operacional ou de conhecimento (interações sociais não contam).
   lastIntent?: ChatIntent;
   pendingQuestion?: PendingQuestion;
   experience?: ExperienceConversationState;
   restaurant?: RestaurantConversationState;
+  event?: EventConversationState;
 }
 
 export const EMPTY_CONVERSATION_STATE: Readonly<ConversationState> =

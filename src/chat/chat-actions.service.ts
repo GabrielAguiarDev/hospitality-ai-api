@@ -82,8 +82,12 @@ export class ChatActionsService {
         throw new NotFoundException('Pré-reserva pendente não encontrada');
       }
 
-      reply = 'A pré-reserva foi descartada e nada foi registrado.';
+      reply = 'Tudo bem, descartei a pré-reserva. Nada foi registrado.';
       status = 'cancelled';
+      // O mesmo card passa para "cancelled".
+      response = sanitizeActions(
+        await this.experienceOperations.bookingCards(guest, dto.conversationId, [dto.previewId]),
+      );
     }
 
     const owner = { conversationId: dto.conversationId, resortId: guest.resortId, guestId: guest.guestId };
@@ -94,6 +98,7 @@ export class ChatActionsService {
         conversationId: dto.conversationId,
         role: 'assistant',
         content: reply,
+        actions: response.length ? response : null,
       });
 
       await manager.update(ChatConversation, { id: dto.conversationId }, { updatedAt: new Date() });
@@ -106,8 +111,11 @@ export class ChatActionsService {
           ChatConversationState,
           { ...owner, version: stored.version },
           {
+            // Operação concluída: nada mais aguarda confirmação nem resposta.
             state: {
               ...stored.state,
+              phase: 'completed',
+              pendingQuestion: undefined,
               experience: { ...stored.state.experience, pendingPreviewId: undefined },
             },
             version: stored.version + 1,

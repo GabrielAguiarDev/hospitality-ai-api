@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import { llmSettings } from '../llm/llm-config.js';
+
 interface OllamaEmbedResponse {
   embeddings?: number[][];
 }
@@ -21,15 +23,7 @@ export class EmbeddingsService {
       return [];
     }
 
-    const baseUrl = this.configService.get<string>(
-      'OLLAMA_URL',
-      'http://127.0.0.1:11434',
-    );
-
-    const model = this.configService.get<string>(
-      'OLLAMA_EMBED_MODEL',
-      'embeddinggemma:300m-qat-q4_0',
-    );
+    const { baseUrl, embedModel: model, embedKeepAlive } = llmSettings((key) => this.configService.get<string>(key));
 
     let response: Response;
 
@@ -43,7 +37,7 @@ export class EmbeddingsService {
         body: JSON.stringify({
           model,
           input: texts,
-          keep_alive: 0,
+          keep_alive: embedKeepAlive,
           truncate: false,
         }),
       });

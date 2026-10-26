@@ -11,6 +11,8 @@ export type ChatIntent =
   // Catálogo e detalhes de restaurantes e bares (sem reserva pelo chat).
   | 'restaurant.list'
   | 'restaurant.details'
+  // Eventos, shows e programação de lazer de uma data.
+  | 'event.list'
   | 'experience.list'
   // Busca de vagas em várias experiências (data, período, filtros).
   | 'experience.search'
@@ -23,7 +25,9 @@ export type ChatIntent =
   | 'experience.reservations'
   | 'knowledge.search'
   | 'conversation.greeting'
-  | 'conversation.general';
+  | 'conversation.general'
+  // Clima, tempo real e fatos externos: sem fonte integrada.
+  | 'conversation.external';
 
 export type ExperienceIntent = Extract<ChatIntent, `experience.${string}`>;
 

@@ -231,3 +231,43 @@ describe('evaluateBooking', () => {
     expect(r.ok && r.slot.availabilityId).toBe('big');
   });
 });
+
+describe('evaluateBooking — current time in the resort', () => {
+  // Hoje é 26/10/2026, 10:30 no fuso do resort.
+  const today = { today: '2026-10-26', now: '10:30', date: '2026-10-26' };
+  const at = (time: string | null) => slot({ date: '2026-10-26', time, slotId: time ? `h-${time}` : null });
+
+  it('rejects a time that already passed today, offering the remaining times', () => {
+    const result = evaluateBooking(input({ ...today, time: '08:00', slots: [at('08:00'), at('14:00')] }));
+
+    expect(result).toMatchObject({ ok: false, code: 'time_in_past', options: ['14:00'] });
+  });
+
+  it('rejects when every time of today already passed', () => {
+    const result = evaluateBooking(input({ ...today, time: null, slots: [at('08:00')] }));
+
+    expect(code(result)).toBe('time_in_past');
+  });
+
+  it('picks the only remaining time instead of a past one', () => {
+    const result = evaluateBooking(input({ ...today, time: null, slots: [at('08:00'), at('14:00')] }));
+
+    expect(result.ok && result.slot.time).toBe('14:00');
+  });
+
+  it('respects the registered booking cutoff for same-day bookings', () => {
+    const result = evaluateBooking(
+      input({ ...today, now: '17:10', time: '19:00', experience: experience({ bookingCutoff: '17:00' }), slots: [at('19:00')] }),
+    );
+
+    expect(code(result)).toBe('cutoff_passed');
+  });
+
+  it('does not apply the current time to future dates', () => {
+    expect(code(evaluateBooking(input({ today: '2026-10-26', now: '23:00', date: '2026-10-27', slots: [slot({ date: '2026-10-27', time: '08:00' })], time: '08:00' })))).toBe('ok');
+  });
+
+  it('keeps a day slot without time while the cutoff has not passed', () => {
+    expect(code(evaluateBooking(input({ ...today, time: null, slots: [at(null)] })))).toBe('ok');
+  });
+});

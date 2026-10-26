@@ -13,6 +13,8 @@ import type { ExperienceOperationsService } from './experience-operations.servic
 
 import type { RestaurantOperationsService } from './restaurant-operations.service.js';
 
+import type { EventOperationsService } from './event-operations.service.js';
+
 import { OperationsDispatcherService } from './operations-dispatcher.service.js';
 
 describe('OperationsDispatcherService', () => {
@@ -57,6 +59,14 @@ describe('OperationsDispatcherService', () => {
     })),
   };
 
+  const events = {
+    handle: vi.fn(async () => ({
+      tool: 'events.list' as const,
+      reply: 'Programação',
+      actions: [],
+    })),
+  };
+
   const CONTEXT = {
     conversationId: '6f1c2a5e-8c1d-4b7a-9e2f-3a4b5c6d7e8f',
     state: {},
@@ -67,10 +77,24 @@ describe('OperationsDispatcherService', () => {
     requests as unknown as RequestsOperationsService,
     experiences as unknown as ExperienceOperationsService,
     restaurants as unknown as RestaurantOperationsService,
+    events as unknown as EventOperationsService,
   );
 
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('routes event.list to the events service, with or without conversation context', async () => {
+    const decision: IntentDecision = { intent: 'event.list', detail: 'none' };
+
+    const withContext = await dispatcher.dispatch('Quais os eventos?', decision, GUEST, CONTEXT);
+    const withoutContext = await dispatcher.dispatch('Quais os eventos?', decision, GUEST);
+
+    expect(withContext.tool).toBe('events.list');
+    expect(withoutContext.tool).toBe('events.list');
+    expect(events.handle).toHaveBeenCalledTimes(2);
+    expect(events.handle).toHaveBeenLastCalledWith('Quais os eventos?', decision, GUEST, { conversationId: '', state: {} });
+    expect(reservations.ask).not.toHaveBeenCalled();
   });
 
   it.each([

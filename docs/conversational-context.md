@@ -102,7 +102,7 @@ Quando o hóspede informou só um período ou uma faixa:
 
 ### 2.7 Ações
 
-A nova ação `experience.options` acompanha toda lista numerada e é montada só com IDs do cadastro. O contrato `reply`, `conversationId`, `retrievedSources` e `actions` não mudou. Clientes que não conhecem o tipo o ignoram.
+A ação `experience.options` acompanha toda lista e é montada só com IDs do cadastro. O contrato `reply`, `conversationId`, `retrievedSources` e `actions` não mudou. Desde a 3ª etapa (seção 6), o `reply` traz só um resumo e o app precisa renderizar o card.
 
 ## 3. Casos testados
 
@@ -289,6 +289,222 @@ Também foram corrigidos:
 - **Horário de um restaurante específico** ("Que horas abre o Omakase?") continua no RAG, cuja fonte é o mesmo cadastro. Os detalhes pelo catálogo também mostram o funcionamento.
 - **Respostas de sim/não** são reconhecidas por vocabulário fechado. Respostas longas ou indiretas ("acho que sim, mas…") seguem o fluxo normal, sem responder à pergunta.
 - **"Segunda que vem"** ainda não é convertida em data. "Na segunda" e "próxima segunda" são.
-- **"Sim" a perguntas abertas:** "Quer saber mais sobre algum?" e "Para qual data?" não são de sim/não. Um "sim" isolado em resposta a elas vira conversa, gerada pelo modelo com a proteção que já existia contra horários e preços.
+- **"Sim" a perguntas abertas:** "Quer saber mais sobre algum?" e "Para qual data?" não são de sim/não. Um "sim" isolado em resposta a elas vira conversa, com resposta fixa e curta (sem modelo).
 - **Filtros `type` e `name` de `restaurants.list`:** estão disponíveis e validados, mas o chat filtra o catálogo já carregado (precisa dele inteiro para contar os outros tipos).
 - **Itens do tipo `alimentacao`** (como "Chá da Tarde") aparecem só quando o hóspede pede lanches/sobremesas ou o catálogo completo. Na lista de restaurantes, são apenas contados.
+
+
+---
+
+## 6. Conversa natural, ciclo de vida e cards (3ª etapa)
+
+### 6.1 Problemas reproduzidos e causas
+
+| Problema | Causa | Correção |
+| --- | --- | --- |
+| "Muito legal! Me ajudou muito, obrigado." após a reserva reabria a experiência | A frase não era reconhecida como social ("legal" e "ajudou" não eram expressões sociais). Ia para o contexto de experiência, e o fallback do modelo escolhia `experience.details` | `detectClosing`: agradecimento, elogio ou despedida **sem pedido** (sem interrogativos, entidades, nomes de serviços, verbos de reserva ou "?") é conversa. Depois de uma operação concluída, o fallback do modelo não é chamado |
+| Reserva confirmada para 08h de 26/10/2026 às 11h do mesmo dia | As regras comparavam só a data com hoje, nunca o horário | `evaluateBooking` recebe a hora atual (`ResortClock.time()`, em `RESORT_TIMEZONE`) e rejeita horários passados, na pré-reserva e na confirmação. O registry não oferece vagas passadas |
+| Dois cards para a mesma reserva | Pré-reserva e confirmação eram tipos de ação diferentes | Card único `experience.booking.card` com `cardId` estável e estado persistido |
+| Respostas longas | Resumo completo no texto e aviso do snapshot a cada resposta | Texto curto (os detalhes ficam no card), aviso uma vez por conversa e listas grandes resumidas |
+
+### 6.2 Modelos (`src/llm/llm-config.ts`)
+
+- **Configuração única:**
+  - `OLLAMA_CHAT_MODEL`: respostas.
+  - `OLLAMA_CLASSIFIER_MODEL`: classificação estruturada e function calling; vazio = o mesmo modelo das respostas.
+  - `OLLAMA_EMBED_MODEL`: EmbeddingGemma, sem mudança.
+  - `OLLAMA_NUM_PREDICT`, `OLLAMA_NUM_CTX` e `OLLAMA_THINK`.
+- **Nomes antigos** (`OLLAMA_URL`, `OLLAMA_MODEL`) continuam aceitos, mas os novos têm prioridade.
+  - **Atenção:** antes, a geração usava `OLLAMA_MODEL`, e a classificação usava `OLLAMA_CHAT_MODEL`.
+  - Agora `OLLAMA_CHAT_MODEL` vale para todas as chamadas de chat.
+- **Trocar para `qwen3.5:4b`:** basta `OLLAMA_CHAT_MODEL=qwen3.5:4b`. Para manter a classificação no modelo menor, defina também `OLLAMA_CLASSIFIER_MODEL=qwen3:1.7b`.
+- **Compatibilidade:** os dois modelos recebem as mesmas chamadas.
+  - Classificação: `format` com JSON Schema.
+  - Function calling: `tools`.
+  - Geração: `think: false` por padrão.
+  - As saídas continuam validadas pelo servidor (enum de intenções, ações sanitizadas).
+- **Chamadas ao Ollama:** agradecimentos e perguntas sobre clima ficam com **uma** chamada (a geração da resposta). O classificador por modelo só é usado durante uma operação em andamento.
+- **Comparação:** `pnpm models:evaluate` usa os prompts e schemas de produção (`chat-prompts.ts` e as constantes exportadas do classificador) e mede, por modelo:
+  - acerto de intenção e validade do schema;
+  - acerto de function calling;
+  - qualidade das respostas (frases, Markdown, dado sem fonte, retomada de operação concluída);
+  - latência mediana.
+
+  `OLLAMA_EVAL_MODELS` define os modelos e `OLLAMA_EVAL_OUTPUT` salva o relatório JSON.
+
+### 6.3 Intenções conversacionais
+
+| Intenção | Exemplos | Resposta |
+| --- | --- | --- |
+| `conversation.greeting` | "Olá, Yago!" | Modelo, 1 ou 2 frases |
+| `conversation.general` | "Obrigado!", "Muito legal! Me ajudou muito", "Você é ótimo!", "Tchau" | Modelo, sem retomar a operação concluída |
+| `conversation.external` | "Vai chover amanhã?", "Como está o dólar?" | Modelo instruído a dizer que não tem a fonte. Uma afirmação de clima (graus, "vai chover", "ensolarado") é substituída por uma resposta segura |
+
+A intenção atual prevalece: "Obrigado, e o spa abre que horas?" continua sendo uma pergunta. Já "Muito legal, obrigado" depois de uma reserva é só conversa. Perguntas sobre o resort que citam temperatura ("temperatura da piscina") continuam no RAG.
+
+Toda resposta gerada pelo modelo passa por `toPlainText`, que remove negrito, títulos, código e links em Markdown.
+
+### 6.4 Ciclo de vida (`ConversationState.phase`)
+
+| Fase | Quando |
+| --- | --- |
+| `conversation` | Interação social sem operação concluída antes |
+| `knowledge` | Resposta do RAG |
+| `operation` | Consulta ou ação operacional em andamento |
+| `awaiting_confirmation` | Existe uma pré-reserva pendente |
+| `completed` | Reserva confirmada ou descartada (inclusive pelo botão). Conversas sociais seguintes mantêm a fase |
+
+**Depois de `completed`:**
+
+- a confirmação pendente e a pergunta pendente são limpas;
+- "confirmo" responde que não há nada a confirmar;
+- o classificador por modelo não reabre a experiência;
+- o prompt de conversa avisa que a operação terminou.
+
+Referências úteis continuam valendo ("Quanto custa para 3 adultos?" ainda resolve a experiência escolhida). Um novo assunto ou uma nova busca passam normalmente.
+
+### 6.5 Card de reserva
+
+- **Contrato:** `experience.booking.card` substitui `experience.booking.preview` e `experience.booking.confirm`, com `cardId` estável (o ID da pré-reserva).
+  - Estados: `preview` → `confirmed` | `expired` | `failed` | `cancelled`.
+  - `confirming` é um estado local do app.
+  - Montado por `bookingCard()` (botões só em `preview`) e validado por `sanitizeActions`.
+- **Persistência (migration `1792771200004-BookingCards`, só no banco da IA):**
+  - `experience_booking_previews` ganha o estado `failed` e `failure_reason`. Uma revalidação que falha (horário passado, sem vagas, valor alterado) deixa de ser registrada como `expired`.
+  - `chat_messages.actions` guarda as ações de cada resposta.
+- **Estado atual:** `ExperienceBookingService.cards()` (ferramenta somente leitura `experiences.booking.cards`) lê o estado de cada card, filtrado por resort, hóspede e conversa.
+- **Histórico:** `GET /chat/:id/messages` devolve cada card **uma vez**, na mensagem da pré-reserva, com o estado atual.
+- **Respostas:** `POST /chat` ("confirmo") e `POST /chat/actions` devolvem o mesmo `cardId` no novo estado.
+
+O contrato completo para o React Native está na seção 4.2 de [mobile-ai-integration.md](mobile-ai-integration.md).
+
+### 6.6 Regras temporais
+
+- **Base:** hora atual do resort (`RESORT_TIMEZONE`), via `ResortClock.time()`.
+- **Busca e horários** (`experiences.list` e `experiences.availability`): datas passadas não têm vagas. Hoje, só aparecem horários futuros e vagas para o dia, sem horário.
+- **Pré-reserva e confirmação:** um horário de hoje já passado é rejeitado com `time_in_past`, junto com os horários ainda possíveis. Se todos passaram, a mensagem diz isso.
+- **Horário-limite de marcação** (`horamaxmarcacao_experiencia`): para reservas do **mesmo dia**, não é possível reservar depois desse horário (`cutoff_passed`).
+  - O snapshot não confirma a semântica exata: há registros criados depois do limite, provavelmente lançados pela equipe.
+  - Por isso foi adotada a leitura conservadora, só para o próprio dia.
+- **Aviso:** a disponibilidade continua vindo do snapshot histórico. O aviso aparece na primeira resposta de vagas da conversa.
+
+### 6.7 Concisão
+
+- **Pré-reserva e confirmação:** uma frase cada. Data, horário, valor, avisos e código ficam no card.
+- **Aviso sobre o snapshot:** uma vez por conversa.
+- **Catálogo completo de gastronomia:** 6 opções mais relevantes (restaurantes, depois bares e lanches), "E mais N opções. Quer ver todas?", e a lista completa com um "sim". Pedidos por tipo ("E os bares?") listam até 10 do tipo.
+  - A pergunta pendente guarda o tipo pedido (`targetId: 'all'` ou `'all:bar'`). O "sim" expande o mesmo tipo, até 20 itens.
+  - A lista expandida não pergunta de novo: o restante é indicado na tela de Gastronomia.
+- **Prompts:**
+  - 1 a 3 frases em conversas simples;
+  - responder só o que foi perguntado;
+  - sem Markdown e sem fórmulas repetidas;
+  - no RAG, no máximo 5 itens, oferecendo o restante.
+
+### 6.8 Casos testados
+
+`chat-conversations.integration.spec.ts` (pipeline real):
+
+- Agradecimento após reserva confirmada: resposta do modelo, nenhuma ferramenta nem classificador, fase `completed` e nada pendente.
+- Despedidas e elogios após reserva não executam ferramentas.
+- Mudança de assunto após reserva (restaurantes, nova busca).
+- O mesmo `cardId` passa de `preview` para `confirmed`.
+- Reabertura do histórico: um único card, `confirmed`, com os avisos originais.
+- Respostas de reserva com até 200 caracteres, sem valor, data ou regras.
+- Remoção de Markdown.
+- Horário de hoje que já passou não é oferecido.
+- Clima e cotação: a afirmação inventada é substituída e uma limitação natural é preservada.
+- Continuidade de contexto após a reserva, e "confirmo" que não reutiliza a reserva concluída.
+- Aviso do snapshot apenas uma vez.
+
+Unitários:
+
+- **Regras temporais** (`experience-rules.spec.ts`): horário passado, todos passados, só o horário futuro, horário-limite, datas futuras, vaga para o dia.
+- **Serviço de reservas** (`experience-booking.service.spec.ts`): pré-reserva e confirmação de horário passado; mapeamento de estados dos cards.
+- **Contrato do card:** mesmo `cardId` em todos os estados e botões só em `preview`.
+- **Catálogo grande:** resumo e expansão da lista.
+- **Classificador:** despedidas e elogios versus pedidos; clima versus "temperatura da piscina"; nenhuma chamada ao modelo após `completed`; modelo configurado em cada chamada.
+- **Configuração** (`llm-config.spec.ts`): troca para `qwen3.5:4b`, classificador separado, nomes antigos e valores inválidos.
+
+**Testes existentes alterados:**
+
+- Ações de reserva passaram de `experience.booking.preview`/`confirm` para `experience.booking.card`. Os textos de pré-reserva e confirmação ficaram curtos.
+- Falhas de revalidação passaram de `expired` para `failed`.
+- O estado após conversa social ganhou `phase`.
+- "A tarde vai chover?" passou do RAG para `conversation.external`.
+
+### 6.9 Limitações
+
+- **`qwen3.5:4b` não foi validado com o modelo real neste ambiente.**
+  - O download pelo servidor Ollama falhou com `permission denied` ao gravar em `/Volumes/T7/Ollama/models/blobs`.
+  - Durante a avaliação, o servidor parou de responder na primeira chamada a `qwen3.5:4b`.
+  - A compatibilidade está coberta por testes de contrato (o mesmo JSON Schema, `tools` e parâmetros para qualquer modelo). Falta rodar `pnpm models:evaluate` com o modelo instalado.
+- **Resultado com `qwen3:1.7b`** (`pnpm models:evaluate`):
+  - 5/8 nas intenções que chegam ao modelo (frases anafóricas difíceis);
+  - 2/2 em function calling;
+  - 3/4 em qualidade de conversa (uma resposta com 4 frases e emoji);
+  - latência mediana abaixo de 1 s.
+- **Fechamentos:** são detectados por vocabulário. Elogios incomuns sem palavra conhecida seguem o fluxo normal. Elogio seguido de pedido ("Legal, me fala mais sobre ela", "Perfeito, mostra todas") continua sendo pedido.
+- **Fatos externos:** apenas expressões inequívocas ("vai chover", "previsão do tempo", "cotação", "dólar hoje"). Qualquer menção ao resort (passeio, serviço, local, reserva ou experiência listada) segue o roteamento normal: "O passeio acontece com chuva?" e "previsão de chegada do transfer" não são tratados como clima.
+- **Classificador por modelo:** desligado apenas depois de uma operação concluída (`completed`). Uma conversa ou dúvida intercalada não descarta a lista em contexto.
+- **Horário-limite na listagem:** a busca de vagas filtra horários passados, mas não aplica o horário-limite de marcação. Depois do limite, um horário de hoje ainda aparece e a pré-reserva responde `cutoff_passed`.
+- **Configuração de modelos:** `OLLAMA_CHAT_MODEL` tem prioridade sobre o nome antigo `OLLAMA_MODEL`, e o classificador usa o mesmo modelo quando `OLLAMA_CLASSIFIER_MODEL` está vazio. Na inicialização, o serviço registra os modelos efetivos e avisa quando uma variável antiga é ignorada.
+- **Reavaliação:** `pnpm models:evaluate` lê o `.env` (`node --env-file-if-exists`), usa a data do fuso do resort e termina com erro se nenhum modelo puder ser avaliado.
+- **Horário-limite de marcação:** leitura conservadora (seção 6.6).
+- **Cards anteriores a esta versão:** mensagens antigas não têm `actions` gravadas, então cards anteriores à migration não são reconstruídos.
+
+---
+
+## 6. Concisão, cards e desempenho (3ª etapa)
+
+Objetivo: um concierge objetivo, com listas em cards e sem chamadas desnecessárias ao modelo. O contrato com o app está na seção 0 de [mobile-ai-integration.md](mobile-ai-integration.md).
+
+### 6.1 Interações sociais sem modelo
+
+`src/chat/social-replies.ts` responde saudação, agradecimento, elogio, despedida, "quem é você", "ok", "sim"/"não" sem pergunta pendente e perguntas sobre clima ou notícias. As respostas são fixas, com 1 ou 2 frases, sem tratamento de gênero, e alternam variações sem repetir a anterior. A apresentação ("sou o Yago…") aparece só no primeiro contato. Com uma pré-reserva pendente, a resposta lembra de confirmar.
+
+Essas mensagens não chamam Ollama, RAG nem ferramentas. Uma mensagem com pedido real junto ("Obrigado! E a piscina, até que horas funciona?", "Obrigado, me traga um travesseiro") segue o roteamento normal.
+
+### 6.2 Respostas curtas e cards
+
+| Domínio | Texto (`reply`) | Card |
+| --- | --- | --- |
+| Experiências | Contagem e até 3 nomes | `experience.options`, agora com `summary` (vagas por horário ou "Com reserva", idade) |
+| Restaurantes | Contagem, critérios e até 3 nomes | `restaurant.options` (novo) + `navigate` |
+| Programação | Contagem e destaques, ou resposta direta sobre o evento citado | `event.list` (novo) |
+| RAG | 1 a 3 frases | — |
+
+No RAG, `polishReply` remove aberturas ("Claro!", "Olá!"), encerramentos ("Espero ter ajudado") e a pergunta final que só oferece ajuda, e troca tratamentos de gênero por formas neutras. O prompt pede o mesmo; o pós-processamento cobre os modelos pequenos.
+
+### 6.3 Filtros sem inventar dados
+
+- **Restaurantes** (`src/operations/restaurant-search.ts`): tipo, cozinha (comparada ao nome e à descrição), "com reserva" e faixa de horário (horário exato, "depois/antes das", período, almoço/jantar/café da manhã, "agora"). O texto livre de funcionamento é interpretado só quando é inequívoco: faixas como "12h às 15h" ou "19:00 - 22:30". Textos com dias da semana ou sem conectivo ficam como "não conferido". Um restaurante sem horário conferível nunca aparece como aberto: é citado à parte ("Não consegui conferir pelo horário cadastrado: …"). Turnos de reserva só provam que o restaurante atende naquela faixa; a ausência deles não prova que está fechado.
+- **Programação** (`EventsCatalogService`, ferramenta `events.list`): eventos da data (`tb_evento`) e atividades semanais (`tb_programacaolazer`), filtrados por período, por tipo (shows ou lazer) e, para hoje, sem o que já passou.
+- **Roteamento de eventos:** o substantivo (evento, show, festa, programação, recreação) só vira `event.list` com um pedido de lista ou uma data. Perguntas de atributo ("O show de hoje é pago?", "Onde fica o espaço de eventos?", "A recreação infantil tem monitor?") seguem para o RAG.
+
+### 6.4 Continuidade
+
+- Restaurantes: "Quais restaurantes estão abertos à noite?" → "E com reserva?" (mantém tipo, cozinha e reserva, inclusive depois de uma lista vazia) → "Opção 1".
+- Programação: "O que tem hoje à noite?" → "E amanhã?" (mantém o período e o tipo).
+- RAG: "Que horas abre o spa?" → "E a academia?". Uma continuação curta é buscada junto com a pergunta anterior; antes, a busca recebia só "E a academia?" e não encontrava a fonte.
+- Segurança da reserva: uma operação de outro assunto (restaurantes, programação, reservas, solicitações) descarta a confirmação **por texto** da pré-reserva pendente. Um "sim" a "Quer ver todas?" nunca confirma a reserva. "Confirmo" depois disso orienta a usar o botão do card, que continua válido.
+
+### 6.5 Ollama
+
+Medições no Ollama local (Apple Silicon, `qwen3.5:2b-q4_K_M`) que motivaram as mudanças:
+
+| Problema | Antes | Depois |
+| --- | --- | --- |
+| Classificador sem `num_ctx` e respostas com 8192: o modelo era recarregado a cada alternância | 1,3 a 5,4 s de `load_duration` por chamada | 0 a 31 ms |
+| `keep_alive: 0` nos embeddings: EmbeddingGemma recarregado a cada pergunta | 1,0 a 1,6 s | 17 a 60 ms |
+| Saudações e agradecimentos geravam texto com o modelo | 1 chamada por mensagem | nenhuma (resposta em ~10 a 300 ms) |
+| Primeira pergunta depois de subir a API | carga do modelo na pergunta | pré-carregamento no `main.ts` |
+
+- `chatRequest()` em `src/llm/llm-config.ts` monta o corpo de toda chamada `/api/chat` (respostas, classificação, function calling e avaliação), sempre com o mesmo `num_ctx` e `keep_alive`.
+- Classificação e function calling enviam `think: false` mesmo com `OLLAMA_THINK=true`, para o raciocínio não consumir o `num_predict`.
+- `num_predict` padrão: 320. Se o limite for atingido, a resposta é cortada na última frase completa.
+- O histórico enviado ao modelo tem as últimas 6 mensagens, com até 500 caracteres cada.
+- `OLLAMA_KEEP_ALIVE` (padrão `30m`) e `OLLAMA_EMBED_KEEP_ALIVE` (padrão `10m`) aceitam texto com unidade ou número de segundos (`-1` mantém o modelo carregado).
+- O log de debug do `OllamaService` registra, a cada geração, a carga, os tokens de prompt e de resposta e as durações.
+
+Modelos compatíveis, trocados só pelo `.env` (`OLLAMA_CHAT_MODEL`, `OLLAMA_CLASSIFIER_MODEL` vazio = mesmo modelo): `qwen3.5:2b-q4_K_M`, `qwen3.5:4b` e `qwen3:1.7b`. `pnpm models:evaluate` compara os três com os mesmos prompts, mede concisão, fórmulas, gênero e fidelidade às fontes no RAG, e descarrega cada modelo ao terminar.

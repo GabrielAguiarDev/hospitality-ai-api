@@ -13,6 +13,7 @@ import type { SimulatedExperienceBooking } from '../experiences/entities/simulat
 import { ExperienceAvailabilityService } from '../experiences/experience-availability.service.js';
 import {
   ExperienceBookingService,
+  type BookingCardState,
   type ConfirmResult,
   type PreviewResult,
 } from '../experiences/experience-booking.service.js';
@@ -25,7 +26,10 @@ import {
   matchesCatalogFilters,
   slotsMatching,
   timeWindowOf,
+  upcomingSlots,
 } from '../experiences/experience-search.js';
+import { EventsCatalogService, type ResortEvent } from '../resort/events-catalog.service.js';
+import { ResortClock } from '../resort/resort-clock.service.js';
 import { GuestStayService } from '../resort/guest-stay.service.js';
 import {
   RestaurantsCatalogService,
@@ -44,6 +48,8 @@ import {
 
 import {
   parseAvailabilityInput,
+  parseBookingCardsInput,
+  parseEventListInput,
   parseExperienceIdInput,
   parseExperienceListInput,
   parseNoInput,
@@ -56,13 +62,15 @@ export type OperationToolName =
   | 'reservations.list'
   | 'requests.list'
   | 'restaurants.list'
+  | 'events.list'
   | 'experiences.list'
   | 'experiences.details'
   | 'experiences.availability'
   | 'experiences.reservations'
   | 'experiences.booking.preview'
   | 'experiences.booking.confirm'
-  | 'experiences.booking.cancel';
+  | 'experiences.booking.cancel'
+  | 'experiences.booking.cards';
 
 export interface OperationToolDefinition {
   name: OperationToolName;
@@ -82,6 +90,10 @@ export type OperationToolResult =
   | {
       tool: 'restaurants.list';
       data: RestaurantInfo[];
+    }
+  | {
+      tool: 'events.list';
+      data: { date: string; events: ResortEvent[] };
     }
   | {
       tool: 'experiences.list';
@@ -121,6 +133,10 @@ export type OperationToolResult =
   | {
       tool: 'experiences.booking.cancel';
       data: { cancelled: boolean };
+    }
+  | {
+      tool: 'experiences.booking.cards';
+      data: BookingCardState[];
     };
 
 /**
@@ -150,6 +166,11 @@ export class OperationsToolRegistryService {
     {
       name: 'restaurants.list',
       description: 'Lista restaurantes, bares e opções de alimentação ativos, com filtro opcional por tipo ou nome.',
+      readOnly: true,
+    },
+    {
+      name: 'events.list',
+      description: 'Lista eventos, shows e a programação de lazer de uma data.',
       readOnly: true,
     },
     {
@@ -189,6 +210,11 @@ export class OperationsToolRegistryService {
       description: 'Cancela uma pré-reserva simulada pendente.',
       readOnly: false,
     },
+    {
+      name: 'experiences.booking.cards',
+      description: 'Consulta o estado atual dos cards de reserva da conversa.',
+      readOnly: true,
+    },
   ];
 
   constructor(
@@ -200,7 +226,17 @@ export class OperationsToolRegistryService {
     private readonly experienceAvailability: ExperienceAvailabilityService,
     private readonly experienceBooking: ExperienceBookingService,
     private readonly guestStay: GuestStayService,
+    private readonly clock: ResortClock,
+    private readonly eventsCatalog: EventsCatalogService,
   ) {}
+
+  // Vagas do snapshot filtradas pelo relógio atual do resort.
+  private async upcoming(date: string, experienceId?: string): Promise<ExperienceSlot[]> {
+    const slots = experienceId
+      ? await this.experienceAvailability.findSlots(date, experienceId)
+      : await this.experienceAvailability.findSlots(date);
+    return upcomingSlots(slots, this.clock.today(), this.clock.time());
+  }
 
   listTools(): readonly OperationToolDefinition[] {
     return this.definitions;
@@ -275,6 +311,12 @@ export class OperationsToolRegistryService {
         };
       }
 
+      case 'events.list': {
+        const { date } = parseEventListInput(input);
+
+        return { tool: name, data: { date, events: await this.eventsCatalog.forDate(date) } };
+      }
+
       case 'experiences.list': {
         const { date, includeInactive, filters, party } = parseExperienceListInput(input);
         const all = includeInactive
@@ -285,7 +327,7 @@ export class OperationsToolRegistryService {
         // Somente vagas com saldo, das experiências filtradas e na faixa pedida.
         const slots = date
           ? slotsMatching(
-              (await this.experienceAvailability.findSlots(date)).filter((slot) => ids.has(slot.experienceId)),
+              (await this.upcoming(date)).filter((slot) => ids.has(slot.experienceId)),
               timeWindowOf(filters),
               party,
             )
@@ -306,9 +348,7 @@ export class OperationsToolRegistryService {
       case 'experiences.availability': {
         const { experienceId, date } = parseAvailabilityInput(input);
         const experience = await this.experiencesCatalog.findById(experienceId);
-        const slots = experience
-          ? await this.experienceAvailability.findSlots(date, experience.id)
-          : [];
+        const slots = experience ? await this.upcoming(date, experience.id) : [];
 
         return { tool: name, data: { experience, date, slots } };
       }
@@ -367,6 +407,15 @@ export class OperationsToolRegistryService {
               previewId,
             ),
           },
+        };
+      }
+
+      case 'experiences.booking.cards': {
+        const { conversationId, previewIds } = parseBookingCardsInput(input);
+
+        return {
+          tool: name,
+          data: await this.experienceBooking.cards(guest, conversationId, previewIds),
         };
       }
 

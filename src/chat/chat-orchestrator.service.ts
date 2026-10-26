@@ -7,6 +7,8 @@ import { OperationsDispatcherService } from '../operations/operations-dispatcher
 import { RetrievalService } from '../rag/retrieval.service.js';
 import type { RetrievedDocument } from '../rag/knowledge.service.js';
 
+import { normalizeText } from '../common/text.js';
+
 import { ConversationContextService } from './conversation-context.service.js';
 import { IntentClassifierService } from './intent-classifier.service.js';
 import { extractDate } from './message-entities.js';
@@ -44,6 +46,8 @@ export type OrchestrationResult =
   | {
       mode: 'conversation';
       intent: ConversationIntent;
+      // "Não" a uma pergunta do Yago.
+      declinesPending?: boolean;
       documents: [];
       state?: ConversationState;
     };
@@ -51,9 +55,25 @@ export type OrchestrationResult =
 function topicOf(decision: IntentDecision): ConversationState['topic'] {
   if (isExperienceIntent(decision.intent)) return 'experience';
   if (decision.intent.startsWith('restaurant.')) return 'restaurant';
+  if (decision.intent === 'event.list') return 'event';
   if (decision.intent.startsWith('reservation.')) return 'reservation';
   if (decision.intent.startsWith('request.')) return 'request';
   return 'knowledge';
+}
+
+/**
+ * "E a academia?" logo depois de "Que horas abre o spa?": sozinha, a
+ * continuação não encontra documentos; a busca leva a pergunta anterior.
+ */
+function retrievalQuery(message: string, history: HistoryEntry[], state: ConversationState): string {
+  const text = normalizeText(message);
+
+  if (state.lastIntent !== 'knowledge.search' || !/^(?:e|entao|mas)\b/.test(text) || text.split(' ').length > 6) {
+    return message;
+  }
+
+  const previous = [...history].reverse().find(({ role }) => role === 'user')?.content;
+  return previous ? `${previous} ${message}` : message;
 }
 
 /**
@@ -107,6 +127,7 @@ export class ChatOrchestratorService {
       return {
         mode: 'conversation',
         intent: decision.intent,
+        ...(decision.declinesPending ? { declinesPending: true } : {}),
         documents: [],
         ...(context ? { state: this.context.afterConversation(context.state, decision) } : {}),
       };
@@ -117,7 +138,9 @@ export class ChatOrchestratorService {
       const result = context
         ? await this.dispatcher.dispatch(message, decision, guest, {
             conversationId: context.conversationId,
-            state: context.state,
+            // Outro assunto descarta a confirmação por texto da pré-reserva:
+            // um "sim" a "Quer ver todas?" nunca confirma a reserva.
+            state: topicOf(decision) === 'experience' ? context.state : withTopic(context.state, topicOf(decision)),
           })
         : await this.dispatcher.dispatch(message, decision, guest);
 
@@ -149,9 +172,10 @@ export class ChatOrchestratorService {
       ? (decision.entities?.date ?? extractDate(message, context.today))
       : undefined;
 
+    const query = context ? retrievalQuery(message, history, context.state) : message;
     const documents = context
       ? await this.retrievalService.search(
-          date ? `${message} (${ResortClock.describeDate(date)})` : message,
+          date ? `${query} (${ResortClock.describeDate(date)})` : query,
           guest.resortId,
           date ? { date } : {},
         )

@@ -137,3 +137,33 @@ export function summarizeText(value: string | null | undefined, maxLength = 220)
 
   return summary.length > maxLength ? `${summary.slice(0, maxLength - 1).trimEnd()}…` : summary;
 }
+
+/**
+ * Texto simples para o aplicativo, que não renderiza Markdown:
+ * remove negrito, títulos, código e links gerados pelo modelo.
+ */
+export function toPlainText(value: string): string {
+  return value
+    .replace(/```[a-z]*\n?/gi, '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/(^|[\s(])__(\S(?:[^\n]*?\S)?)__(?=[\s).,!?:;]|$)/gm, '$1$2')
+    .replace(/(^|[\s(])\*(\S(?:[^*\n]*\S)?)\*(?=[\s).,!?:;]|$)/g, '$1$2')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^(\s*)[*+]\s+/gm, '$1- ')
+    .replace(/`([^`\n]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\((?:[^)]+)\)/g, '$1')
+    .replace(/[ \t]+$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * Citação breve de nomes no texto ("A, B e C", "A, B, C e mais 4"):
+ * os detalhes ficam nos cards.
+ */
+export function nameList(names: string[], max = 3): string {
+  if (names.length <= max) {
+    return names.length > 1 ? `${names.slice(0, -1).join(', ')} e ${names.at(-1)}` : (names[0] ?? '');
+  }
+  return `${names.slice(0, max).join(', ')} e mais ${names.length - max}`;
+}

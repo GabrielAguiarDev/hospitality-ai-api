@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 
 import { matchByName, normalizeText } from '../common/text.js';
 import type { ConversationState } from '../contracts/conversation-state.js';
+import { chatRequest, llmSettings } from '../llm/llm-config.js';
+import { CUISINE_CUE } from '../operations/restaurant-search.js';
 import { ResortClock } from '../resort/resort-clock.service.js';
 
 import type {
@@ -41,7 +43,11 @@ const CANCEL_TRIGGERS = new Set(['nao', 'cancela', 'cancelar', 'cancele', 'desis
 const ANSWER_TRIGGERS = new Set([
   ...CONFIRM_TRIGGERS, 'pode', 'quero', 'gostaria', 'verifica', 'verifique', 'veja', 'mostra', 'mostre', 'abre', 'abra', 'bora',
 ]);
-const ANSWER_WORDS = new Set([...CONFIRM_WORDS, ...ANSWER_TRIGGERS, 'ser', 'com', 'certeza', 'ai', 'sim', 'claro', 'ver', 'abrir', 'favor']);
+// Elogio antes da resposta ("Legal, mostra todas") não a invalida.
+const ANSWER_WORDS = new Set([
+  ...CONFIRM_WORDS, ...ANSWER_TRIGGERS, 'ser', 'com', 'certeza', 'ai', 'sim', 'claro', 'ver', 'abrir', 'favor',
+  'todas', 'todos', 'legal', 'otimo', 'otima', 'perfeito', 'beleza', 'ok', 'manda', 'mande',
+]);
 const DECLINE_WORDS = new Set([
   ...CANCEL_TRIGGERS, 'obrigado', 'obrigada', 'yago', 'agora', 'precisa', 'por', 'enquanto', 'depois', 'talvez', 'valeu', 'tudo', 'bem',
 ]);
@@ -78,6 +84,22 @@ const SOCIAL_FILLERS = new Set([
   'tudo', 'bem', 'estou', 'todos', 'mim', 'amigo', 'amiga', 'querido', 'querida', 'haha', 'k', 'rs',
 ]);
 const GENERAL_SET = new Set(GENERAL_PHRASES);
+
+// Agradecimentos, elogios e despedidas em frases livres
+// ("Muito legal! Me ajudou muito, obrigado.").
+const CLOSING =
+  /\b(?:obrigad[oa]s?|brigad[oa]|valeu|agradeco|grat[oa]|tchau|ate (?:logo|mais|breve|amanha)|adeus|legal|muito bom|que bom|otimo|otima|excelente|maravilh[a-z]*|incrivel|sensacional|perfeito|adorei|amei|top|ajudou|ajudaram|show de bola|bom trabalho)\b/;
+// Exclamações que começam com "que" não são perguntas.
+const EXCLAMATION = /\bque (?:legal|bom|otimo|maravilha|incrivel|demais|show)\b/g;
+// Indícios de que a mensagem também pede algo.
+const REQUEST_CUE =
+  /\b(?:que|qual|quais|quando|onde|como|quanto|quanta|quantos|quantas|tem|ha|existe|existem|pode|poderia|podemos|consegue|quero|queria|gostaria|preciso|reserv[a-z]*|horarios?|vagas?|e o|e a|e os|e as|mas|porem|fala|fale|conta|conte|mostra|mostre|manda|mande|ver|veja|lista|liste|explica|explique|ela|ele|elas|eles|essa|esse|nessa|nesse|dela|dele|delas|deles|mais sobre|bora|vamos|traga|traz|tragam|envia|envie|lembra|lembre|chama|chame|leva|leve|providencia|providencie|separa|separe)\b/;
+const RESORT_PLACES = /\b(?:piscinas?|spa|academia|sauna|ofuro|hidromassagem|quartos?|apartamentos?|restaurantes?|bar|agua)\b/;
+// Fatos externos sem fonte integrada: clima, tempo real, notícias.
+// Somente expressões inequívocas: "O passeio acontece com chuva?" e
+// "previsão de chegada do transfer" são perguntas sobre o resort.
+const EXTERNAL_FACTS =
+  /\b(?:vai (?:chover|fazer sol|fazer frio|fazer calor|esfriar|esquentar)|esta chovendo|chovendo agora|previsao do tempo|como (?:esta|vai estar|fica|vai ficar) o (?:tempo|clima)|tempo (?:amanha|hoje|la fora)|temperatura (?:hoje|amanha|agora|la fora|da cidade)|cotacao|(?:dolar|euro) (?:hoje|agora)|como esta o (?:dolar|euro)|noticias?|placar|resultado do jogo|jogo de hoje|transito|engarrafamento)\b/;
 // Um único padrão, da expressão mais longa para a mais curta:
 // "tudo certo" é saudação, não "tudo" + "certo".
 const SOCIAL_PATTERN = new RegExp(
@@ -97,6 +119,22 @@ const FOOD_KNOWLEDGE =
   /\b(?:funcionamento|abre|fecha|horarios? d[eoa]s?|cardapio|menu|pratos?|precos?|valor|custa|cafe da manha|vegan[oa]s?|vegetarian[oa]s?|gluten|lactose)\b/;
 const RESTAURANT_LIST_CUE =
   /\b(?:quais|lista|liste|indicar|indica|indique|recomenda|recomendar|recomende|sugere|sugerir|sugestao|sugestoes|opcoes|algum|alguns|alguma|existem|os restaurantes|os bares|sobre os|onde (?:posso |podemos |da pra |da para )?(?:comer|jantar|almocar|lanchar))\b/;
+
+// "Tem restaurante japonês?", "Existe algum bar na praia?".
+const RESTAURANT_EXISTS = /\b(?:tem|ha|existe|existem) (?:algum |alguma |um |uma )?(?:restaurantes?|bares|bar|lanchonetes?|opcao|opcoes)\b/;
+// "Quais bares estão abertos agora?", "Algum restaurante funcionando à noite?".
+const OPEN_CUE = /\b(?:abert[oa]s?|funcionando|em funcionamento|abre|abrem)\b/;
+const NOW_CUE = /\b(?:agora|neste momento|nesse momento)\b/;
+
+// Eventos, shows e programação do dia (tb_evento e tb_programacaolazer).
+const EVENT_NOUN =
+  /\b(?:eventos?|shows?|apresentac(?:ao|oes)|musica ao vivo|festas?|atrac(?:ao|oes)|programacao|recreac(?:ao|oes)|atividades de lazer)\b/;
+// O substantivo só vira programação com um pedido de lista ou uma data:
+// "O resort faz festa de casamento?" e "Onde fica o espaço de eventos?" vão ao RAG.
+const EVENT_LIST_CUE = /\b(?:quais|qual|que horas|o que|tem|ha|vai ter|rola|programacao|mostra|mostre|lista|agenda)\b/;
+const EVENT_ATTRIBUTE =
+  /\b(?:onde fica|fica onde|dress code|traje|pago|paga|preco|valor|custa|cobrad[oa]|aceita|faz|fazem|sala|salao|espaco|monitor(?:es|a)?|casamento|reuniao|corporativ[oa]|idade|permitid[oa]|pode levar)\b/;
+const WHAT_TONIGHT = /\bo que (?:tem|ha|rola|vai ter)(?: de bom)? (?:hoje|amanha|hoje a noite|a noite|essa noite|nesta noite)\b/;
 
 const RESTAURANT_DETAIL_CUE = /\b(?:como e|me fala|me fale|fale|conte|sobre o|sobre a|detalhes|o que e)\b/;
 
@@ -125,7 +163,8 @@ const FOLLOW_UP_START = /^(?:e|entao|mas|e se)\b/;
 const MODEL_FALLBACK_MAX_WORDS = 10;
 
 // Somente intenções de leitura: o modelo nunca inicia uma reserva.
-const EXPERIENCE_MODEL_INTENTS: ChatIntent[] = [
+// Exportado para a avaliação entre modelos.
+export const EXPERIENCE_MODEL_INTENTS: ChatIntent[] = [
   'experience.search',
   'experience.list',
   'experience.details',
@@ -134,7 +173,7 @@ const EXPERIENCE_MODEL_INTENTS: ChatIntent[] = [
   'knowledge.search',
 ];
 
-const EXPERIENCE_SCHEMA = {
+export const EXPERIENCE_SCHEMA = {
   type: 'object',
   properties: {
     intent: { type: 'string', enum: EXPERIENCE_MODEL_INTENTS },
@@ -143,7 +182,7 @@ const EXPERIENCE_SCHEMA = {
   additionalProperties: false,
 };
 
-const EXPERIENCE_PROMPT = [
+export const EXPERIENCE_PROMPT = [
   'Você é um classificador de intenções de um concierge de resort.',
   'O hóspede está conversando sobre experiências (passeios e atividades).',
   'Não responda à pergunta. Retorne somente o JSON solicitado.',
@@ -158,7 +197,7 @@ const EXPERIENCE_PROMPT = [
   'Exemplo: "me conta mais dela" {"intent":"experience.details"}',
 ].join(' ');
 
-const RESERVATION_PROMPT = [
+export const RESERVATION_PROMPT = [
   'Você é um classificador de intenções.',
   'Não responda à pergunta do hóspede.',
   'Retorne somente o JSON solicitado.',
@@ -185,7 +224,7 @@ const RESERVATION_PROMPT = [
   '{"intent":"knowledge.search","detail":"none"}',
 ].join(' ');
 
-const INTENT_SCHEMA = {
+export const INTENT_SCHEMA = {
   type: 'object',
   properties: {
     intent: {
@@ -444,14 +483,69 @@ export class IntentClassifierService {
       .split(' ')
       .filter(Boolean);
 
-    if (!social || !rest.every((word) => SOCIAL_FILLERS.has(word))) {
+    if (social && rest.every((word) => SOCIAL_FILLERS.has(word))) {
+      return {
+        intent: general ? 'conversation.general' : 'conversation.greeting',
+        detail: 'none',
+      };
+    }
+
+    return this.detectClosing(message, text, state) ?? this.detectExternal(message, text, state);
+  }
+
+  /**
+   * Agradecimento, elogio ou despedida sem outro pedido. A intenção
+   * atual prevalece: "Me ajudou muito, obrigado" depois de uma reserva
+   * não reabre a operação anterior.
+   */
+  private detectClosing(message: string, text: string, state?: ConversationState): IntentDecision | null {
+    if (!CLOSING.test(text) || message.includes('?')) {
       return null;
     }
 
-    return {
-      intent: general ? 'conversation.general' : 'conversation.greeting',
-      detail: 'none',
-    };
+    // Com uma pergunta pendente, "Perfeito, pode ser" ainda a responde.
+    if (state?.pendingQuestion && text.split(' ').some((word) => ANSWER_TRIGGERS.has(word))) {
+      return null;
+    }
+
+    const entities = extractEntities(message, this.clock.today());
+    const listed = state?.experience?.listed?.map(({ id, title }) => ({ id, name: title })) ?? [];
+
+    if (
+      REQUEST_CUE.test(text.replace(EXCLAMATION, ' ')) ||
+      Object.keys(entities).length > 0 ||
+      BOOKING_VERB.test(text) ||
+      EXPERIENCE_NOUN.test(text) ||
+      RESTAURANT_CATALOG.test(text) ||
+      OTHER_SERVICES.test(text) ||
+      matchByName(message, listed).length > 0
+    ) {
+      return null;
+    }
+
+    return { intent: 'conversation.general', detail: 'none' };
+  }
+
+  // Clima e fatos em tempo real: não há fonte integrada para afirmá-los.
+  // Qualquer menção ao resort (passeio, serviço, local, reserva) segue
+  // o roteamento normal: "Vai chover no passeio?" é sobre a experiência.
+  private detectExternal(message: string, text: string, state?: ConversationState): IntentDecision | null {
+    const listed = state?.experience?.listed?.map(({ id, title }) => ({ id, name: title })) ?? [];
+
+    if (
+      !EXTERNAL_FACTS.test(text) ||
+      RESORT_PLACES.test(text) ||
+      EXPERIENCE_NOUN.test(text) ||
+      RESTAURANT_CATALOG.test(text) ||
+      BOOKING_VERB.test(text) ||
+      // "Alguma notícia da minha reserva?", "o transfer atrasa com o trânsito?".
+      /\b(?:minhas?|meus?|transfer|traslado|check ?(?:in|out))\b/.test(text) ||
+      matchByName(message, listed).length > 0
+    ) {
+      return null;
+    }
+
+    return { intent: 'conversation.external', detail: 'none' };
   }
 
   private decision(
@@ -533,7 +627,8 @@ export class IntentClassifierService {
     if (!state?.experience?.pendingPreviewId) {
       // Confirmação sem pré-reserva: responde que não há nada pendente
       // em vez de tratar a mensagem como pergunta de conhecimento.
-      return state?.topic === 'experience' && confirmation && /\bconfirm/.test(text)
+      // Também depois de outro assunto: a confirmação por texto expirou, mas o card não.
+      return (state?.topic === 'experience' || state?.experience) && confirmation && /\bconfirm/.test(text)
         ? this.decision('experience.booking.confirm', message)
         : null;
     }
@@ -563,6 +658,44 @@ export class IntentClassifierService {
           state?.lastIntent === 'experience.search' ||
           state?.lastIntent === 'experience.list'),
     );
+  }
+
+  /**
+   * Programação do dia: eventos, shows e lazer. Continuações curtas
+   * ("E amanhã?", "e à noite?") depois de uma programação a repetem
+   * com a nova data ou período.
+   */
+  private detectEvent(message: string, state?: ConversationState): IntentDecision | null {
+    const text = normalizeText(message);
+
+    if (
+      EXPERIENCE_NOUN.test(text) ||
+      BOOKING_VERB.test(text) ||
+      RESTAURANT_CATALOG.test(text) ||
+      EVENT_ATTRIBUTE.test(text) ||
+      /\b(?:minhas?|meus?) (?:reservas?|solicitac(?:ao|oes)|chamados?)\b|\b(?:reservei|agendei|comprei)\b/.test(text) ||
+      this.explicitReservation(message)
+    ) {
+      return null;
+    }
+
+    const entities = extractEntities(message, this.clock.today());
+    const temporal = [entities.date, entities.period, entities.after, entities.before].some((value) => value !== undefined);
+    const words = text.split(' ').length;
+    const eventContext = state?.topic === 'event' && state.lastIntent === 'event.list';
+
+    if (WHAT_TONIGHT.test(text) || (EVENT_NOUN.test(text) && (temporal || EVENT_LIST_CUE.test(text) || (eventContext && FOLLOW_UP_START.test(text))))) {
+      const followUp = eventContext && FOLLOW_UP_START.test(text);
+      return { ...this.decision('event.list', message), ...(followUp ? { refine: true } : {}) };
+    }
+
+    if (!eventContext) {
+      return null;
+    }
+
+    return temporal && (FOLLOW_UP_START.test(text) ? words <= 6 : words <= 3) && !OTHER_SERVICES.test(text)
+      ? { ...this.decision('event.list', message), refine: true }
+      : null;
   }
 
   private detectExperienceOrRestaurant(
@@ -600,20 +733,51 @@ export class IntentClassifierService {
       return this.decision('restaurant.booking', message);
     }
 
-    // Restaurantes mudam o assunto, qualquer que seja o anterior. Reservas
-    // pessoais ("Em qual restaurante é a minha reserva?") não são catálogo.
+    const personalReservation =
+      /\b(?:minhas?|meus?) (?:reservas?|agendamentos?)\b/.test(text) || Boolean(this.explicitReservation(message));
+
+    // Restaurantes em funcionamento num horário: lista filtrada pelo cadastro.
+    // "Que horas abre o spa?" (sem restaurante) continua no RAG.
     if (
       !EXPERIENCE_NOUN.test(text) &&
       RESTAURANT_CATALOG.test(text) &&
-      !FOOD_KNOWLEDGE.test(text) &&
-      !/\b(?:minhas?|meus?) (?:reservas?|agendamentos?)\b/.test(text) &&
-      !this.explicitReservation(message)
+      OPEN_CUE.test(text) &&
+      (temporal || entities.time !== undefined || NOW_CUE.test(text)) &&
+      !personalReservation
     ) {
-      if (RESTAURANT_LIST_CUE.test(text)) return this.decision('restaurant.list', message);
-      if (RESTAURANT_DETAIL_CUE.test(text)) return this.decision('restaurant.details', message);
+      return this.decision('restaurant.list', message);
+    }
+
+    // Restaurantes mudam o assunto, qualquer que seja o anterior. Reservas
+    // pessoais ("Em qual restaurante é a minha reserva?") não são catálogo.
+    if (!EXPERIENCE_NOUN.test(text) && !FOOD_KNOWLEDGE.test(text) && !personalReservation) {
+      if (RESTAURANT_CATALOG.test(text) && (RESTAURANT_LIST_CUE.test(text) || RESTAURANT_EXISTS.test(text))) {
+        return this.decision('restaurant.list', message);
+      }
+      if (RESTAURANT_CATALOG.test(text) && RESTAURANT_DETAIL_CUE.test(text)) return this.decision('restaurant.details', message);
+      // "Onde tem sushi?", "Tem comida japonesa?".
+      if (CUISINE_CUE.test(text) && /\b(?:onde|tem|ha|quais|qual|algum|alguma|opcoes?|comer|comida|restaurantes?)\b/.test(text)) {
+        return this.decision('restaurant.list', message);
+      }
     }
 
     const restaurantContext = state?.topic === 'restaurant' ? state.restaurant : undefined;
+
+    // Continuação de uma lista, mesmo vazia: "E à noite?", "E com reserva?", "E os bares?".
+    if (
+      restaurantContext &&
+      state?.lastIntent === 'restaurant.list' &&
+      !EXPERIENCE_NOUN.test(text) &&
+      entities.ordinal === undefined &&
+      FOLLOW_UP_START.test(text) &&
+      text.split(' ').length <= 6 &&
+      !(OTHER_SERVICES.test(text.replace(/\b(?:restaurantes?|bar|jantar|almoco)\b/g, ' ')) || FOOD_KNOWLEDGE.test(text)) &&
+      matchByName(message, restaurantContext.listed ?? []).length === 0 &&
+      (temporal || entities.time !== undefined || NOW_CUE.test(text) || CUISINE_CUE.test(text) ||
+        /\b(?:com reserva|bares|bar|restaurantes?|lanches?)\b/.test(text))
+    ) {
+      return { ...this.decision('restaurant.list', message), refine: true };
+    }
 
     // Continuação sobre restaurantes: "a segunda", "como é esse?", "quero reservar".
     if (restaurantContext && (restaurantContext.listed?.length || restaurantContext.selectedId) && !EXPERIENCE_NOUN.test(text)) {
@@ -740,8 +904,12 @@ export class IntentClassifierService {
   ): Promise<IntentDecision | null> {
     const context = state?.topic === 'experience' ? state.experience : undefined;
 
+    // Depois de uma operação concluída, uma mensagem fora das regras não
+    // reabre a experiência pelo modelo. Conversa ou dúvida intercalada
+    // ("Legal!", "o wi-fi pega na praia?") mantém a lista em contexto.
     if (
       !context ||
+      state?.phase === 'completed' ||
       !this.hasExperienceContext(state) ||
       normalizeText(message).split(' ').length > MODEL_FALLBACK_MAX_WORDS ||
       OTHER_SERVICES.test(normalizeText(message)) ||
@@ -781,30 +949,15 @@ export class IntentClassifierService {
       .map((entry) => `${entry.role}: ${entry.content.slice(0, 400)}`)
       .join('\n');
 
-    const baseUrl = this.configService.get<string>(
-      'OLLAMA_BASE_URL',
-      'http://127.0.0.1:11434',
-    );
+    const settings = llmSettings((key) => this.configService.get<string>(key));
 
-    const model = this.configService.get<string>(
-      'OLLAMA_CHAT_MODEL',
-      'qwen3:1.7b',
-    );
-
-    const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/chat`, {
+    const response = await fetch(`${settings.baseUrl}/api/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model,
-        stream: false,
-        think: false,
-        format: schema,
-        options: {
-          temperature: 0,
-          num_predict: 120,
-        },
+        ...chatRequest(settings, settings.classifierModel, { format: schema, temperature: 0, numPredict: 120, structured: true }),
         messages: [
           {
             role: 'system',
@@ -859,6 +1012,12 @@ export class IntentClassifierService {
 
     if (conversation) {
       return conversation;
+    }
+
+    const event = this.detectEvent(message, state);
+
+    if (event) {
+      return event;
     }
 
     const experienceIntent = this.detectExperienceOrRestaurant(message, state);

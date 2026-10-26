@@ -8,10 +8,13 @@ import { OllamaService } from '../llm/ollama.service.js';
 import type { LlmMessage } from '../llm/ollama.service.js';
 import type { RetrievedDocument } from '../rag/knowledge.service.js';
 
+import { bookingCard, type ExperienceBookingCardAction } from '../contracts/chat-actions.js';
+import { ExperienceOperationsService } from '../operations/experience-operations.service.js';
 import { ChatOrchestratorService } from './chat-orchestrator.service.js';
 import { ConversationContextService } from './conversation-context.service.js';
-import { ChatService, CONVERSATION_FALLBACK_REPLIES, NO_EVIDENCE_REPLY } from './chat.service.js';
+import { ChatService, NO_EVIDENCE_REPLY } from './chat.service.js';
 import { ChatMessage } from './entities/chat-message.entity.js';
+import { EXTERNAL_REPLY } from './social-replies.js';
 
 const UUID_V4 =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -32,6 +35,8 @@ describe('ChatService', () => {
   let store: InMemoryChatStore;
   const ollama = { generate: vi.fn<OllamaService['generate']>() };
   const orchestrator = { resolve: vi.fn<ChatOrchestratorService['resolve']>() };
+  // Estado atual dos cards, usado ao reconstruir o histórico.
+  const experienceOperations = { bookingCards: vi.fn(async () => [] as ExperienceBookingCardAction[]) };
   let service: ChatService;
 
   beforeEach(async () => {
@@ -42,6 +47,7 @@ describe('ChatService', () => {
         ChatService,
         ConversationContextService,
         { provide: OllamaService, useValue: ollama },
+        { provide: ExperienceOperationsService, useValue: experienceOperations },
         { provide: ChatOrchestratorService, useValue: orchestrator },
         ...store.providers(),
       ],
@@ -196,155 +202,125 @@ describe('ChatService', () => {
   });
 
   describe('conversation mode', () => {
-    const GREETING_REPLY = 'Olá! Tudo ótimo por aqui. Sou o Yago, concierge digital do resort. Como posso ajudar?';
+    const conversation = (intent: 'conversation.greeting' | 'conversation.general' | 'conversation.external', extra: object = {}) =>
+      orchestrator.resolve.mockResolvedValue({ mode: 'conversation', intent, documents: [], ...extra });
 
-    beforeEach(() => {
-      ollama.generate.mockResolvedValue(GREETING_REPLY);
-    });
+    const sentences = (text: string) => text.split(/[.!?]+(?:\s|$)/).filter(Boolean);
 
-    it('answers a greeting with the model, without sources, keeping the HTTP contract', async () => {
-      orchestrator.resolve.mockResolvedValue({
-        mode: 'conversation',
-        intent: 'conversation.greeting',
-        documents: [],
-      });
+    it('answers a greeting deterministically, without the model or sources, keeping the HTTP contract', async () => {
+      conversation('conversation.greeting');
 
       const result = await service.sendMessage('Olá, Yago! Tudo bem?', GUEST);
 
       expect(result).toEqual({
-        reply: GREETING_REPLY,
+        reply: 'Tudo ótimo por aqui, sou o Yago, concierge digital do resort. Como posso ajudar?',
         conversationId: expect.stringMatching(UUID_V4),
         retrievedSources: [],
         actions: [],
       });
       expect(result.reply).not.toBe(NO_EVIDENCE_REPLY);
-
-      const [messages] = ollama.generate.mock.calls[0];
-      expect(messages[0].role).toBe('system');
-      expect(messages[0].content).toContain('concierge digital do resort');
-      expect(messages[0].content).toContain('TIPO DE MENSAGEM: saudação');
-      expect(messages[0].content).toContain('não cite nomes');
-      expect(messages[0].content).not.toContain('<contexto_do_resort>');
-      expect(messages.at(-1)).toEqual({ role: 'user', content: 'Olá, Yago! Tudo bem?' });
+      expect(ollama.generate).not.toHaveBeenCalled();
     });
 
-    it('sends the conversation history so the reply keeps the context', async () => {
-      store.seedConversation(EXISTING_ID, [
-        { role: 'user', content: 'Meu nome é Ana.' },
-        { role: 'assistant', content: 'Prazer, Ana!' },
-      ]);
-      orchestrator.resolve.mockResolvedValue({
-        mode: 'conversation',
-        intent: 'conversation.general',
-        documents: [],
-      });
+    it.each([
+      ['Olá', 'conversation.greeting'],
+      ['Bom dia', 'conversation.greeting'],
+      ['Obrigado!', 'conversation.general'],
+      ['Valeu, Yago!', 'conversation.general'],
+      ['Tchau', 'conversation.general'],
+      ['Quem é você?', 'conversation.general'],
+      ['Vai chover amanhã?', 'conversation.external'],
+    ] as const)('never calls the model for %j and replies with at most two short sentences', async (message, intent) => {
+      conversation(intent);
 
-      await service.sendMessage('Obrigada!', GUEST, EXISTING_ID);
+      const result = await service.sendMessage(message, GUEST);
 
-      const [messages] = ollama.generate.mock.calls[0];
-      expect(messages.slice(1)).toEqual([
-        { role: 'user', content: 'Meu nome é Ana.' },
-        { role: 'assistant', content: 'Prazer, Ana!' },
-        { role: 'user', content: 'Obrigada!' },
-      ]);
-      expect(messages[0].content).toContain('agradecimento');
+      expect(ollama.generate).not.toHaveBeenCalled();
+      expect(sentences(result.reply).length).toBeLessThanOrEqual(2);
+      expect(result.reply).not.toMatch(/senhor|senhora|bem-vind|querid/i);
+      expect(result.retrievedSources).toEqual([]);
+      expect(result.actions).toEqual([]);
+    });
+
+    it('uses the fixed external reply for weather and real-time questions', async () => {
+      conversation('conversation.external');
+
+      const result = await service.sendMessage('Vai chover amanhã?', GUEST);
+
+      expect(result.reply).toBe(EXTERNAL_REPLY);
+    });
+
+    it('introduces itself only on first contact', async () => {
+      conversation('conversation.greeting');
+      const first = await service.sendMessage('Olá', GUEST);
+      const second = await service.sendMessage('Olá de novo', GUEST, first.conversationId);
+
+      expect(first.reply).toContain('sou o Yago');
+      expect(second.reply).not.toContain('sou o Yago');
+    });
+
+    it('does not repeat the previous assistant reply on consecutive thanks', async () => {
+      conversation('conversation.general');
+      const first = await service.sendMessage('Obrigado!', GUEST);
+      const second = await service.sendMessage('Obrigado!', GUEST, first.conversationId);
+
+      expect(second.reply).not.toBe(first.reply);
     });
 
     it('persists the conversational exchange in the history', async () => {
-      orchestrator.resolve.mockResolvedValue({
-        mode: 'conversation',
-        intent: 'conversation.greeting',
-        documents: [],
-      });
+      conversation('conversation.greeting');
 
       const result = await service.sendMessage('Olá', GUEST);
 
       expect(store.conversations.has(result.conversationId)).toBe(true);
       expect(store.messages.map(({ role, content }) => ({ role, content }))).toEqual([
         { role: 'user', content: 'Olá' },
-        { role: 'assistant', content: GREETING_REPLY },
+        { role: 'assistant', content: 'Olá, sou o Yago, concierge digital do resort. Como posso ajudar?' },
       ]);
     });
 
-    it.each([
-      'Olá! O spa abre às 9h, posso ajudar?',
-      'De nada! O jantar custa R$ 120.',
-      'Até mais! O café é servido até 10:30.',
-      'Por nada! Abrimos às 10 horas.',
-      'De nada! O passeio custa 50 reais.',
-      'Até amanhã! O café começa às 7 da manhã.',
-    ])('replaces the invented operational detail in %j with a safe reply', async (invented) => {
-      ollama.generate.mockResolvedValue(invented);
-      orchestrator.resolve.mockResolvedValue({
-        mode: 'conversation',
-        intent: 'conversation.general',
-        documents: [],
-      });
-
-      const result = await service.sendMessage('Obrigado!', GUEST);
-
-      expect(result.reply).toBe(CONVERSATION_FALLBACK_REPLIES['conversation.general']);
-      expect(store.messages.at(-1)?.content).toBe(CONVERSATION_FALLBACK_REPLIES['conversation.general']);
-    });
-
-    it.each([
-      'De nada! Sua reserva para 2 hóspedes segue pendente.',
-      'Olá! Estou aqui para ajudar 2 hóspedes ou mais.',
-    ])('keeps the legitimate reply %j', async (legit) => {
-      ollama.generate.mockResolvedValue(legit);
-      orchestrator.resolve.mockResolvedValue({
-        mode: 'conversation',
-        intent: 'conversation.general',
-        documents: [],
-      });
-
-      await expect(service.sendMessage('Obrigado!', GUEST)).resolves.toMatchObject({ reply: legit });
-    });
-
-    it('uses an introduction as the fallback for greetings', async () => {
-      ollama.generate.mockResolvedValue('Olá! O spa abre às 9h.');
-      orchestrator.resolve.mockResolvedValue({
-        mode: 'conversation',
-        intent: 'conversation.greeting',
-        documents: [],
-      });
-
-      const result = await service.sendMessage('Olá', GUEST);
-
-      expect(result.reply).toBe(CONVERSATION_FALLBACK_REPLIES['conversation.greeting']);
-      expect(result.reply).toContain('Sou o Yago, concierge digital do resort');
-    });
-
-    it('does not change the stored state (a pending pre-booking survives a "thanks")', async () => {
+    it('does not change the stored state and reminds of a pending pre-booking on "thanks"', async () => {
       const state = { topic: 'experience' as const, experience: { pendingPreviewId: 'preview-1' } };
       store.seedConversation(EXISTING_ID, []);
       store.seedState(EXISTING_ID, state);
-      orchestrator.resolve.mockResolvedValue({
-        mode: 'conversation',
-        intent: 'conversation.general',
-        documents: [],
-        state,
-      });
+      conversation('conversation.general', { state });
 
-      await service.sendMessage('Obrigado!', GUEST, EXISTING_ID);
+      const result = await service.sendMessage('Obrigado!', GUEST, EXISTING_ID);
 
       expect(store.states.get(EXISTING_ID)).toMatchObject({ state, version: 1 });
-      // O modelo é avisado de que a pré-reserva não foi confirmada.
-      const [messages] = ollama.generate.mock.calls[0];
-      expect(messages[0].content).toContain('NÃO foi');
+      expect(result.reply).toBe('Por nada! A pré-reserva continua aguardando: confirme pelo card ou responda "confirmo".');
+      expect(ollama.generate).not.toHaveBeenCalled();
     });
 
-    it('does not mention a pending pre-booking when there is none', async () => {
-      orchestrator.resolve.mockResolvedValue({
-        mode: 'conversation',
-        intent: 'conversation.general',
-        documents: [],
-      });
+    it('does not mention a pre-booking when there is none', async () => {
+      conversation('conversation.general');
 
-      await service.sendMessage('Obrigado!', GUEST);
+      const result = await service.sendMessage('Obrigado!', GUEST);
 
-      const [messages] = ollama.generate.mock.calls[0];
-      expect(messages[0].content).not.toContain('pré-reserva');
+      expect(result.reply).not.toContain('pré-reserva');
+      expect(result.reply).not.toContain('confirmo');
+    });
+
+    it('treats a declined pending question as a decline reply', async () => {
+      conversation('conversation.general', { declinesPending: true });
+
+      const result = await service.sendMessage('Não', GUEST);
+
+      expect(result.reply).toMatch(/^(Tudo bem|Sem problemas)!/);
+      expect(ollama.generate).not.toHaveBeenCalled();
+    });
+
+    it('does not send the history to the model and does not load documents in conversation mode', async () => {
+      store.seedConversation(EXISTING_ID, [
+        { role: 'user', content: 'Meu nome é Ana.' },
+        { role: 'assistant', content: 'Prazer, Ana!' },
+      ]);
+      conversation('conversation.general');
+
+      const result = await service.sendMessage('Obrigada!', GUEST, EXISTING_ID);
+
+      expect(ollama.generate).not.toHaveBeenCalled();
+      expect(result.retrievedSources).toEqual([]);
     });
   });
 
@@ -396,6 +372,49 @@ describe('ChatService', () => {
         'assistant',
         'user',
       ]);
+    });
+
+    it('sends only the last 6 history entries, each truncated to 500 characters', async () => {
+      store.seedConversation(
+        EXISTING_ID,
+        Array.from({ length: 10 }, (_, index) => ({
+          role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+          content: `${index}:${'x'.repeat(800)}`,
+        })),
+      );
+      orchestrator.resolve.mockResolvedValue({ mode: 'knowledge', documents: [HOURS_DOCUMENT] });
+
+      await service.sendMessage('O resort tem spa?', GUEST, EXISTING_ID);
+
+      const [messages] = ollama.generate.mock.calls[0];
+      const history = messages.slice(1, -1);
+      expect(history).toHaveLength(6);
+      expect(history[0].content.startsWith('4:')).toBe(true);
+      expect(history.every(({ content }) => content.length <= 500)).toBe(true);
+      expect(history[0].content.endsWith('…')).toBe(true);
+    });
+
+    it('polishes the model reply: no opening filler, no closing filler, neutral treatment, no Markdown', async () => {
+      ollama.generate.mockResolvedValue(
+        'Claro! **A Trattoria Aurora** abre às 19h, o senhor pode chegar cedo. Espero ter ajudado!',
+      );
+      orchestrator.resolve.mockResolvedValue({ mode: 'knowledge', documents: [HOURS_DOCUMENT] });
+
+      const result = await service.sendMessage('Que horas abre a Trattoria?', GUEST);
+
+      expect(result.reply).toBe('A Trattoria Aurora abre às 19h, você pode chegar cedo.');
+      expect(store.messages.at(-1)?.content).toBe(result.reply);
+    });
+
+    it('a mixed message ("Obrigado! E que horas abre o spa?") still reaches the model through RAG', async () => {
+      ollama.generate.mockResolvedValue('O spa abre às 9h.');
+      orchestrator.resolve.mockResolvedValue({ mode: 'knowledge', documents: [HOURS_DOCUMENT] });
+
+      const result = await service.sendMessage('Obrigado! E que horas abre o spa?', GUEST);
+
+      expect(ollama.generate).toHaveBeenCalledTimes(1);
+      expect(result.reply).toBe('O spa abre às 9h.');
+      expect(result.retrievedSources).toHaveLength(1);
     });
 
     // Sem evidências, o modelo não é chamado: evita respostas inventadas.
@@ -596,6 +615,41 @@ describe('ChatService', () => {
       expect(result.messages.map(({ content }) => content)).toEqual([
         'Olá',
         'Olá! Como posso ajudar?',
+      ]);
+    });
+
+    it('downgrades a stored preview card without current state to expired, without buttons', async () => {
+      const card = bookingCard({
+        conversationId: EXISTING_ID,
+        previewId: '7a1c2a5e-8c1d-4b7a-9e2f-3a4b5c6d7e8f',
+        status: 'preview',
+        summary: {
+          experienceId: 'exp-1',
+          experienceTitle: 'Passeio de barco',
+          date: '2026-10-25',
+          time: '10:00',
+          adults: 2,
+          children: 0,
+          totalPrice: 300,
+          currency: 'BRL',
+          priceNote: null,
+          simulated: true,
+        },
+        notes: ['Idade mínima: 4 anos.'],
+        expiresAt: new Date('2026-10-23T12:00:00.000Z'),
+      });
+      store.seedConversation(EXISTING_ID, [{ role: 'assistant', content: 'Preparei a pré-reserva.', actions: [card] }]);
+
+      const [message] = (await service.getMessages(EXISTING_ID, GUEST)).messages;
+
+      expect(message.actions).toEqual([
+        expect.objectContaining({
+          cardId: card.cardId,
+          status: 'expired',
+          confirm: null,
+          cancel: null,
+          notes: ['Idade mínima: 4 anos.'],
+        }),
       ]);
     });
 

@@ -1,20 +1,27 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 
 import type { IntentDecision, RestaurantIntent } from '../chat/chat-intent.types.js';
-import { matchByName, normalizeText, summarizeText } from '../common/text.js';
-import type { NavigateAction } from '../contracts/chat-actions.js';
+import { matchByName, nameList, normalizeText, summarizeText } from '../common/text.js';
+import { RESTAURANT_TYPES, type ChatAction, type NavigateAction, type RestaurantOptionsAction } from '../contracts/chat-actions.js';
 import type {
   ConversationState,
   RestaurantConversationState,
+  RestaurantSearchFilters,
 } from '../contracts/conversation-state.js';
 import type { GuestContext } from '../guest/guest-context.js';
+import { ResortClock } from '../resort/resort-clock.service.js';
 import type { RestaurantInfo } from '../resort/restaurants-catalog.service.js';
 
 import { OperationsToolRegistryService } from './operations-tool-registry.service.js';
 import type { DispatchContext, DispatchResult } from './operations.types.js';
+import { cuisineByLabel, matchesCuisine, openDuring, restaurantFilters, type RestaurantFilters } from './restaurant-search.js';
 import type { RestaurantType } from './tool-inputs.js';
 
 const MAX_LISTED = 10;
+const TYPE_ORDER: readonly RestaurantType[] = ['restaurante', 'bar', 'alimentacao'];
+// Resumo do catálogo completo e lista expandida ("Quer ver todas?").
+const SUMMARY_SIZE = 6;
+const MAX_EXPANDED = 20;
 
 const TYPE_LABELS: Record<RestaurantType, { one: string; many: string }> = {
   restaurante: { one: 'restaurante', many: 'restaurantes' },
@@ -49,14 +56,37 @@ function isRestaurantType(value: string | null): value is RestaurantType {
   return value === 'restaurante' || value === 'bar' || value === 'alimentacao';
 }
 
-// Linha curta de uma lista: nome e a informação que ajuda a escolher.
-function listLine(restaurant: RestaurantInfo, index: number): string {
-  const facts = [
-    restaurant.acceptsReservations ? 'reserva pelo app' : trimEnd(restaurant.openingHours ?? ''),
-    restaurant.minimumAge ? `a partir de ${restaurant.minimumAge} anos` : '',
-  ].filter(Boolean);
+function optionsAction(restaurants: RestaurantInfo[]): ChatAction[] {
+  if (restaurants.length === 0) return [];
 
-  return `${index + 1}. ${restaurant.name}${facts.length ? ` — ${facts.join('; ')}` : ''}`;
+  const action: RestaurantOptionsAction = {
+    type: 'restaurant.options',
+    label: 'Ver restaurante',
+    options: restaurants.map((restaurant, index) => ({
+      position: index + 1,
+      restaurantId: String(restaurant.id),
+      name: restaurant.name,
+      type: (RESTAURANT_TYPES as readonly string[]).includes(restaurant.type ?? '') ? (restaurant.type as RestaurantType) : null,
+      openingHours: trimEnd(restaurant.openingHours ?? '') || null,
+      location: restaurant.location ? readable(restaurant.location) : null,
+      minimumAge: restaurant.minimumAge,
+      acceptsReservations: restaurant.acceptsReservations,
+      reservationTimes: restaurant.reservationTimes,
+      message: `Opção ${index + 1}`,
+    })),
+  };
+
+  return [action];
+}
+
+// "entre 19:00 e 21:30" em vez de listar cada turno.
+function describeTimes(times: string[]): string {
+  return times.length > 2 ? `entre ${times[0]} e ${times.at(-1)}` : times.join(' e ');
+}
+
+function compactFilters(filters: RestaurantSearchFilters): RestaurantSearchFilters | undefined {
+  const entries = Object.entries(filters).filter(([, value]) => value !== undefined);
+  return entries.length ? (Object.fromEntries(entries) as RestaurantSearchFilters) : undefined;
 }
 
 function gastronomyAction(restaurantId?: string): NavigateAction {
@@ -75,7 +105,10 @@ function gastronomyAction(restaurantId?: string): NavigateAction {
  */
 @Injectable()
 export class RestaurantOperationsService {
-  constructor(private readonly registry: OperationsToolRegistryService) {}
+  constructor(
+    private readonly registry: OperationsToolRegistryService,
+    private readonly clock: ResortClock,
+  ) {}
 
   async findMentioned(message: string, guest: GuestContext): Promise<RestaurantInfo[]> {
     const result = await this.registry.execute('restaurants.list', guest);
@@ -116,13 +149,53 @@ export class RestaurantOperationsService {
       };
     }
 
+    const filters = restaurantFilters(message, decision.entities ?? {}, this.clock.time());
+
     // Um nome, uma posição ou uma referência indicam um restaurante;
     // senão, a pergunta é sobre o catálogo.
     if (resolved && (decision.intent === 'restaurant.details' || !/\b(?:quais|lista|liste|opcoes|algum|alguns)\b/.test(normalizeText(message)))) {
-      return this.details(resolved, context.state, state);
+      return filters.window ? this.openNow(resolved, filters, context.state, state) : this.details(resolved, context.state, state);
     }
 
-    return this.list(message, all, context.state, state);
+    // "Sim" a "Quer ver todas?" mostra a lista completa do mesmo tipo.
+    const pending = decision.answersPending ? context.state.pendingQuestion?.targetId : undefined;
+    const expand = pending?.startsWith('all') ? { type: (pending.split(':')[1] as RestaurantType | undefined) ?? null } : null;
+
+    if (expand) {
+      return this.list(message, all, context.state, state, expand);
+    }
+
+    // Continuação ("E à noite?"): tipo, cozinha e reserva da lista anterior.
+    const previous = decision.refine ? state.filters : undefined;
+    return this.list(message, all, context.state, state, null, {
+      ...filters,
+      cuisine: filters.cuisine ?? cuisineByLabel(previous?.cuisine),
+      reservations: filters.reservations ?? previous?.reservations,
+    }, previous?.type);
+  }
+
+  // "O Bar Villagio está aberto agora?": resposta direta pelo cadastro.
+  private openNow(
+    restaurant: RestaurantInfo,
+    filters: RestaurantFilters,
+    conversation: ConversationState,
+    state: RestaurantConversationState,
+  ): DispatchResult {
+    const open = openDuring(restaurant, filters.window!);
+    const hours = restaurant.openingHours ? ` Funcionamento: ${trimEnd(restaurant.openingHours)}.` : '';
+
+    return {
+      tool: 'restaurants.list',
+      reply:
+        open === null
+          ? restaurant.openingHours
+            ? `Não consegui conferir pelo horário cadastrado de ${restaurant.name}: ${trimEnd(restaurant.openingHours)}.`
+            : `O horário de funcionamento de ${restaurant.name} não está cadastrado.`
+          : `${open ? 'Sim' : 'Não'}, ${restaurant.name} ${open ? 'está' : 'não está'} em funcionamento ${filters.windowLabel}.${hours}`,
+      actions: [...optionsAction([restaurant]), ...(restaurant.acceptsReservations ? [gastronomyAction(restaurant.id)] : [])],
+      resultCount: 1,
+      state: this.state(conversation, { ...state, selectedId: restaurant.id, selectedName: restaurant.name }),
+    };
   }
 
   private resolve(
@@ -162,40 +235,74 @@ export class RestaurantOperationsService {
     all: RestaurantInfo[],
     conversation: ConversationState,
     state: RestaurantConversationState,
+    expand: { type: RestaurantType | null } | null = null,
+    filters: RestaurantFilters = {},
+    previousType?: RestaurantType,
   ): DispatchResult {
-    const type = requestedType(message);
-    const shown = (type ? all.filter((restaurant) => restaurant.type === type) : all).slice(0, MAX_LISTED);
+    const type = expand
+      ? expand.type && expand.type in TYPE_LABELS ? expand.type : null
+      : (requestedType(message) ?? previousType ?? null);
+    // Catálogo completo: restaurantes primeiro, depois bares e lanches.
+    const rank = (restaurant: RestaurantInfo) => {
+      const position = TYPE_ORDER.indexOf(restaurant.type as RestaurantType);
+      return position === -1 ? TYPE_ORDER.length : position;
+    };
+    const window = filters.window;
+    const candidates = (type ? all.filter((restaurant) => restaurant.type === type) : [...all].sort((a, b) => rank(a) - rank(b)))
+      .filter((restaurant) => matchesCuisine(restaurant, filters) && (!filters.reservations || restaurant.acceptsReservations));
+    // Sem horário cadastrado, o restaurante não é afirmado como aberto.
+    const matching = window ? candidates.filter((restaurant) => openDuring(restaurant, window) === true) : candidates;
+    const unknownHours = window ? candidates.filter((restaurant) => openDuring(restaurant, window) === null) : [];
+    const filtered = Boolean(filters.cuisine || filters.reservations || window);
+    // Listas grandes: um resumo com as opções mais relevantes e acesso ao restante.
+    const limit = expand ? MAX_EXPANDED : type || filtered ? MAX_LISTED : SUMMARY_SIZE;
+    const shown = matching.slice(0, limit);
+    const hidden = matching.length - shown.length;
     const listed = shown.map(({ id, name }) => ({ id, name }));
+    const noun = type ? TYPE_LABELS[type] : { one: 'opção de gastronomia', many: 'opções de gastronomia' };
+    const criteria = [
+      filters.cuisine?.phrase ?? '',
+      filters.reservations ? 'com reserva pelo aplicativo' : '',
+      window ? `em funcionamento ${filters.windowLabel}` : '',
+    ].filter(Boolean).join(', ');
+    const savedFilters = compactFilters({ type: type ?? undefined, cuisine: filters.cuisine?.label, reservations: filters.reservations });
+    const unknownLine = unknownHours.length
+      ? `Não consegui conferir pelo horário cadastrado: ${nameList(unknownHours.map(({ name }) => name))}.`
+      : '';
 
     if (shown.length === 0) {
       return {
         tool: 'restaurants.list',
-        reply: `Não encontrei ${type ? TYPE_LABELS[type].many : 'restaurantes'} ativos no cadastro do resort.`,
+        reply: [
+          criteria
+            ? `Não encontrei ${noun.many} ${criteria} no cadastro do resort.`
+            : `Não encontrei ${type ? TYPE_LABELS[type].many : 'restaurantes'} ativos no cadastro do resort.`,
+          unknownLine,
+          filtered ? 'Quer ver todas as opções?' : '',
+        ].filter(Boolean).join(' '),
         resultCount: 0,
-        state: this.state(conversation, { ...state, listed: [] }),
+        ...(filtered ? { pendingQuestion: { intent: 'restaurant.list' as const, targetId: type ? `all:${type}` : 'all' } } : {}),
+        state: this.state(conversation, { ...state, listed: [], filters: savedFilters }),
       };
     }
 
-    // Os demais tipos são só citados, para não alongar a resposta.
-    const others = type
-      ? (Object.keys(TYPE_LABELS) as RestaurantType[])
-          .filter((other) => other !== type)
-          .map((other) => ({ other, count: all.filter((restaurant) => restaurant.type === other).length }))
-          .filter(({ count }) => count > 0)
-          .map(({ other, count }) => `${count} ${count === 1 ? TYPE_LABELS[other].one : TYPE_LABELS[other].many}`)
-      : [];
-
+    // Texto breve: a lista completa vai nos cards (restaurant.options).
     return {
       tool: 'restaurants.list',
       reply: [
-        type ? `Estes são os ${TYPE_LABELS[type].many} do resort:` : 'Estas são as opções de gastronomia do resort:',
-        ...shown.map(listLine),
-        others.length ? `Também há ${others.join(' e ')}.` : '',
-        'Quer saber mais sobre algum? É só dizer o nome ou o número.',
-      ].filter(Boolean).join('\n'),
-      actions: [gastronomyAction()],
+        `${criteria || type ? 'Encontrei' : 'Separei'} ${shown.length} ${shown.length === 1 ? noun.one : noun.many}` +
+          `${criteria ? ` ${criteria}` : ''}: ${nameList(shown.map(({ name }) => name))}.`,
+        unknownLine,
+        hidden > 0 && !expand ? `Há mais ${hidden}; quer ver todas?` : '',
+        // A lista expandida não pergunta de novo: o restante fica na tela.
+        hidden > 0 && expand ? `As outras ${hidden} estão na tela de Gastronomia.` : '',
+      ].filter(Boolean).join(' '),
+      actions: [...optionsAction(shown), gastronomyAction()],
       resultCount: shown.length,
-      state: this.state(conversation, { ...state, listed, selectedId: undefined, selectedName: undefined }),
+      ...(hidden > 0 && !expand
+        ? { pendingQuestion: { intent: 'restaurant.list' as const, targetId: type ? `all:${type}` : 'all' } }
+        : {}),
+      state: this.state(conversation, { ...state, listed, selectedId: undefined, selectedName: undefined, filters: savedFilters }),
     };
   }
 
@@ -219,7 +326,7 @@ export class RestaurantOperationsService {
           ? 'A reserva é feita pelo aplicativo, em Gastronomia, com a seleção dos pratos. Quer que eu abra a Gastronomia?'
           : 'Não é preciso reservar.',
       ].filter(Boolean).join('\n'),
-      actions: restaurant.acceptsReservations ? [gastronomyAction(restaurant.id)] : [],
+      actions: [...optionsAction([restaurant]), ...(restaurant.acceptsReservations ? [gastronomyAction(restaurant.id)] : [])],
       resultCount: 1,
       ...(restaurant.acceptsReservations
         ? { pendingQuestion: { intent: 'restaurant.booking' as const, targetId: restaurant.id } }
@@ -257,12 +364,11 @@ export class RestaurantOperationsService {
       return {
         tool: 'restaurants.list',
         reply: [
-          `Para reservar no ${restaurant.name}, é preciso selecionar os pratos no cardápio do restaurante pelo aplicativo.`,
+          `A reserva do ${restaurant.name} é feita pelo aplicativo, com a escolha dos pratos.`,
           restaurant.reservationTimes.length
-            ? `Horários de reserva cadastrados: ${restaurant.reservationTimes.join(', ')}.`
-            : '',
-          'Toque em "Abrir Gastronomia" para continuar. Eu não crio reservas de restaurante pelo chat.',
-        ].filter(Boolean).join(' '),
+            ? `Turnos cadastrados ${describeTimes(restaurant.reservationTimes)}; toque em "Abrir Gastronomia" para continuar.`
+            : 'Toque em "Abrir Gastronomia" para continuar.',
+        ].join(' '),
         actions: [gastronomyAction(restaurant.id)],
       };
     }

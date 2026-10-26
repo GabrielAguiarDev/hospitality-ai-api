@@ -94,7 +94,7 @@ describe('ExperienceBookingService', () => {
   };
   const catalog = { findById: vi.fn() };
   const availability = { findSlots: vi.fn() };
-  const clock = { today: vi.fn() };
+  const clock = { today: vi.fn(), time: vi.fn() };
   let config: Record<string, string | undefined>;
 
   // QueryRunner dedicado da confirmação; registra a ordem das chamadas.
@@ -159,6 +159,7 @@ describe('ExperienceBookingService', () => {
     calls.length = 0;
     runner.isTransactionActive = false;
     clock.today.mockReturnValue('2026-10-23');
+    clock.time.mockReturnValue('09:00');
     catalog.findById.mockResolvedValue(experience);
     availability.findSlots.mockResolvedValue([slot]);
     manager.query.mockImplementation((sql: string) =>
@@ -197,6 +198,17 @@ describe('ExperienceBookingService', () => {
         status: 'rejected',
         code: 'capacity_exceeded',
       });
+    });
+
+    it('rejects a preview for a time of today that already passed', async () => {
+      const { service } = build();
+      clock.today.mockReturnValue('2026-10-25');
+      clock.time.mockReturnValue('11:04');
+
+      const result = await service.preview(guest, stay, request);
+
+      expect(result).toMatchObject({ status: 'rejected', code: 'time_in_past' });
+      expect(repoInsert).not.toHaveBeenCalled();
     });
 
     it('creates a preview with server computed price, slot and default TTL', async () => {
@@ -326,6 +338,16 @@ describe('ExperienceBookingService', () => {
       expect(manager.insert).not.toHaveBeenCalled();
     });
 
+    it('keeps a failed preview and its reason on a retried confirm', async () => {
+      manager.findOne.mockResolvedValue(
+        storedPreview({ status: 'failed', failureReason: 'O valor mudou desde a pré-reserva.' }),
+      );
+
+      expect(await confirm()).toMatchObject({ status: 'unavailable', message: 'O valor mudou desde a pré-reserva.' });
+      expect(manager.update).not.toHaveBeenCalled();
+      expect(manager.insert).not.toHaveBeenCalled();
+    });
+
     it('marks expired previews as expired', async () => {
       manager.findOne.mockResolvedValue(
         storedPreview({ expiresAt: new Date(NOW.getTime() - 1000) }),
@@ -365,9 +387,27 @@ describe('ExperienceBookingService', () => {
       availability.findSlots.mockResolvedValue([{ ...slot, remaining: 0 }]);
 
       expect(await confirm()).toMatchObject({ status: 'unavailable' });
-      expect(manager.update).toHaveBeenCalledWith(ExperienceBookingPreview, { id: PREVIEW_ID }, { status: 'expired' });
+      expect(manager.update).toHaveBeenCalledWith(ExperienceBookingPreview, { id: PREVIEW_ID }, {
+        // A falha fica registrada com o motivo, para o card reaberto.
+        status: 'failed',
+        failureReason: expect.stringContaining('Não foi possível confirmar'),
+      });
       expect(manager.insert).not.toHaveBeenCalled();
       expect(manager.query.mock.calls.some(([sql]) => String(sql).includes('RELEASE_LOCK'))).toBe(true);
+    });
+
+    it('does not confirm a preview whose time already passed (resort clock)', async () => {
+      // Pré-reserva para hoje às 10:00; a confirmação chega às 10:30.
+      clock.today.mockReturnValue('2026-10-25');
+      clock.time.mockReturnValue('10:30');
+      manager.findOne.mockResolvedValue(storedPreview());
+
+      expect(await confirm()).toMatchObject({ status: 'unavailable', message: expect.stringContaining('já passou') });
+      expect(manager.insert).not.toHaveBeenCalled();
+      expect(manager.update).toHaveBeenCalledWith(ExperienceBookingPreview, { id: PREVIEW_ID }, {
+        status: 'failed',
+        failureReason: expect.stringContaining('já passou'),
+      });
     });
 
     it('revalidates pinned to the stored slot and passes the manager', async () => {
@@ -386,7 +426,11 @@ describe('ExperienceBookingService', () => {
       manager.findOne.mockResolvedValue(storedPreview({ totalPrice: 250 }));
 
       expect(await confirm()).toMatchObject({ status: 'changed' });
-      expect(manager.update).toHaveBeenCalledWith(ExperienceBookingPreview, { id: PREVIEW_ID }, { status: 'expired' });
+      expect(manager.update).toHaveBeenCalledWith(ExperienceBookingPreview, { id: PREVIEW_ID }, {
+        // A falha fica registrada com o motivo, para o card reaberto.
+        status: 'failed',
+        failureReason: expect.stringContaining('valor cadastrado mudou'),
+      });
       expect(manager.insert).not.toHaveBeenCalled();
       expect(manager.query.mock.calls.some(([sql]) => String(sql).includes('RELEASE_LOCK'))).toBe(true);
     });
@@ -519,6 +563,45 @@ describe('ExperienceBookingService', () => {
         lodgingId: 77,
         status: 'confirmed',
       });
+    });
+  });
+
+  describe('cards', () => {
+    const BOOKING = '7a7b7c7d-1111-4222-8333-444455556666';
+    const ids = { pending: 'p1', late: 'p2', failed: 'p3', cancelled: 'p4', confirmed: 'p5' };
+
+    it('maps every stored preview to the current card status, scoped to the owner and conversation', async () => {
+      const { service } = build();
+      const future = new Date(NOW.getTime() + 60_000);
+      const past = new Date(NOW.getTime() - 60_000);
+      repoFind
+        .mockResolvedValueOnce([
+          storedPreview({ id: ids.pending, status: 'pending', expiresAt: future }),
+          storedPreview({ id: ids.late, status: 'pending', expiresAt: past }),
+          storedPreview({ id: ids.failed, status: 'failed', failureReason: 'Não foi possível confirmar: sem vagas.' }),
+          storedPreview({ id: ids.cancelled, status: 'cancelled' }),
+          storedPreview({ id: ids.confirmed, status: 'confirmed' }),
+        ])
+        .mockResolvedValueOnce([{ id: BOOKING, previewId: ids.confirmed, confirmationCode: 'SIM-AAAA1111' }]);
+
+      const cards = await service.cards(guest, CONV, Object.values(ids));
+
+      expect(cards.map(({ previewId, status }) => [previewId, status])).toEqual([
+        [ids.pending, 'preview'],
+        [ids.late, 'expired'],
+        [ids.failed, 'failed'],
+        [ids.cancelled, 'cancelled'],
+        [ids.confirmed, 'confirmed'],
+      ]);
+      expect(cards[2].reason).toBe('Não foi possível confirmar: sem vagas.');
+      expect(cards[4].booking).toEqual({ bookingId: BOOKING, confirmationCode: 'SIM-AAAA1111' });
+      expect(repoFind.mock.calls[0][0].where).toMatchObject({ resortId: 'demo', guestId: guest.guestId, conversationId: CONV });
+    });
+
+    it('does not query when there are no cards', async () => {
+      const { service } = build();
+      expect(await service.cards(guest, CONV, [])).toEqual([]);
+      expect(repoFind).not.toHaveBeenCalled();
     });
   });
 });

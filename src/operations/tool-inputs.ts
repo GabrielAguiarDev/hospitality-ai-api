@@ -164,6 +164,11 @@ export function parseRestaurantListInput(
   };
 }
 
+export function parseEventListInput(input: unknown): { date: string } {
+  const data = asObject(input, ['date']);
+  return { date: isoDate(data.date) };
+}
+
 export function parseExperienceIdInput(input: unknown): { experienceId: string } {
   const data = asObject(input, ['experienceId']);
   return { experienceId: identifier(data.experienceId, 'experienceId') };
@@ -219,5 +224,19 @@ export function parsePreviewReferenceInput(
   return {
     conversationId: uuid(data.conversationId, 'conversationId'),
     previewId: uuid(data.previewId, 'previewId'),
+  };
+}
+
+/** Estado atual de cards de reserva de uma conversa. */
+export function parseBookingCardsInput(input: unknown): { conversationId: string; previewIds: string[] } {
+  const data = asObject(input, ['conversationId', 'previewIds']);
+
+  if (!Array.isArray(data.previewIds) || data.previewIds.length === 0 || data.previewIds.length > 50) {
+    throw new BadRequestException('previewIds inválido.');
+  }
+
+  return {
+    conversationId: uuid(data.conversationId, 'conversationId'),
+    previewIds: [...new Set(data.previewIds.map((id) => uuid(id, 'previewId')))],
   };
 }

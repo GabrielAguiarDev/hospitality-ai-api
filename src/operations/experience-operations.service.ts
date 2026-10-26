@@ -1,7 +1,12 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 
-import { compactText, matchByName, normalizeText, summarizeText } from '../common/text.js';
-import type { ChatAction, ExperienceOptionsAction } from '../contracts/chat-actions.js';
+import { compactText, matchByName, nameList, normalizeText, summarizeText } from '../common/text.js';
+import {
+  bookingCard,
+  type ChatAction,
+  type ExperienceBookingCardAction,
+  type ExperienceOptionsAction,
+} from '../contracts/chat-actions.js';
 import type {
   ConversationState,
   ExperienceConversationState,
@@ -92,6 +97,11 @@ function describePrices(experience: ExperienceInfo): string {
     .join('; ');
 }
 
+// O aviso sobre o snapshot aparece uma vez por conversa, não a cada resposta.
+function snapshotNotice(state: ExperienceConversationState): string {
+  return state.snapshotNoticeShown ? '' : SNAPSHOT_NOTICE;
+}
+
 function compact<T extends object>(value: T): T {
   for (const key of Object.keys(value) as (keyof T)[]) {
     if (value[key] === undefined) delete value[key];
@@ -150,10 +160,13 @@ function ageNote(experience: ExperienceInfo): string {
   return experience.minimumAge ? ` (a partir de ${experience.minimumAge} anos)` : '';
 }
 
+const experiencesWord = (count: number) => (count === 1 ? 'experiência' : 'experiências');
+
 function optionsAction(
   listed: { id: string; title: string }[],
   date: string | null,
   slots: readonly ExperienceSlot[] = [],
+  summaries: Record<string, string> = {},
 ): ChatAction[] {
   if (listed.length === 0) {
     return [];
@@ -174,6 +187,7 @@ function optionsAction(
             .map((slot) => slot.time as string),
         ),
       ].sort(),
+      summary: summaries[id] ? compactText(summaries[id], 160) : null,
       message: `Opção ${index + 1}`,
     })),
   };
@@ -353,11 +367,7 @@ export class ExperienceOperationsService {
     if (resolution.kind === 'ambiguous') {
       const listed = resolution.candidates.slice(0, MAX_LISTED).map(({ id, title }) => ({ id, title }));
 
-      return this.result('experiences.list', [
-        'Encontrei mais de uma experiência com esse nome:',
-        ...listed.map(({ title }, index) => `${index + 1}. ${title}`),
-        'Qual delas você deseja?',
-      ].join('\n'), context.state, { ...state, filters, listed, listedDate: state.date ?? null, selectedId: undefined, selectedTitle: undefined },
+      return this.result('experiences.list', 'Encontrei mais de uma experiência com esse nome. Qual delas você deseja?', context.state, { ...state, filters, listed, listedDate: state.date ?? null, selectedId: undefined, selectedTitle: undefined },
       optionsAction(listed, state.date ?? null));
     }
 
@@ -381,10 +391,8 @@ export class ExperienceOperationsService {
 
       // Ambiguidade real: "essa" com várias opções na tela.
       if (listed.length > 1 && decision.entities?.ordinal === undefined) {
-        return this.result('experiences.list', [
-          'Você se refere a qual delas?',
-          ...listed.map(({ title }, index) => `${index + 1}. ${title}`),
-        ].join('\n'), context.state, state, optionsAction(listed, state.listedDate ?? null));
+        return this.result('experiences.list', 'Você se refere a qual delas? Escolha uma opção ou diga o nome.', context.state, state,
+          optionsAction(listed, state.listedDate ?? null));
       }
 
       const hint = listed.length
@@ -506,16 +514,19 @@ export class ExperienceOperationsService {
           { ...next, listed: [], listedDate: null }, [], intent);
       }
 
+      const summaries = Object.fromEntries(shown.map((experience) => [
+        experience.id,
+        `${experience.bookable ? 'Com reserva' : 'Sem necessidade de reserva'}` +
+          `${isFree(experience) ? ', sem cobrança' : ''}${ageNote(experience)}`,
+      ]));
+
+      // Texto breve: a lista completa vai nos cards (experience.options).
       return this.result('experiences.list', [
-        `Estas são as experiências ativas no cadastro do resort${criteria ? ` ${criteria}` : ''}:`,
-        ...shown.map((experience, index) =>
-          `${index + 1}. ${experience.title} — ${experience.bookable ? 'com reserva' : 'sem necessidade de reserva'}` +
-          `${filters.free && isFree(experience) ? ', sem cobrança' : ''}${filters.forChildren ? ageNote(experience) : ''}`,
-        ),
+        `Separei ${shown.length} ${experiencesWord(shown.length)}${criteria ? ` ${criteria}` : ''}: ${nameList(shown.map(({ title }) => title))}.`,
         shown.some(({ bookable }) => bookable)
-          ? `Posso verificar os horários${window ? ` ${describeWindow(filters)}` : ''} de alguma delas. Para qual data?`
+          ? `Para qual data quer que eu verifique as vagas${window ? ` ${describeWindow(filters)}` : ''}?`
           : '',
-      ].filter(Boolean).join('\n'), conversation, { ...next, listed, listedDate: null }, optionsAction(listed, null), intent);
+      ].filter(Boolean).join(' '), conversation, { ...next, listed, listedDate: null }, optionsAction(listed, null, [], summaries), intent);
     }
 
     const available = experiences.filter(
@@ -528,7 +539,7 @@ export class ExperienceOperationsService {
     const label = `${ResortClock.describeDate(date)}${window ? `, ${describeWindow(filters)}` : ''}`;
     const dated = { ...next, date, time: undefined, listedDate: date };
     const withoutBookingLine = withoutBooking.length
-      ? `Sem necessidade de reserva: ${withoutBooking.map(({ title }) => title).join(', ')}.`
+      ? `Sem necessidade de reserva: ${nameList(withoutBooking.map(({ title }) => title))}.`
       : '';
 
     if (available.length === 0) {
@@ -536,28 +547,28 @@ export class ExperienceOperationsService {
         `Não encontrei vagas de experiências com reserva registradas para ${label}${criteria ? ` (${criteria})` : ''}.`,
         withoutBookingLine,
         window ? 'Posso consultar outro período ou outra data.' : '',
-        SNAPSHOT_NOTICE,
-      ].filter(Boolean).join('\n'), conversation, { ...dated, listed: [] }, [], intent);
+        snapshotNotice(state),
+      ].filter(Boolean).join('\n'), conversation, { ...dated, listed: [], snapshotNoticeShown: true }, [], intent);
     }
 
     const shown = available.slice(0, MAX_LISTED);
     const listed = shown.map(({ id, title }) => ({ id, title }));
     const untimed = window && slots.some((slot) => slot.time === null && listed.some(({ id }) => id === slot.experienceId));
 
+    const summaries = Object.fromEntries(shown.map((experience) => [
+      experience.id,
+      `${slots.filter((slot) => slot.experienceId === experience.id).map(describeSlot).join('; ')}${filters.forChildren ? ageNote(experience) : ''}`,
+    ]));
+
+    // Texto breve: horários e vagas de cada experiência vão nos cards.
     return this.result('experiences.list', [
-      `Para ${label}, o cadastro do resort registra vagas${criteria ? ` (${criteria})` : ''} ${party ? `para ${describeParty(party)} em` : 'para'}:`,
-      ...shown.map((experience, index) => {
-        const times = slots
-          .filter((slot) => slot.experienceId === experience.id)
-          .map(describeSlot)
-          .join('; ');
-        return `${index + 1}. ${experience.title}${filters.forChildren ? ageNote(experience) : ''} — ${times}`;
-      }),
+      `Para ${label}, há vagas registradas${criteria ? ` (${criteria})` : ''}${party ? ` para ${describeParty(party)}` : ''} em ` +
+        `${shown.length} ${experiencesWord(shown.length)}: ${nameList(shown.map(({ title }) => title))}.`,
       untimed ? 'Vagas para o dia não têm horário cadastrado: não é possível confirmar se atendem ao período.' : '',
       withoutBookingLine,
       entities.people !== undefined && entities.adults === undefined ? 'Considerei todos os participantes como adultos; se houver crianças, me avise.' : '',
-      SNAPSHOT_NOTICE,
-    ].filter(Boolean).join('\n'), conversation, { ...dated, listed }, optionsAction(listed, date, slots), intent);
+      snapshotNotice(state),
+    ].filter(Boolean).join('\n'), conversation, { ...dated, listed, snapshotNoticeShown: true }, optionsAction(listed, date, slots, summaries), intent);
   }
 
   private details(
@@ -657,8 +668,8 @@ export class ExperienceOperationsService {
       return this.result('experiences.availability', [
         `Não há horários registrados para ${experience.title} em ${label}.`,
         others.length ? `Horários registrados nessa data: ${others.join(', ')}.` : '',
-        SNAPSHOT_NOTICE,
-      ].filter(Boolean).join('\n'), conversation, state);
+        snapshotNotice(state),
+      ].filter(Boolean).join('\n'), conversation, { ...state, snapshotNoticeShown: true });
     }
 
     const lines = [`${experience.title} em ${label}:`, ...slots.map((slot) => `- ${describeSlot(slot)}`)];
@@ -699,9 +710,9 @@ export class ExperienceOperationsService {
       lines.push('Para quantas pessoas seria?');
     }
 
-    lines.push(SNAPSHOT_NOTICE);
+    lines.push(snapshotNotice(state));
 
-    const result = this.result('experiences.availability', lines.join('\n'), conversation, state);
+    const result = this.result('experiences.availability', lines.filter(Boolean).join('\n'), conversation, { ...state, snapshotNoticeShown: true });
     return offersBooking
       ? { ...result, pendingQuestion: { intent: 'experience.booking', targetId: experience.id } }
       : result;
@@ -799,48 +810,63 @@ export class ExperienceOperationsService {
     }
 
     const { summary } = result;
-    const lines = [
-      'Confira o resumo da reserva simulada:',
-      `Experiência: ${summary.experienceTitle}`,
-      `Data: ${ResortClock.describeDate(summary.date)}`,
-      `Horário: ${summary.time ?? 'vaga para o dia (sem horário específico)'}`,
-      `Participantes: ${describeParty(summary)}`,
-      `Valor: ${
-        summary.totalPrice === null
-          ? `não calculado${result.quote.note ? ` (${result.quote.note})` : ''}`
-          : result.quote.included
-            ? 'sem cobrança (all inclusive)'
-            : formatCurrency(summary.totalPrice)
-      }`,
-      ...result.warnings,
-      assumed ? 'Considerei todos os participantes como adultos; se houver crianças, me avise antes de confirmar.' : '',
-      SIMULATION_NOTICE,
-      'Deseja confirmar? Responda "confirmo" ou use o botão de confirmação.',
-    ].filter(Boolean);
+    const assumedNote = assumed ? 'Considerei todos os participantes como adultos; se houver crianças, me avise antes de confirmar.' : '';
+    const priceNote = summary.totalPrice === null && result.quote.note ? result.quote.note : '';
 
+    // Data, valor e regras ficam no card; o texto só orienta o próximo passo.
     return this.result(
       'experiences.booking.preview',
-      lines.join('\n'),
+      [
+        `Preparei a pré-reserva de ${summary.experienceTitle}. Confira os detalhes no card e confirme pelo botão ou respondendo "confirmo".`,
+        assumedNote,
+      ].filter(Boolean).join(' '),
       context.state,
       { ...state, time: summary.time, pendingPreviewId: result.previewId },
       [
-        {
-          type: 'experience.booking.preview',
-          label: 'Confirmar reserva simulada',
+        bookingCard({
+          conversationId: context.conversationId,
           previewId: result.previewId,
-          expiresAt: result.expiresAt.toISOString(),
+          status: 'preview',
           summary,
-          confirm: {
-            method: 'POST',
-            path: '/chat/actions',
-            body: {
-              type: 'experience.booking.confirm',
-              conversationId: context.conversationId,
-              previewId: result.previewId,
-            },
-          },
-        },
+          notes: [...result.warnings, priceNote, assumedNote, SIMULATION_NOTICE].filter(Boolean).slice(0, 6),
+          expiresAt: result.expiresAt,
+        }),
       ],
+    );
+  }
+
+  /**
+   * Estado atual dos cards da conversa, como ações prontas para o app.
+   * Usado ao atualizar um card e ao reconstruir o histórico.
+   */
+  async bookingCards(
+    guest: GuestContext,
+    conversationId: string,
+    previewIds: string[],
+  ): Promise<ExperienceBookingCardAction[]> {
+    if (previewIds.length === 0) {
+      return [];
+    }
+
+    // A ferramenta aceita até 50 IDs por consulta; conversas longas são lidas em partes.
+    const chunks = Array.from({ length: Math.ceil(previewIds.length / 50) }, (_, index) =>
+      previewIds.slice(index * 50, index * 50 + 50),
+    );
+    const states = (
+      await Promise.all(chunks.map((ids) => this.execute('experiences.booking.cards', guest, { conversationId, previewIds: ids })))
+    ).flat();
+
+    return states.map((card) =>
+      bookingCard({
+        conversationId,
+        previewId: card.previewId,
+        status: card.status,
+        summary: card.summary,
+        expiresAt: card.expiresAt,
+        booking: card.booking ?? null,
+        reason: card.reason ?? null,
+        updatedAt: card.updatedAt,
+      }),
     );
   }
 
@@ -855,33 +881,20 @@ export class ExperienceOperationsService {
       previewId,
     });
 
-    if ('message' in result) {
-      return { reply: result.message, actions: [], result };
-    }
+    // O mesmo card (mesmo cardId) é devolvido com o novo estado.
+    const card = result.status === 'not_found' ? [] : await this.bookingCards(guest, conversationId, [previewId]);
 
-    const { summary } = result;
+    if ('message' in result) {
+      return { reply: result.message, actions: card, result };
+    }
 
     return {
       result,
-      reply: [
+      reply:
         result.status === 'already_confirmed'
-          ? 'Esta reserva simulada já estava confirmada.'
-          : 'Reserva simulada registrada.',
-        `${summary.experienceTitle} — ${ResortClock.describeDate(summary.date)}${summary.time ? ` às ${summary.time}` : ''}, ${describeParty(summary)}.`,
-        `Código da simulação: ${result.confirmationCode}.`,
-        SIMULATION_NOTICE,
-      ].join('\n'),
-      actions: [
-        {
-          type: 'experience.booking.confirm',
-          label: 'Reserva simulada confirmada',
-          bookingId: result.bookingId,
-          confirmationCode: result.confirmationCode,
-          status: 'confirmed',
-          alreadyConfirmed: result.status === 'already_confirmed',
-          summary,
-        },
-      ],
+          ? 'Essa reserva simulada já estava confirmada.'
+          : `Pronto! Sua reserva simulada de ${result.summary.experienceTitle} está confirmada. O código está no card.`,
+      actions: card,
     };
   }
 
@@ -891,12 +904,16 @@ export class ExperienceOperationsService {
     state: ExperienceConversationState,
   ): Promise<DispatchResult> {
     if (!state.pendingPreviewId) {
-      return this.result('experiences.booking.confirm', 'Não há uma pré-reserva aguardando confirmação nesta conversa.', context.state, state);
+      return this.result('experiences.booking.confirm', 'Não há uma pré-reserva aguardando confirmação por texto. Se ela ainda aparece no card, confirme pelo botão.', context.state, state);
     }
 
     const { reply, actions } = await this.confirmPreview(guest, context.conversationId, state.pendingPreviewId);
 
-    return this.result('experiences.booking.confirm', reply, context.state, { ...state, pendingPreviewId: undefined }, actions);
+    // Confirmada ou não, a pré-reserva deixa de aguardar confirmação.
+    return {
+      ...this.result('experiences.booking.confirm', reply, context.state, { ...state, pendingPreviewId: undefined }, actions),
+      completed: true,
+    };
   }
 
   private async cancel(
@@ -904,14 +921,20 @@ export class ExperienceOperationsService {
     context: DispatchContext,
     state: ExperienceConversationState,
   ): Promise<DispatchResult> {
+    let actions: ChatAction[] = [];
+
     if (state.pendingPreviewId) {
       await this.execute('experiences.booking.cancel', guest, {
         conversationId: context.conversationId,
         previewId: state.pendingPreviewId,
       });
+      actions = await this.bookingCards(guest, context.conversationId, [state.pendingPreviewId]);
     }
 
-    return this.result('experiences.booking.cancel', 'Tudo bem, a pré-reserva foi descartada e nada foi registrado.', context.state, { ...state, pendingPreviewId: undefined });
+    return {
+      ...this.result('experiences.booking.cancel', 'Tudo bem, descartei a pré-reserva. Nada foi registrado.', context.state, { ...state, pendingPreviewId: undefined }, actions),
+      completed: true,
+    };
   }
 
   private async reservations(

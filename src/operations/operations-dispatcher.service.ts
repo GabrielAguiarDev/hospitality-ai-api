@@ -9,6 +9,7 @@ import {
   type IntentDecision,
 } from '../chat/chat-intent.types.js';
 
+import { EventOperationsService } from './event-operations.service.js';
 import { ExperienceOperationsService } from './experience-operations.service.js';
 import { OperationsAiService } from './operations-ai.service.js';
 import { RequestsOperationsService } from './requests-operations.service.js';
@@ -35,6 +36,8 @@ const INTENT_TOOL_MAP = {
   'restaurant.list': 'restaurants.list',
   'restaurant.details': 'restaurants.list',
 
+  'event.list': 'events.list',
+
   'experience.list': 'experiences.list',
   // A busca usa a mesma ferramenta, com filtros opcionais.
   'experience.search': 'experiences.list',
@@ -56,6 +59,7 @@ export class OperationsDispatcherService {
     private readonly requestsOperationsService: RequestsOperationsService,
     private readonly experienceOperationsService: ExperienceOperationsService,
     private readonly restaurantOperationsService: RestaurantOperationsService,
+    private readonly eventOperationsService: EventOperationsService,
   ) {}
 
   async dispatch(
@@ -93,6 +97,10 @@ export class OperationsDispatcherService {
         guest,
         context ?? { conversationId: '', state: {} },
       );
+    }
+
+    if (decision.intent === 'event.list') {
+      return this.eventOperationsService.handle(message, decision, guest, context ?? { conversationId: '', state: {} });
     }
 
     if (isExperienceIntent(decision.intent)) {

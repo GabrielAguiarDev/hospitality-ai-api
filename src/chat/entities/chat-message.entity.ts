@@ -1,4 +1,5 @@
 
+import type { ChatAction } from '../../contracts/chat-actions.js';
 import {
   Entity,
   PrimaryGeneratedColumn,
@@ -29,6 +30,10 @@ export class ChatMessage {
 
   @Column({ type: 'text' })
   content!: string;
+
+  // Ações enviadas com a resposta (cards), para reconstruir o histórico.
+  @Column({ type: 'json', nullable: true })
+  actions!: ChatAction[] | null;
 
   @CreateDateColumn({
     name: 'created_at',

@@ -5,6 +5,7 @@ import { DataSource } from 'typeorm';
 
 import { InMemoryChatStore } from '../../test/support/in-memory-chat-store.js';
 import type { GuestContext } from '../guest/guest-context.js';
+import { bookingCard } from '../contracts/chat-actions.js';
 import { ExperienceOperationsService } from '../operations/experience-operations.service.js';
 import { OperationsToolRegistryService } from '../operations/operations-tool-registry.service.js';
 
@@ -33,7 +34,19 @@ const SUMMARY = {
 describe('ChatActionsService', () => {
   let store: InMemoryChatStore;
   let service: ChatActionsService;
-  const experiences = { confirmPreview: vi.fn<ExperienceOperationsService['confirmPreview']>() };
+  const experiences = {
+    confirmPreview: vi.fn<ExperienceOperationsService['confirmPreview']>(),
+    bookingCards: vi.fn<ExperienceOperationsService['bookingCards']>(),
+  };
+  const card = (status: 'confirmed' | 'cancelled') =>
+    bookingCard({
+      conversationId: CONVERSATION,
+      previewId: PREVIEW,
+      status,
+      summary: SUMMARY,
+      booking: { bookingId: '2c5c2a5e-8c1d-4b7a-9e2f-3a4b5c6d7e8f', confirmationCode: 'SIM-AAAA1111' },
+      reason: 'Descartada.',
+    });
   const registry = { execute: vi.fn<OperationsToolRegistryService['execute']>() };
 
   beforeEach(async () => {
@@ -63,17 +76,7 @@ describe('ChatActionsService', () => {
     experiences.confirmPreview.mockResolvedValue({
       reply: 'Reserva simulada registrada.',
       result: { status: 'confirmed', bookingId: '2c5c2a5e-8c1d-4b7a-9e2f-3a4b5c6d7e8f', confirmationCode: 'SIM-AAAA1111', summary: SUMMARY },
-      actions: [
-        {
-          type: 'experience.booking.confirm',
-          label: 'Reserva simulada confirmada',
-          bookingId: '2c5c2a5e-8c1d-4b7a-9e2f-3a4b5c6d7e8f',
-          confirmationCode: 'SIM-AAAA1111',
-          status: 'confirmed',
-          alreadyConfirmed: false,
-          summary: SUMMARY,
-        },
-      ],
+      actions: [card('confirmed')],
     });
 
     const result = await service.execute(
@@ -83,8 +86,15 @@ describe('ChatActionsService', () => {
 
     expect(experiences.confirmPreview).toHaveBeenCalledExactlyOnceWith(GUEST, CONVERSATION, PREVIEW);
     expect(result.status).toBe('confirmed');
-    expect(result.actions).toHaveLength(1);
-    expect(store.messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Reserva simulada registrada.' });
+    // O card devolvido é o mesmo da pré-reserva (mesmo cardId), agora confirmado.
+    expect(result.actions).toEqual([expect.objectContaining({ cardId: PREVIEW, status: 'confirmed' })]);
+    // A mensagem guarda o card para reconstruir o histórico.
+    expect(store.messages.at(-1)).toMatchObject({
+      role: 'assistant',
+      content: 'Reserva simulada registrada.',
+      actions: [expect.objectContaining({ cardId: PREVIEW, status: 'confirmed' })],
+    });
+    expect(store.states.get(CONVERSATION)?.state).toMatchObject({ phase: 'completed' });
     expect(store.states.get(CONVERSATION)?.state.experience?.pendingPreviewId).toBeUndefined();
     expect(store.states.get(CONVERSATION)?.version).toBe(2);
   });
@@ -128,6 +138,7 @@ describe('ChatActionsService', () => {
 
   it('cancels a pending preview through the registry', async () => {
     registry.execute.mockResolvedValue({ tool: 'experiences.booking.cancel', data: { cancelled: true } });
+    experiences.bookingCards.mockResolvedValue([card('cancelled')]);
 
     const result = await service.execute(
       { type: 'experience.booking.cancel', conversationId: CONVERSATION, previewId: PREVIEW },
@@ -139,6 +150,7 @@ describe('ChatActionsService', () => {
       previewId: PREVIEW,
     });
     expect(result.status).toBe('cancelled');
+    expect(result.actions).toEqual([expect.objectContaining({ cardId: PREVIEW, status: 'cancelled', confirm: null })]);
   });
 
   it('propagates database failures without recording a reply', async () => {

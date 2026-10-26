@@ -18,6 +18,8 @@ export type BookingRuleCode =
   | 'no_availability'
   | 'time_required'
   | 'time_not_found'
+  | 'time_in_past'
+  | 'cutoff_passed'
   | 'capacity_exceeded';
 
 export type BookingRuleResult =
@@ -31,6 +33,9 @@ export interface BookingRuleInput {
   time: string | null;
   party: PartyComposition;
   today: string;
+  // Hora atual no fuso do resort (HH:MM). Horários de hoje já
+  // passados nunca são reservados.
+  now?: string;
   stay: { checkIn: string; checkOut: string };
 }
 
@@ -128,9 +133,45 @@ export function evaluateBooking(input: BookingRuleInput): BookingRuleResult {
     };
   }
 
-  const slots = input.slots.filter(
+  let slots = input.slots.filter(
     (slot) => slot.experienceId === experience.id && slot.date === date,
   );
+
+  // Hoje: o horário-limite de marcação cadastrado vale para o próprio dia
+  // (leitura conservadora; o snapshot não confirma a regra exata).
+  if (date === input.today && input.now) {
+    const now = input.now;
+
+    if (experience.bookingCutoff && now >= experience.bookingCutoff) {
+      return {
+        ok: false,
+        code: 'cutoff_passed',
+        message: `O horário-limite de marcação de hoje para "${experience.title}" (${experience.bookingCutoff}) já passou.`,
+      };
+    }
+
+    const upcoming = slots.filter((slot) => slot.time === null || slot.time > now);
+    const upcomingTimes = [...new Set(upcoming.map((slot) => slot.time).filter((time): time is string => time !== null))].sort();
+
+    if (input.time && input.time <= now) {
+      return {
+        ok: false,
+        code: 'time_in_past',
+        message: `O horário das ${input.time} de hoje já passou.`,
+        ...(upcomingTimes.length ? { options: upcomingTimes } : {}),
+      };
+    }
+
+    if (slots.length > 0 && upcoming.length === 0) {
+      return {
+        ok: false,
+        code: 'time_in_past',
+        message: `Os horários de hoje para "${experience.title}" já passaram.`,
+      };
+    }
+
+    slots = upcoming;
+  }
 
   if (slots.length === 0) {
     return {

@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { DataSource } from 'typeorm';
+import { DataSource, In } from 'typeorm';
 import type { EntityManager } from 'typeorm';
 
 import type { ExperienceBookingSummary } from '../contracts/chat-actions.js';
@@ -53,6 +53,16 @@ export type ConfirmResult =
       status: 'not_found' | 'expired' | 'cancelled' | 'unavailable' | 'changed';
       message: string;
     };
+
+export interface BookingCardState {
+  previewId: string;
+  status: 'preview' | 'confirmed' | 'expired' | 'failed' | 'cancelled';
+  summary: ExperienceBookingSummary;
+  expiresAt: Date;
+  updatedAt: Date;
+  booking?: { bookingId: string; confirmationCode: string };
+  reason?: string;
+}
 
 const DEFAULT_TTL_MINUTES = 15;
 
@@ -147,6 +157,7 @@ export class ExperienceBookingService {
       time: request.time,
       party: request.party,
       today: this.clock.today(),
+      now: this.clock.time(),
       stay,
     });
 
@@ -335,8 +346,18 @@ export class ExperienceBookingService {
       };
     }
 
+    // Nova tentativa sobre um card que falhou: o motivo registrado é mantido.
+    if (preview.status === 'failed') {
+      return {
+        status: 'unavailable' as const,
+        message: preview.failureReason ?? 'Não foi possível confirmar esta pré-reserva.',
+      };
+    }
+
     if (preview.status !== 'pending' || preview.expiresAt.getTime() <= Date.now()) {
-      await manager.update(ExperienceBookingPreview, { id: preview.id }, { status: 'expired' });
+      if (preview.status === 'pending') {
+        await manager.update(ExperienceBookingPreview, { id: preview.id }, { status: 'expired' });
+      }
 
       return {
         status: 'expired' as const,
@@ -371,21 +392,25 @@ export class ExperienceBookingService {
       { availabilityId: preview.availabilityId, slotId: preview.slotId },
     );
 
+    // Falhas de revalidação ficam registradas: o card reaberto
+    // continua mostrando "não foi possível confirmar" e o motivo.
     if (!check.ok) {
-      await manager.update(ExperienceBookingPreview, { id: preview.id }, { status: 'expired' });
+      const reason = `Não foi possível confirmar: ${check.message}`;
+      await manager.update(ExperienceBookingPreview, { id: preview.id }, { status: 'failed', failureReason: reason.slice(0, 255) });
 
       return {
         status: 'unavailable' as const,
-        message: `Não foi possível confirmar: ${check.message}`,
+        message: reason,
       };
     }
 
     if (check.quote.total !== preview.totalPrice) {
-      await manager.update(ExperienceBookingPreview, { id: preview.id }, { status: 'expired' });
+      const reason = 'O valor cadastrado mudou desde a pré-reserva. Posso preparar uma nova pré-reserva.';
+      await manager.update(ExperienceBookingPreview, { id: preview.id }, { status: 'failed', failureReason: reason });
 
       return {
         status: 'changed' as const,
-        message: 'O valor cadastrado mudou desde a pré-reserva. Posso preparar uma nova pré-reserva.',
+        message: reason,
       };
     }
 
@@ -422,6 +447,53 @@ export class ExperienceBookingService {
       confirmationCode: booking.confirmationCode as string,
       summary: summaryOf(preview, preview.priceNote),
     };
+  }
+
+  /**
+   * Estado atual dos cards de reserva de uma conversa, lido do banco
+   * interno. É a fonte para atualizar um card e reconstruir o histórico.
+   */
+  async cards(guest: GuestContext, conversationId: string, previewIds: string[]): Promise<BookingCardState[]> {
+    if (previewIds.length === 0) {
+      return [];
+    }
+
+    const previews = await this.dataSource.getRepository(ExperienceBookingPreview).find({
+      where: { id: In(previewIds), resortId: guest.resortId, guestId: guest.guestId, conversationId },
+    });
+    const confirmed = previews.filter((preview) => preview.status === 'confirmed').map(({ id }) => id);
+    const bookings = confirmed.length
+      ? await this.dataSource.getRepository(SimulatedExperienceBooking).find({ where: { previewId: In(confirmed) } })
+      : [];
+    const now = Date.now();
+
+    return previews.map((preview) => {
+      const booking = bookings.find((item) => item.previewId === preview.id);
+      const base = {
+        previewId: preview.id,
+        summary: summaryOf(preview, preview.priceNote),
+        expiresAt: preview.expiresAt,
+        updatedAt: preview.updatedAt,
+      };
+
+      if (preview.status === 'confirmed' && booking) {
+        return { ...base, status: 'confirmed' as const, booking: { bookingId: booking.id, confirmationCode: booking.confirmationCode } };
+      }
+
+      if (preview.status === 'pending' && preview.expiresAt.getTime() > now) {
+        return { ...base, status: 'preview' as const };
+      }
+
+      if (preview.status === 'failed') {
+        return { ...base, status: 'failed' as const, reason: preview.failureReason ?? 'Não foi possível confirmar.' };
+      }
+
+      if (preview.status === 'cancelled') {
+        return { ...base, status: 'cancelled' as const, reason: 'A pré-reserva foi descartada e nada foi registrado.' };
+      }
+
+      return { ...base, status: 'expired' as const, reason: 'A pré-reserva expirou. Posso preparar uma nova, se desejar.' };
+    });
   }
 
   async cancelPreview(

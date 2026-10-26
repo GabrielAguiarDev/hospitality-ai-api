@@ -23,6 +23,8 @@ export interface DispatchResult {
   pendingQuestion?: PendingQuestion;
   // Quantidade de itens apresentados (somente para logs).
   resultCount?: number;
+  // A operação terminou (reserva confirmada ou descartada).
+  completed?: boolean;
 }
 
 export const SNAPSHOT_NOTICE =

@@ -7,7 +7,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
-export type PreviewStatus = 'pending' | 'confirmed' | 'expired' | 'cancelled';
+export type PreviewStatus = 'pending' | 'confirmed' | 'expired' | 'cancelled' | 'failed';
 
 const decimal = {
   to: (value: number | null) => value,
@@ -69,8 +69,12 @@ export class ExperienceBookingPreview {
   @Column({ name: 'price_note', type: 'varchar', length: 255, nullable: true })
   priceNote!: string | null;
 
-  @Column({ type: 'enum', enum: ['pending', 'confirmed', 'expired', 'cancelled'], default: 'pending' })
+  @Column({ type: 'enum', enum: ['pending', 'confirmed', 'expired', 'cancelled', 'failed'], default: 'pending' })
   status!: PreviewStatus;
+
+  // Motivo de uma confirmação que falhou (revalidação ou valor alterado).
+  @Column({ name: 'failure_reason', type: 'varchar', length: 255, nullable: true })
+  failureReason!: string | null;
 
   @Column({ name: 'expires_at', type: 'datetime', precision: 6 })
   expiresAt!: Date;

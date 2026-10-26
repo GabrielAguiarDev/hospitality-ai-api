@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  bookingCard,
   isValidChatAction,
   NAVIGATION_SCREENS,
   sanitizeActions,
@@ -26,32 +27,23 @@ const summary = (over: Partial<ExperienceBookingSummary> = {}): ExperienceBookin
   ...over,
 });
 
-const preview = (over: Record<string, unknown> = {}): ChatAction =>
-  ({
-    type: 'experience.booking.preview',
-    label: 'Confirmar',
+// O card de reserva: um único cardId durante todo o ciclo.
+const card = (status: 'preview' | 'confirmed' | 'expired' | 'failed' | 'cancelled' = 'preview') =>
+  bookingCard({
+    conversationId: CONV,
     previewId: ID1,
-    expiresAt: '2026-10-23T12:00:00.000Z',
+    status,
     summary: summary(),
-    confirm: {
-      method: 'POST',
-      path: '/chat/actions',
-      body: { type: 'experience.booking.confirm', conversationId: CONV, previewId: ID1 },
-    },
-    ...over,
-  }) as ChatAction;
+    notes: ['Idade mínima: 4 anos.'],
+    expiresAt: new Date('2026-10-23T12:00:00.000Z'),
+    booking: { bookingId: ID2, confirmationCode: 'SIM-ABC123' },
+    reason: 'A pré-reserva expirou.',
+    updatedAt: new Date('2026-10-23T11:50:00.000Z'),
+  });
 
-const confirm = (over: Record<string, unknown> = {}): ChatAction =>
-  ({
-    type: 'experience.booking.confirm',
-    label: 'Reserva confirmada',
-    bookingId: ID2,
-    confirmationCode: 'SIM-ABC123',
-    status: 'confirmed',
-    alreadyConfirmed: false,
-    summary: summary(),
-    ...over,
-  }) as ChatAction;
+const preview = (over: Record<string, unknown> = {}): ChatAction => ({ ...card('preview'), ...over }) as ChatAction;
+
+const confirm = (over: Record<string, unknown> = {}): ChatAction => ({ ...card('confirmed'), ...over }) as ChatAction;
 
 describe('isValidChatAction - navigate', () => {
   it('accepts with and without restaurantId', () => {
@@ -90,8 +82,8 @@ describe('isValidChatAction - preview', () => {
     expect(isValidChatAction(preview({ summary: summary({ time: null, totalPrice: null }) }))).toBe(true);
   });
 
-  it('rejects a non UUID previewId', () => {
-    expect(isValidChatAction(preview({ previewId: 'abc' }))).toBe(false);
+  it('rejects a non UUID cardId', () => {
+    expect(isValidChatAction(preview({ cardId: 'abc' }))).toBe(false);
   });
 
   it('rejects mismatched confirm.body.previewId', () => {
@@ -136,11 +128,40 @@ describe('isValidChatAction - confirm', () => {
     expect(isValidChatAction(confirm())).toBe(true);
   });
 
-  it('requires UUID bookingId, confirmed status, code', () => {
-    expect(isValidChatAction(confirm({ bookingId: '123' }))).toBe(false);
+  it('requires a UUID bookingId, a known status and a code', () => {
+    expect(isValidChatAction(confirm({ booking: { bookingId: '123', confirmationCode: 'SIM-1' } }))).toBe(false);
     expect(isValidChatAction(confirm({ status: 'pending' }))).toBe(false);
-    expect(isValidChatAction(confirm({ confirmationCode: '' }))).toBe(false);
-    expect(isValidChatAction(confirm({ confirmationCode: 'X'.repeat(21) }))).toBe(false);
+    expect(isValidChatAction(confirm({ booking: { bookingId: ID2, confirmationCode: '' } }))).toBe(false);
+    expect(isValidChatAction(confirm({ booking: { bookingId: ID2, confirmationCode: 'X'.repeat(21) } }))).toBe(false);
+    expect(isValidChatAction(confirm({ booking: null }))).toBe(false);
+  });
+});
+
+describe('bookingCard lifecycle', () => {
+  it('keeps the same cardId in every state', () => {
+    const ids = (['preview', 'confirmed', 'expired', 'failed', 'cancelled'] as const).map((status) => card(status).cardId);
+    expect(new Set(ids)).toEqual(new Set([ID1]));
+  });
+
+  it('offers buttons and expiry only while in preview', () => {
+    expect(card('preview')).toMatchObject({ status: 'preview', expiresAt: '2026-10-23T12:00:00.000Z', booking: null, reason: null });
+    expect(card('preview').confirm?.body).toEqual({ type: 'experience.booking.confirm', conversationId: CONV, previewId: ID1 });
+    expect(card('preview').cancel?.body).toEqual({ type: 'experience.booking.cancel', conversationId: CONV, previewId: ID1 });
+
+    for (const status of ['confirmed', 'expired', 'failed', 'cancelled'] as const) {
+      expect(card(status)).toMatchObject({ confirm: null, cancel: null, expiresAt: null });
+      expect(isValidChatAction(card(status))).toBe(true);
+    }
+  });
+
+  it('exposes the booking only when confirmed and a reason only when it did not succeed', () => {
+    expect(card('confirmed')).toMatchObject({ booking: { bookingId: ID2, confirmationCode: 'SIM-ABC123' }, reason: null });
+    expect(card('failed')).toMatchObject({ booking: null, reason: 'A pré-reserva expirou.' });
+  });
+
+  it('rejects buttons outside preview and a preview without buttons', () => {
+    expect(isValidChatAction({ ...card('confirmed'), confirm: card('preview').confirm } as ChatAction)).toBe(false);
+    expect(isValidChatAction({ ...card('preview'), cancel: null } as ChatAction)).toBe(false);
   });
 });
 
@@ -155,7 +176,7 @@ describe('isValidChatAction - other', () => {
 describe('sanitizeActions', () => {
   it('keeps only valid actions in order', () => {
     const nav: ChatAction = { type: 'navigate', label: 'Ver', screen: 'Gastronomy', params: {} };
-    const result = sanitizeActions([nav, { type: 'bogus' } as never, preview(), confirm({ bookingId: 'x' })]);
+    const result = sanitizeActions([nav, { type: 'bogus' } as never, preview(), confirm({ cardId: 'x' })]);
     expect(result).toHaveLength(2);
     expect(result[0]).toBe(nav);
   });
@@ -167,18 +188,7 @@ describe('sanitizeActions', () => {
 
 describe('party size limit', () => {
   it('drops a summary with more than 10 participants', () => {
-    const action = {
-      type: 'experience.booking.confirm',
-      label: 'Reserva simulada confirmada',
-      bookingId: '2c5c2a5e-8c1d-4b7a-9e2f-3a4b5c6d7e8f',
-      confirmationCode: 'SIM-AAAA1111',
-      status: 'confirmed',
-      alreadyConfirmed: false,
-      summary: {
-        experienceId: 'e', experienceTitle: 'E', date: '2026-10-24', time: null,
-        adults: 6, children: 6, totalPrice: null, currency: 'BRL', priceNote: null, simulated: true,
-      },
-    } as const;
+    const action = { ...card('confirmed'), summary: summary({ adults: 6, children: 6 }) };
     expect(isValidChatAction(action)).toBe(false);
   });
 });
@@ -190,8 +200,8 @@ describe('experience.options', () => {
       label: 'Escolher experiência',
       date: '2026-10-24',
       options: [
-        { position: 1, experienceId: 'exp-1', title: 'City Tour', times: ['08:00'], message: 'Opção 1' },
-        { position: 2, experienceId: 'exp-2', title: 'Jaqueira', times: [], message: 'Opção 2' },
+        { position: 1, experienceId: 'exp-1', title: 'City Tour', times: ['08:00'], summary: null, message: 'Opção 1' },
+        { position: 2, experienceId: 'exp-2', title: 'Jaqueira', times: [], summary: null, message: 'Opção 2' },
       ],
       ...over,
     }) as ChatAction;
@@ -201,19 +211,124 @@ describe('experience.options', () => {
     expect(isValidChatAction(options({ date: null }))).toBe(true);
   });
 
+  it('accepts a verified summary for the card', () => {
+    expect(
+      isValidChatAction(
+        options({
+          options: [
+            { position: 1, experienceId: 'exp-1', title: 'City Tour', times: ['08:00'], summary: '10 vagas para adultos', message: 'Opção 1' },
+          ],
+        }),
+      ),
+    ).toBe(true);
+  });
+
   it.each<[string, Record<string, unknown>]>([
     ['an empty list', { options: [] }],
     ['an invalid date', { date: '24/10/2026' }],
     ['positions out of order', {
-      options: [{ position: 2, experienceId: 'exp-1', title: 'City Tour', times: [], message: 'Opção 2' }],
+      options: [{ position: 2, experienceId: 'exp-1', title: 'City Tour', times: [], summary: null, message: 'Opção 2' }],
     }],
     ['an invalid time', {
-      options: [{ position: 1, experienceId: 'exp-1', title: 'City Tour', times: ['8h'], message: 'Opção 1' }],
+      options: [{ position: 1, experienceId: 'exp-1', title: 'City Tour', times: ['8h'], summary: null, message: 'Opção 1' }],
+    }],
+    ['a missing summary', {
+      options: [{ position: 1, experienceId: 'exp-1', title: 'City Tour', times: [], message: 'Opção 1' }],
+    }],
+    ['an oversized summary', {
+      options: [{ position: 1, experienceId: 'exp-1', title: 'City Tour', times: [], summary: 'x'.repeat(161), message: 'Opção 1' }],
     }],
     ['a missing experience id', {
-      options: [{ position: 1, experienceId: '', title: 'City Tour', times: [], message: 'Opção 1' }],
+      options: [{ position: 1, experienceId: '', title: 'City Tour', times: [], summary: null, message: 'Opção 1' }],
     }],
   ])('rejects %s', (_label, over) => {
     expect(sanitizeActions([options(over)])).toEqual([]);
+  });
+});
+
+
+describe('restaurant.options', () => {
+  const option = (position: number, over: Record<string, unknown> = {}) => ({
+    position,
+    restaurantId: `r${position}`,
+    name: `Restaurante ${position}`,
+    type: 'restaurante',
+    openingHours: '10h às 18h',
+    location: 'Térreo',
+    minimumAge: null,
+    acceptsReservations: true,
+    reservationTimes: ['19:00', '21:30'],
+    message: `Opção ${position}`,
+    ...over,
+  });
+  const action = (over: Record<string, unknown> = {}): ChatAction =>
+    ({ type: 'restaurant.options', label: 'Gastronomia', options: [option(1), option(2, { type: 'bar' })], ...over }) as ChatAction;
+
+  it('accepts a numbered list, with nullable cadastro fields', () => {
+    expect(isValidChatAction(action())).toBe(true);
+    expect(
+      isValidChatAction(
+        action({ options: [option(1, { type: null, openingHours: null, location: null, reservationTimes: [], acceptsReservations: false })] }),
+      ),
+    ).toBe(true);
+    expect(isValidChatAction(action({ options: [option(1, { type: 'alimentacao', minimumAge: 12 })] }))).toBe(true);
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ['an empty list', { options: [] }],
+    ['more than 20 options', { options: Array.from({ length: 21 }, (_, i) => option(i + 1)) }],
+    ['a bad position', { options: [option(2)] }],
+    ['positions out of order', { options: [option(1), option(3)] }],
+    ['an invalid reservation time', { options: [option(1, { reservationTimes: ['7h'] })] }],
+    ['an unknown type', { options: [option(1, { type: 'boate' })] }],
+    ['a missing restaurant id', { options: [option(1, { restaurantId: '' })] }],
+    ['a non-boolean acceptsReservations', { options: [option(1, { acceptsReservations: 'sim' })] }],
+    ['an invalid minimum age', { options: [option(1, { minimumAge: 0 })] }],
+    ['a message longer than 60 chars', { options: [option(1, { message: 'x'.repeat(61) })] }],
+    ['an empty label', { label: '' }],
+  ])('rejects %s', (_label, over) => {
+    expect(sanitizeActions([action(over)])).toEqual([]);
+  });
+
+  it('accepts exactly 20 options', () => {
+    expect(isValidChatAction(action({ options: Array.from({ length: 20 }, (_, i) => option(i + 1)) }))).toBe(true);
+  });
+});
+
+describe('event.list', () => {
+  const item = (over: Record<string, unknown> = {}) => ({
+    eventId: 'ev1',
+    kind: 'event',
+    title: 'Show de Circo',
+    date: '2026-10-26',
+    time: '20:00',
+    location: 'Anfiteatro',
+    category: null,
+    description: null,
+    ...over,
+  });
+  const action = (over: Record<string, unknown> = {}): ChatAction =>
+    ({ type: 'event.list', label: 'Programação', date: '2026-10-26', items: [item(), item({ eventId: 'l1', kind: 'leisure', time: null })], ...over }) as ChatAction;
+
+  it('accepts events and leisure items, with null time', () => {
+    expect(isValidChatAction(action())).toBe(true);
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ['an empty list', { items: [] }],
+    ['more than 30 items', { items: Array.from({ length: 31 }, (_, i) => item({ eventId: `e${i}` })) }],
+    ['an invalid action date', { date: '26/10/2026' }],
+    ['an invalid item date', { items: [item({ date: '2026-13-01x' })] }],
+    ['an invalid time', { items: [item({ time: '8h' })] }],
+    ['an unknown kind', { items: [item({ kind: 'party' })] }],
+    ['a missing event id', { items: [item({ eventId: '' })] }],
+    ['an oversized description', { items: [item({ description: 'x'.repeat(241) })] }],
+    ['an empty title', { items: [item({ title: '' })] }],
+  ])('rejects %s', (_label, over) => {
+    expect(sanitizeActions([action(over)])).toEqual([]);
+  });
+
+  it('accepts exactly 30 items', () => {
+    expect(isValidChatAction(action({ items: Array.from({ length: 30 }, (_, i) => item({ eventId: `e${i}` })) }))).toBe(true);
   });
 });

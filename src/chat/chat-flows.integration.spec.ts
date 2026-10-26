@@ -20,9 +20,11 @@ import { quoteExperience } from '../experiences/experience-pricing.js';
 import { ExperiencesCatalogService } from '../experiences/experiences-catalog.service.js';
 import type { ExperienceInfo, ExperienceSlot } from '../experiences/experience.types.js';
 import { ExperienceOperationsService } from '../operations/experience-operations.service.js';
+import { EventOperationsService } from '../operations/event-operations.service.js';
 import { RestaurantOperationsService } from '../operations/restaurant-operations.service.js';
 import { GuestStayService } from '../resort/guest-stay.service.js';
 import { ResortSnapshotGateway } from '../resort/resort-snapshot.gateway.js';
+import { EventsCatalogService } from '../resort/events-catalog.service.js';
 import { RestaurantsCatalogService, type RestaurantInfo } from '../resort/restaurants-catalog.service.js';
 import { OllamaService } from '../llm/ollama.service.js';
 import { OperationsAiService } from '../operations/operations-ai.service.js';
@@ -31,6 +33,7 @@ import { OperationsToolRegistryService } from '../operations/operations-tool-reg
 import { RequestsOperationsService } from '../operations/requests-operations.service.js';
 import { RequestsService } from '../operations/requests.service.js';
 import { ReservationsService } from '../operations/reservations.service.js';
+import { isValidChatAction } from '../contracts/chat-actions.js';
 import { EmbeddingsService } from '../rag/embeddings.service.js';
 import { KnowledgeService } from '../rag/knowledge.service.js';
 import type { RetrievedDocument } from '../rag/knowledge.service.js';
@@ -39,6 +42,7 @@ import { RetrievalService } from '../rag/retrieval.service.js';
 import type { IntentDecision } from './chat-intent.types.js';
 import { ChatOrchestratorService } from './chat-orchestrator.service.js';
 import { ConversationContextService } from './conversation-context.service.js';
+import { EXTERNAL_REPLY } from './social-replies.js';
 import { ChatService } from './chat.service.js';
 import { IntentClassifierService } from './intent-classifier.service.js';
 
@@ -140,7 +144,6 @@ const HOURS_DOCUMENT: RetrievedDocument = {
 };
 
 const RAG_ANSWER = 'A Trattoria Aurora funciona diariamente das 19h às 23h.';
-const CONVERSATION_ANSWER = 'Olá! Sou o Yago, concierge digital do resort. Como posso ajudar?';
 
 const MODEL_ANSWERS: Record<string, IntentDecision> = {
   'Tenho alguma reserva?': { intent: 'reservation.list', detail: 'none' },
@@ -167,6 +170,7 @@ describe.each([
   let fetchMock: FetchMock;
   let store: InMemoryChatStore;
   let chat: ChatService;
+  let registry: OperationsToolRegistryService;
   // Conexão "resort": somente leitura, roteada pelo SQL recebido.
   const resortQuery = vi.fn<DataSource['query']>();
   const catalog = {
@@ -178,10 +182,25 @@ describe.each([
   const availability = {
     findSlots: vi.fn(async (date: string) => (date === JAQUEIRA_SLOT.date ? [JAQUEIRA_SLOT] : [])),
   };
+  const confirmBooking = vi.fn<ExperienceBookingService['confirm']>();
   const booking = {
     preview: vi.fn<ExperienceBookingService['preview']>(),
-    confirm: vi.fn<ExperienceBookingService['confirm']>(),
+    confirm: confirmBooking,
     cancelPreview: vi.fn(async () => true),
+    // Estado persistido do card: confirmado depois de booking.confirm.
+    cards: vi.fn<ExperienceBookingService['cards']>(async (_guest, _conversationId, previewIds) =>
+      previewIds.map((previewId) => {
+        const confirmed = confirmBooking.mock.calls.some((call) => call[3] === previewId);
+        const summary = {
+          experienceId: 'exp', experienceTitle: 'Experiência', date: '2026-10-24', time: null,
+          adults: 2, children: 0, totalPrice: 240, currency: 'BRL' as const, priceNote: null, simulated: true as const,
+        };
+        return confirmed
+          ? { previewId, status: 'confirmed' as const, summary, expiresAt: new Date(), updatedAt: new Date(),
+              booking: { bookingId: '7a7b7c7d-1111-4222-8333-444455556666', confirmationCode: 'SIM-TEST1234' } }
+          : { previewId, status: 'preview' as const, summary, expiresAt: new Date(Date.now() + 60_000), updatedAt: new Date() };
+      }),
+    ),
     listSimulated: vi.fn(async () => []),
   };
   const restaurantsCatalog = { listActive: vi.fn(async () => [OMAKASE]) };
@@ -224,11 +243,7 @@ describe.each([
             ],
           });
         case 'generation':
-          return ollamaChat(
-            body.messages[0].content.includes('REGRAS DE CONVERSA')
-              ? CONVERSATION_ANSWER
-              : RAG_ANSWER,
-          );
+          return ollamaChat(RAG_ANSWER);
       }
     });
 
@@ -299,6 +314,8 @@ describe.each([
         GuestStayService,
         ExperienceOperationsService,
         RestaurantOperationsService,
+        EventOperationsService,
+        { provide: EventsCatalogService, useValue: { forDate: vi.fn(async () => []) } },
         { provide: getDataSourceToken('resort'), useValue: { query: resortQuery } },
         { provide: ExperiencesCatalogService, useValue: catalog },
         { provide: ExperienceAvailabilityService, useValue: availability },
@@ -320,6 +337,7 @@ describe.each([
     }).compile();
 
     chat = moduleRef.get(ChatService);
+    registry = moduleRef.get(OperationsToolRegistryService);
   });
 
   afterEach(() => {
@@ -473,29 +491,125 @@ describe.each([
   });
 
   describe('conversation', () => {
-    it.each(['Olá', 'Olá, Yago! Tudo bem?', 'Bom dia', 'Obrigado!', 'Quem é você?'])(
-      'answers %j with the model, without RAG, classifier or tools',
+    // Nenhuma chamada externa: modelo, classificador, embeddings, busca vetorial ou ferramentas.
+    const expectNoLookups = (execute: { mock: { calls: unknown[] } }) => {
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(embeddings.embed).not.toHaveBeenCalled();
+      expect(knowledge.searchByVector).not.toHaveBeenCalled();
+      expect(execute.mock.calls).toHaveLength(0);
+      expect(resortQuery).not.toHaveBeenCalled();
+      expect(restaurantsCatalog.listActive).not.toHaveBeenCalled();
+      expect(catalog.listActive).not.toHaveBeenCalled();
+    };
+
+    const sentences = (text: string) => text.split(/[.!?]+(?:\s|$)/).filter(Boolean);
+
+    it.each(['Olá', 'Olá, Yago! Tudo bem?', 'Bom dia', 'Obrigado!', 'Valeu, Yago!', 'Quem é você?', 'Tchau', 'Ok'])(
+      'answers %j deterministically: short, no model, no RAG, no classifier, no tools',
       async (message) => {
+        const execute = vi.spyOn(registry, 'execute');
+
         const result = await chat.sendMessage(message, GUEST);
 
         expect(result).toEqual({
-          reply: CONVERSATION_ANSWER,
+          reply: expect.any(String),
           conversationId: expect.any(String),
           retrievedSources: [],
           actions: [],
         });
-        expect(embeddings.embed).not.toHaveBeenCalled();
-        expect(knowledge.searchByVector).not.toHaveBeenCalled();
-        expect(resortQuery).not.toHaveBeenCalled();
-        expect(requests('classifier')).toHaveLength(0);
-        expect(requests('operations')).toHaveLength(0);
-        expect(requests('generation')).toHaveLength(1);
+        expect(sentences(result.reply).length).toBeLessThanOrEqual(2);
+        expect(result.reply.length).toBeLessThanOrEqual(120);
+        expect(result.reply).not.toMatch(/senhor|senhora|bem-vind|querid/i);
+        expectNoLookups(execute);
         expect(store.messages.map(({ role, content }) => ({ role, content }))).toEqual([
           { role: 'user', content: message },
-          { role: 'assistant', content: CONVERSATION_ANSWER },
+          { role: 'assistant', content: result.reply },
         ]);
       },
     );
+
+    it('answers weather and external questions with the fixed limitation, without any lookup', async () => {
+      const execute = vi.spyOn(registry, 'execute');
+
+      const result = await chat.sendMessage('Vai chover amanhã?', GUEST);
+
+      expect(result.reply).toBe(EXTERNAL_REPLY);
+      expectNoLookups(execute);
+    });
+
+    it('a pending pre-booking survives a "thanks" and "confirmo" afterwards still confirms it', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-10-23T15:00:00Z'));
+
+      try {
+        const turn = (message: string, conversationId?: string) => chat.sendMessage(message, GUEST, conversationId);
+        const first = await turn('Quero reservar a Reserva da Jaqueira amanhã para 2 adultos');
+        const id = first.conversationId;
+        expect(booking.preview).toHaveBeenCalledOnce();
+        expect(store.states.get(id)?.state.experience?.pendingPreviewId).toBe(PREVIEW_ID);
+
+        const calls = fetchMock.mock.calls.length;
+        const queries = resortQuery.mock.calls.length;
+        const thanks = await turn('Obrigado!', id);
+
+        expect(thanks.reply).toBe('Por nada! A pré-reserva continua aguardando: confirme pelo card ou responda "confirmo".');
+        expect(thanks.actions).toEqual([]);
+        expect(fetchMock.mock.calls.length).toBe(calls);
+        expect(resortQuery.mock.calls.length).toBe(queries);
+        expect(booking.confirm).not.toHaveBeenCalled();
+        expect(store.states.get(id)?.state.experience?.pendingPreviewId).toBe(PREVIEW_ID);
+
+        const confirmed = await turn('confirmo', id);
+
+        expect(booking.confirm).toHaveBeenCalledExactlyOnceWith(
+          GUEST,
+          expect.objectContaining({ lodgingId: 9001 }),
+          id,
+          PREVIEW_ID,
+        );
+        expect(confirmed.reply).toContain('confirmada');
+        expect(confirmed.actions).toEqual([
+          expect.objectContaining({ type: 'experience.booking.card', cardId: PREVIEW_ID, status: 'confirmed' }),
+        ]);
+        expect(store.states.get(id)?.state.experience?.pendingPreviewId).toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('answers a "thanks" after the booking is confirmed without reminding of the pre-booking', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-10-23T15:00:00Z'));
+
+      try {
+        const first = await chat.sendMessage('Quero reservar a Reserva da Jaqueira amanhã para 2 adultos', GUEST);
+        await chat.sendMessage('confirmo', GUEST, first.conversationId);
+        const thanks = await chat.sendMessage('Obrigado!', GUEST, first.conversationId);
+
+        expect(thanks.reply).not.toContain('pré-reserva');
+        expect(thanks.reply).not.toContain('confirmo');
+        expect(booking.confirm).toHaveBeenCalledOnce();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('does not repeat the same social reply on consecutive turns', async () => {
+      const first = await chat.sendMessage('Obrigado!', GUEST);
+      const second = await chat.sendMessage('Obrigado!', GUEST, first.conversationId);
+      const third = await chat.sendMessage('Valeu!', GUEST, first.conversationId);
+
+      expect(second.reply).not.toBe(first.reply);
+      expect(third.reply).not.toBe(second.reply);
+    });
+
+    it('introduces itself only in the first greeting of a conversation', async () => {
+      const first = await chat.sendMessage('Olá', GUEST);
+      const second = await chat.sendMessage('Oi de novo', GUEST, first.conversationId);
+
+      expect(first.reply).toContain('sou o Yago');
+      expect(second.reply).not.toContain('Yago');
+    });
 
     it('answers a greeting followed by a question through RAG', async () => {
       const result = await chat.sendMessage('Olá, o resort tem academia?', GUEST);
@@ -506,10 +620,38 @@ describe.each([
       expect(resortQuery).not.toHaveBeenCalled();
     });
 
-    it('answers a greeting followed by a restaurant question from the catalog, not RAG', async () => {
+    it('a mixed message ("Obrigado! E que horas abre o spa?") still goes through RAG', async () => {
+      const result = await chat.sendMessage('Obrigado! E que horas abre o spa?', GUEST);
+
+      expect(result.reply).toBe(RAG_ANSWER);
+      expect(result.retrievedSources).toHaveLength(1);
+      expect(embeddings.embed).toHaveBeenCalledOnce();
+      expect(requests('generation')).toHaveLength(1);
+    });
+
+    it('sends only the trimmed recent history to the RAG model', async () => {
+      const first = await chat.sendMessage('Olá', GUEST);
+      for (const turn of ['Tenho alguma reserva?', 'E para quantas pessoas?', 'Obrigado!']) {
+        await chat.sendMessage(turn, GUEST, first.conversationId);
+      }
+      await chat.sendMessage('E que horas abre o spa?', GUEST, first.conversationId);
+
+      const generation = requests('generation').at(-1) as { messages: { role: string; content: string }[] };
+      const history = generation.messages.slice(1, -1);
+      expect(history.length).toBeLessThanOrEqual(6);
+      expect(history.every(({ content }) => content.length <= 500)).toBe(true);
+    });
+
+    it('answers a greeting followed by a restaurant question from the catalog, briefly, not RAG', async () => {
       const result = await chat.sendMessage('Olá, quais restaurantes existem?', GUEST);
 
-      expect(result.reply).toContain('1. Omakase');
+      expect(result.reply).toBe('Encontrei 1 restaurante: Omakase.');
+      expect(result.reply).not.toMatch(/^\d+\./m);
+      expect(result.actions).toEqual([
+        expect.objectContaining({ type: 'restaurant.options', options: [expect.objectContaining({ restaurantId: 'rest-omakase', name: 'Omakase' })] }),
+        expect.objectContaining({ type: 'navigate', screen: 'Gastronomy' }),
+      ]);
+      expect(result.actions.every(isValidChatAction)).toBe(true);
       expect(result.retrievedSources).toEqual([]);
       expect(embeddings.embed).not.toHaveBeenCalled();
       expect(requests('generation')).toHaveLength(0);
@@ -520,7 +662,7 @@ describe.each([
       async (message) => {
         const result = await chat.sendMessage(message, GUEST);
 
-        expect(result.reply).not.toBe(CONVERSATION_ANSWER);
+        expect(result.reply).not.toMatch(/Como posso ajudar/);
         expect(embeddings.embed).not.toHaveBeenCalled();
         expect(requests('generation')).toHaveLength(0);
         expect(result.reply).toContain('Não identifiquei qual experiência você deseja');
@@ -539,26 +681,14 @@ describe.each([
         replies.push(result.reply);
       }
 
-      expect(replies[0]).toBe(CONVERSATION_ANSWER);
+      expect(replies[0]).toBe('Olá, sou o Yago, concierge digital do resort. Como posso ajudar?');
       expect(replies[1]).toContain('Encontrei 1 reserva de restaurante no seu cadastro:');
       expect(replies[2]).toBe('Sua reserva na Trattoria Aurora é para 4 pessoas.');
-      expect(replies[3]).toBe(CONVERSATION_ANSWER);
+      expect(sentences(replies[3]).length).toBeLessThanOrEqual(2);
+      expect(replies[3]).not.toBe(replies[0]);
       expect(embeddings.embed).not.toHaveBeenCalled();
-
-      // A resposta social recebe todo o histórico da conversa.
-      const generations = requests('generation') as {
-        messages: { role: string; content: string }[];
-      }[];
-      expect(generations).toHaveLength(2);
-      expect(generations[1].messages.slice(1).map(({ content }) => content)).toEqual([
-        'Olá',
-        CONVERSATION_ANSWER,
-        'Tenho alguma reserva?',
-        replies[1],
-        'E para quantas pessoas?',
-        replies[2],
-        'Obrigado!',
-      ]);
+      // Nenhum turno desta conversa precisou do modelo generativo.
+      expect(requests('generation')).toHaveLength(0);
       expect(store.messages).toHaveLength(turns.length * 2);
     });
   });
@@ -580,8 +710,17 @@ describe.each([
       const list = await turn('Quais experiências posso fazer amanhã?');
       const id = list.conversationId;
       expect(list.reply).toContain('sábado, 24/10/2026');
-      expect(list.reply).toContain('1. Reserva da Jaqueira');
+      expect(list.reply).toContain('há vagas registradas em 1 experiência: Reserva da Jaqueira.');
+      expect(list.reply).not.toMatch(/^\d+\./m);
       expect(list.reply).toContain('snapshot');
+      expect(list.actions).toEqual([
+        expect.objectContaining({
+          type: 'experience.options',
+          date: '2026-10-24',
+          options: [expect.objectContaining({ experienceId: JAQUEIRA.id, position: 1, summary: expect.any(String) })],
+        }),
+      ]);
+      expect(list.actions.every(isValidChatAction)).toBe(true);
       expect(availability.findSlots).toHaveBeenCalledWith('2026-10-24');
 
       const selected = await turn('Gostei da primeira.', id);
@@ -610,11 +749,14 @@ describe.each([
           party: { adults: 2, children: 0 },
         },
       );
-      expect(preview.reply).toContain('reserva simulada');
+      // O texto orienta; data, valor e avisos ficam no card.
+      expect(preview.reply).toContain('pré-reserva');
+      expect(preview.reply).not.toMatch(/R\$/);
       expect(preview.actions).toEqual([
         expect.objectContaining({
-          type: 'experience.booking.preview',
-          previewId: PREVIEW_ID,
+          type: 'experience.booking.card',
+          cardId: PREVIEW_ID,
+          status: 'preview',
           confirm: {
             method: 'POST',
             path: '/chat/actions',
@@ -633,10 +775,15 @@ describe.each([
         id,
         PREVIEW_ID,
       );
-      expect(confirmed.reply).toContain('SIM-TEST1234');
-      expect(confirmed.reply).toContain('não foi registrada no sistema oficial');
+      expect(confirmed.reply).toContain('confirmada');
+      // O mesmo card (mesmo cardId) passa a "confirmed", com o código.
       expect(confirmed.actions).toEqual([
-        expect.objectContaining({ type: 'experience.booking.confirm', confirmationCode: 'SIM-TEST1234' }),
+        expect.objectContaining({
+          type: 'experience.booking.card',
+          cardId: PREVIEW_ID,
+          status: 'confirmed',
+          booking: { bookingId: '7a7b7c7d-1111-4222-8333-444455556666', confirmationCode: 'SIM-TEST1234' },
+        }),
       ]);
       expect(store.states.get(id)?.state.experience?.pendingPreviewId).toBeUndefined();
 
@@ -690,7 +837,9 @@ describe.each([
 
       const omakase = await chat.sendMessage('Quero reservar uma mesa no Omakase', GUEST);
 
-      expect(omakase.reply).toContain('selecionar os pratos');
+      expect(omakase.reply).toBe(
+        'A reserva do Omakase é feita pelo aplicativo, com a escolha dos pratos. Turnos cadastrados 19:00 e 19:30; toque em "Abrir Gastronomia" para continuar.',
+      );
       expect(omakase.actions).toEqual([
         {
           type: 'navigate',

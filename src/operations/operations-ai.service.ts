@@ -8,6 +8,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import type { IntentDecision } from '../chat/chat-intent.types.js';
+import { chatRequest, llmSettings } from '../llm/llm-config.js';
 import { OperationsToolRegistryService } from './operations-tool-registry.service.js';
 import type { RestaurantReservation } from './reservations.service.js';
 import type { GuestContext } from '../guest/guest-context.js';
@@ -45,7 +46,15 @@ function formatPartySize(partySize: number | null): string {
   return partySize === null ? 'não informado' : String(partySize);
 }
 
-const RESERVATIONS_TOOL = {
+// Exportados para a avaliação de function calling entre modelos.
+export const TOOL_SYSTEM_PROMPT = [
+  'Você é um concierge de resort.',
+  'Para consultar reservas pessoais,',
+  'solicite list_my_restaurant_reservations.',
+  'Não invente informações nem identificadores.',
+].join(' ');
+
+export const RESERVATIONS_TOOL = {
   type: 'function',
   function: {
     name: TOOL_NAME,
@@ -73,33 +82,21 @@ export class OperationsAiService {
     messages: OllamaMessage[],
     tools?: (typeof RESERVATIONS_TOOL)[],
   ): Promise<OllamaResponse> {
-    const baseUrl = this.configService.get<string>(
-      'OLLAMA_BASE_URL',
-      'http://127.0.0.1:11434',
-    );
-
-    const model = this.configService.get<string>(
-      'OLLAMA_CHAT_MODEL',
-      'qwen3:1.7b',
-    );
+    // Function calling usa o modelo de classificação/ferramentas.
+    const settings = llmSettings((key) => this.configService.get<string>(key));
 
     let response: Response;
 
     try {
-      response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/chat`, {
+      response = await fetch(`${settings.baseUrl}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model,
+          ...chatRequest(settings, settings.classifierModel, { temperature: 0.1, structured: true }),
           messages,
           tools,
-          stream: false,
-          think: false,
-          options: {
-            temperature: 0.1,
-          },
         }),
         signal: AbortSignal.timeout(90_000),
       });
@@ -153,12 +150,7 @@ export class OperationsAiService {
       const messages: OllamaMessage[] = [
         {
           role: 'system',
-          content: [
-            'Você é um concierge de resort.',
-            'Para consultar reservas pessoais,',
-            'solicite list_my_restaurant_reservations.',
-            'Não invente informações nem identificadores.',
-          ].join(' '),
+          content: TOOL_SYSTEM_PROMPT,
         },
         {
           role: 'user',

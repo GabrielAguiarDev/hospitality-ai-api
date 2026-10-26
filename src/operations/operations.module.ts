@@ -11,6 +11,7 @@ import { OperationsDispatcherService } from './operations-dispatcher.service.js'
 import { RequestsOperationsService } from './requests-operations.service.js';
 import { ReservationsService } from './reservations.service.js';
 import { RequestsService } from './requests.service.js';
+import { EventOperationsService } from './event-operations.service.js';
 import { ExperienceOperationsService } from './experience-operations.service.js';
 import { RestaurantOperationsService } from './restaurant-operations.service.js';
 
@@ -31,6 +32,7 @@ import { RestaurantOperationsService } from './restaurant-operations.service.js'
     RequestsService,
     ExperienceOperationsService,
     RestaurantOperationsService,
+    EventOperationsService,
   ],
   exports: [
     OperationsAiService,

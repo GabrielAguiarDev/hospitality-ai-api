@@ -58,6 +58,20 @@ export class ResortClock {
     }).format(instant);
   }
 
+  // Hora atual no fuso do resort (HH:MM).
+  time(): string {
+    return this.timeAt(this.now());
+  }
+
+  timeAt(instant: Date): string {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: this.timeZone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).format(instant);
+  }
+
   static isIsoDate(value: unknown): value is string {
     if (typeof value !== 'string' || !ISO_DATE.test(value)) {
       return false;
