@@ -13,7 +13,7 @@ import { RequestsOperationsService } from '../operations/requests-operations.ser
 import type { ChatActionDto } from './dto/chat-action.dto.js';
 import { ChatConversation } from './entities/chat-conversation.entity.js';
 import { ChatConversationState } from './entities/chat-conversation-state.entity.js';
-import { ChatMessage } from './entities/chat-message.entity.js';
+import { assistantId, ChatMessage } from './entities/chat-message.entity.js';
 
 export type ChatActionStatus =
   | 'confirmed'
@@ -134,8 +134,8 @@ export class ChatActionsService {
     const owner = { conversationId: dto.conversationId, resortId: guest.resortId, guestId: guest.guestId };
     const stored = await this.statesRepository.findOneBy(owner);
 
-    await this.dataSource.transaction(async (manager) => {
-      await manager.insert(ChatMessage, {
+    const assistantMessageId = await this.dataSource.transaction(async (manager) => {
+      const assistant = await manager.insert(ChatMessage, {
         conversationId: dto.conversationId,
         role: 'assistant',
         content: reply,
@@ -162,11 +162,14 @@ export class ChatActionsService {
           },
         );
       }
+
+      return assistantId(assistant.identifiers);
     });
 
     return {
       reply,
       conversationId: dto.conversationId,
+      ...(assistantMessageId ? { assistantMessageId } : {}),
       retrievedSources: [],
       actions: response,
       status,

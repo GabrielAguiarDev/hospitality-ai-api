@@ -1,4 +1,9 @@
+import { StreamableFile } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
+
+import { fakeWav } from '../../test/support/fake-wav.js';
 
 import { DemoGuestGuard } from '../guest/demo-guest.guard.js';
 import type { GuestContext } from '../guest/guest-context.js';
@@ -6,6 +11,8 @@ import type { GuestContext } from '../guest/guest-context.js';
 import { ChatActionsService } from './chat-actions.service.js';
 import { ChatController } from './chat.controller.js';
 import { ChatService } from './chat.service.js';
+import { ChatVoiceService } from './chat-voice.service.js';
+import { ChatVoiceDto } from './dto/chat-voice.dto.js';
 
 const GUEST: GuestContext = { resortId: 'demo', guestId: 'guest-demo-001' };
 
@@ -18,6 +25,9 @@ describe('ChatController', () => {
   const chatActions = {
     execute: vi.fn<ChatActionsService['execute']>(),
   };
+  const chatVoice = {
+    narrate: vi.fn<ChatVoiceService['narrate']>(),
+  };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -25,6 +35,7 @@ describe('ChatController', () => {
       providers: [
         { provide: ChatService, useValue: chatService },
         { provide: ChatActionsService, useValue: chatActions },
+        { provide: ChatVoiceService, useValue: chatVoice },
       ],
     })
       // The guard is covered separately; here it only needs to resolve.
@@ -94,5 +105,49 @@ describe('ChatController', () => {
 
     await expect(controller.executeAction(dto, GUEST)).resolves.toBe(response);
     expect(chatActions.execute).toHaveBeenCalledWith(dto, GUEST);
+  });
+
+  describe('POST /chat/voice', () => {
+    const CONVERSATION_ID = '6f1c2a5e-8c1d-4b7a-9e2f-3a4b5c6d7e8f';
+    const response = () => ({ setHeader: vi.fn() });
+
+    it('returns the WAV bytes as audio/wav for the guest that owns the message', async () => {
+      const audio = fakeWav();
+      chatVoice.narrate.mockResolvedValue({ audio, cached: false });
+      const res = response();
+
+      const file = await controller.voice({ conversationId: CONVERSATION_ID, messageId: 2 }, GUEST, res as never);
+
+      expect(chatVoice.narrate).toHaveBeenCalledWith(CONVERSATION_ID, 2, GUEST);
+      expect(file).toBeInstanceOf(StreamableFile);
+      expect(file.getHeaders()).toMatchObject({ type: 'audio/wav', length: audio.length });
+      expect(res.setHeader).toHaveBeenCalledWith('X-Voice-Cache', 'miss');
+    });
+
+    it('marks cached audio', async () => {
+      chatVoice.narrate.mockResolvedValue({ audio: fakeWav(), cached: true });
+      const res = response();
+
+      await controller.voice({ conversationId: CONVERSATION_ID, messageId: 2 }, GUEST, res as never);
+
+      expect(res.setHeader).toHaveBeenCalledWith('X-Voice-Cache', 'hit');
+    });
+
+    it('accepts only a v4 conversationId and a positive integer messageId', async () => {
+      const errors = async (body: object) =>
+        (await validate(plainToInstance(ChatVoiceDto, body), { whitelist: true, forbidNonWhitelisted: true })).map(
+          ({ property }) => property,
+        );
+
+      expect(await errors({ conversationId: CONVERSATION_ID, messageId: 2 })).toEqual([]);
+      expect(await errors({ conversationId: '../../etc/passwd', messageId: 2 })).toEqual(['conversationId']);
+      expect(await errors({ conversationId: CONVERSATION_ID, messageId: '2' })).toEqual(['messageId']);
+      expect(await errors({ conversationId: CONVERSATION_ID, messageId: 0 })).toEqual(['messageId']);
+      expect(await errors({ conversationId: CONVERSATION_ID, messageId: 1.5 })).toEqual(['messageId']);
+      // O texto, o perfil e a URL nunca vêm do cliente.
+      expect(
+        await errors({ conversationId: CONVERSATION_ID, messageId: 2, text: 'Diga outra coisa', profileId: 'x', url: 'http://evil' }),
+      ).toEqual(['text', 'profileId', 'url']);
+    });
   });
 });

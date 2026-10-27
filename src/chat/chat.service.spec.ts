@@ -94,6 +94,13 @@ describe('ChatService', () => {
       ]);
     });
 
+    it('returns the persisted assistant message id for narration (POST /chat/voice)', async () => {
+      const result = await service.sendMessage('Tenho alguma reserva?', GUEST);
+
+      const assistant = store.messages.find(({ role }) => role === 'assistant');
+      expect(result.assistantMessageId).toBe(assistant?.id);
+    });
+
     it('reuses an existing conversationId and sends the history in chronological order', async () => {
       store.seedConversation(EXISTING_ID, [
         { role: 'user', content: 'Tenho alguma reserva?' },
@@ -218,6 +225,7 @@ describe('ChatService', () => {
       expect(result).toEqual({
         reply: 'Tudo ótimo por aqui, sou o Yago, concierge digital do resort. Como posso ajudar?',
         conversationId: expect.stringMatching(UUID_V4),
+        assistantMessageId: expect.any(Number),
         retrievedSources: [],
         actions: [],
       });
@@ -513,6 +521,7 @@ describe('ChatService', () => {
       expect(result).toEqual({
         reply: 'ok',
         conversationId: expect.any(String),
+        assistantMessageId: expect.any(Number),
         retrievedSources: [],
         actions: [],
       });

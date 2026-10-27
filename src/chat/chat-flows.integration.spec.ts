@@ -516,6 +516,7 @@ describe.each([
         expect(result).toEqual({
           reply: expect.any(String),
           conversationId: expect.any(String),
+          assistantMessageId: expect.any(Number),
           retrievedSources: [],
           actions: [],
         });

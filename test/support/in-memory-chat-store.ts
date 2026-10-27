@@ -15,7 +15,7 @@ import type { GuestContext } from '../../src/guest/guest-context.js';
 type StoredMessage = Pick<
   ChatMessage,
   'id' | 'conversationId' | 'role' | 'content'
->;
+> & Partial<Pick<ChatMessage, 'actions'>>;
 
 interface FindMessagesOptions {
   where: { conversationId: string };
@@ -81,6 +81,12 @@ export class InMemoryChatStore {
   };
 
   readonly messagesRepository = {
+    findOneBy: vi.fn(async (where: Partial<StoredMessage>) => {
+      const message = this.messages.find((stored) =>
+        Object.entries(where).every(([key, value]) => stored[key as keyof StoredMessage] === value),
+      );
+      return message ? { actions: null, ...message } : null;
+    }),
     find: vi.fn(async ({ where, order, take }: FindMessagesOptions) => {
       const rows = this.messages
         .filter((message) => message.conversationId === where.conversationId)
@@ -164,8 +170,10 @@ export class InMemoryChatStore {
 
           if (entity === ChatMessage && !Array.isArray(values)) {
             const message = values as MessageInput;
-            staged.push(() => this.messages.push({ id: this.nextMessageId++, ...message }));
-            return;
+            // Como o AUTO_INCREMENT: o ID é reservado na inserção, mesmo com rollback.
+            const id = this.nextMessageId++;
+            staged.push(() => this.messages.push({ id, ...message }));
+            return { identifiers: [{ id }] };
           }
 
           if (entity === ChatConversation && !Array.isArray(values)) {

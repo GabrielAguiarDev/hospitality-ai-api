@@ -101,6 +101,8 @@ describe('ChatActionsService', () => {
       content: 'Reserva simulada registrada.',
       actions: [expect.objectContaining({ cardId: PREVIEW, status: 'confirmed' })],
     });
+    // A resposta da ação também pode ser narrada (POST /chat/voice).
+    expect(result.assistantMessageId).toBe(store.messages.at(-1)?.id);
     expect(store.states.get(CONVERSATION)?.state).toMatchObject({ phase: 'completed' });
     expect(store.states.get(CONVERSATION)?.state.experience?.pendingPreviewId).toBeUndefined();
     expect(store.states.get(CONVERSATION)?.version).toBe(2);

@@ -23,7 +23,7 @@ import type { RetrievedDocument } from '../rag/knowledge.service.js';
 import { ResortClock } from '../resort/resort-clock.service.js';
 
 import { ChatConversation } from './entities/chat-conversation.entity.js';
-import { ChatMessage } from './entities/chat-message.entity.js';
+import { assistantId, ChatMessage } from './entities/chat-message.entity.js';
 import { ChatOrchestratorService } from './chat-orchestrator.service.js';
 import { buildKnowledgePrompt, knowledgeHistory, polishReply } from './chat-prompts.js';
 import { ConversationContextService } from './conversation-context.service.js';
@@ -160,7 +160,7 @@ export class ChatService {
       reply = polishReply(toPlainText(await this.ollamaService.generate(messages)));
     }
 
-    await this.dataSource.transaction(async (manager) => {
+    const assistantMessageId = await this.dataSource.transaction(async (manager) => {
       if (!conversationId) {
         await manager.insert(ChatConversation, {
           id,
@@ -169,29 +169,32 @@ export class ChatService {
         });
       }
 
-      await manager.insert(ChatMessage, [
-        {
-          conversationId: id,
-          role: 'user',
-          content: message,
-        },
-        {
-          conversationId: id,
-          role: 'assistant',
-          content: reply,
-          // Persistidas para reconstruir o histórico com os cards.
-          actions: actions.length ? actions : null,
-        },
-      ]);
+      await manager.insert(ChatMessage, {
+        conversationId: id,
+        role: 'user',
+        content: message,
+      });
+
+      // Inserção própria: o ID gerado vem direto do banco.
+      const assistant = await manager.insert(ChatMessage, {
+        conversationId: id,
+        role: 'assistant',
+        content: reply,
+        // Persistidas para reconstruir o histórico com os cards.
+        actions: actions.length ? actions : null,
+      });
 
       await manager.update(ChatConversation, { id }, { updatedAt: new Date() });
 
       await this.context.save(manager, id, guest, stored, orchestration.state);
+
+      return assistantId(assistant.identifiers);
     });
 
     return {
       reply,
       conversationId: id,
+      ...(assistantMessageId ? { assistantMessageId } : {}),
       retrievedSources: documents.map((document) => ({
         id: document.id,
         title: document.title,

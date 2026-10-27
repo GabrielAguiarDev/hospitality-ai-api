@@ -309,6 +309,8 @@ export interface RetrievedSource {
 export interface ChatResponse {
   reply: string;
   conversationId: string;
+  // Mensagem do assistente gravada com esta resposta (narração: POST /chat/voice).
+  assistantMessageId?: number;
   retrievedSources: RetrievedSource[];
   actions: ChatAction[];
 }

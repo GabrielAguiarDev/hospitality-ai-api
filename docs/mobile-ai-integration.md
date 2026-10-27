@@ -36,6 +36,14 @@ Alterações **obrigatórias** no React Native:
 
 Boutique, SPA, ESG, Dicas e Quiz respondem com texto curto e um botão `navigate` para a tela do módulo; não há cards novos para eles.
 
+### 0.2 Narração com a voz do Yago (opcional)
+
+A API passou a gerar o áudio de uma resposta já recebida, com a voz clonada do Yago (Voicebox local, perfil Luigi). Nada muda em `POST /chat`: o texto continua chegando primeiro, e o áudio é pedido **depois**, em uma chamada separada.
+
+1. `ChatResponse` (e a resposta de `POST /chat/actions`) ganhou o campo **opcional** `assistantMessageId`. Clientes antigos podem ignorá-lo.
+2. Para ouvir a resposta, chame `POST /chat/voice` com `conversationId` e `assistantMessageId` (seção 15). A resposta é o arquivo `audio/wav`, não JSON.
+3. A síntese é **lenta** neste ambiente (30 s a 2 min). Mostre a bolha de texto imediatamente e toque o áudio quando chegar; em erro, use a voz nativa do aparelho como alternativa.
+
 ---
 
 ## 1. Visão geral
@@ -45,6 +53,7 @@ Boutique, SPA, ESG, Dicas e Quiz respondem com texto curto e um botão `navigate
 | `POST` | `/chat` | Envia uma mensagem e recebe a resposta do Yago, com ações opcionais. |
 | `POST` | `/chat/actions` | Executa uma ação de botão, como confirmar ou descartar uma pré-reserva. |
 | `GET` | `/chat/:conversationId/messages` | Carrega o histórico de uma conversa. |
+| `POST` | `/chat/voice` | Áudio WAV de uma resposta já recebida, com a voz do Yago (seção 15). |
 
 O backend escolhe sozinho entre:
 
@@ -60,6 +69,7 @@ Fluxo típico:
 próximas           → POST /chat { message, conversationId }  → mesmo contexto
 botão de uma ação  → POST /chat/actions { type, conversationId, previewId }
 reabrir a tela     → GET  /chat/{conversationId}/messages
+ouvir a resposta   → POST /chat/voice { conversationId, messageId: assistantMessageId }
 ```
 
 ---
@@ -125,6 +135,7 @@ Campos extras são rejeitados com `400`.
 interface ChatResponse {
   reply: string;                       // texto do Yago (pode ter quebras de linha)
   conversationId: string;              // salve este valor
+  assistantMessageId?: number;         // ID da resposta gravada; use em POST /chat/voice
   retrievedSources: RetrievedSource[]; // depuração; não precisa ser exibido
   actions: ChatAction[];               // sempre presente; [] na maioria das respostas
 }
@@ -724,6 +735,8 @@ Formato:
 | `500` | Erro interno (banco indisponível, configuração) | Erro genérico e opção de tentar de novo. |
 | `502`/`503`/`504` | Modelo de IA indisponível ou lento | "O assistente está indisponível no momento." |
 
+Em `POST /chat/voice`, os erros significam outra coisa e **nunca** afetam o chat em texto. Veja a tabela da seção 15.
+
 Se `POST /chat` falhar, nada é salvo. Reenvie o mesmo texto com o mesmo `conversationId`.
 
 ---
@@ -970,6 +983,11 @@ curl -s -X POST http://localhost:3000/chat/actions -H 'Content-Type: application
   -d '{"type":"experience.booking.confirm","conversationId":"<conversationId>","previewId":"<previewId>"}'
 
 curl -s http://localhost:3000/chat/<conversationId>/messages -H "X-Demo-Guest-Id: $GUEST"
+
+# Áudio de uma resposta (pode levar até 3 min); salva em yago.wav
+curl -s -X POST http://localhost:3000/chat/voice -H 'Content-Type: application/json' \
+  -H "X-Demo-Guest-Id: $GUEST" --max-time 200 -D - -o yago.wav \
+  -d '{"conversationId":"<conversationId>","messageId":<assistantMessageId>}'
 ```
 
 ---
@@ -1004,3 +1022,150 @@ curl -s http://localhost:3000/chat/<conversationId>/messages -H "X-Demo-Guest-Id
 - [ ] Botões com estado de carregamento e proteção contra toque duplo.
 - [ ] Tratamento de `400`/`401`/`403`/`404`/`5xx` conforme a seção 9; `404` em `/chat` reinicia a conversa.
 - [ ] Timeout ≥ 180 s e indicador "digitando…".
+- [ ] Narração (opcional): `POST /chat/voice` só depois de exibir o texto, com `assistantMessageId` (ou `messages[].id` do histórico), timeout de 200 s, sem repetir a chamada enquanto uma estiver em andamento.
+- [ ] Narração: resposta tratada como binário `audio/wav` (nunca `response.json()`); qualquer erro cai na voz nativa do aparelho sem afetar a bolha de texto.
+
+---
+
+## 15. Narração por voz: `POST /chat/voice`
+
+Gera o áudio de uma resposta **já gravada** do Yago, com a voz clonada do perfil Luigi (Voicebox local, modelo Qwen3-TTS 1.7B, português). O aplicativo nunca fala com o Voicebox: só com esta rota.
+
+- O texto narrado vem sempre do banco. O app envia apenas identificadores; texto, voz, modelo e URL não são aceitos do cliente.
+- A LLM não é chamada de novo.
+- Só o titular dono da conversa obtém o áudio. Para qualquer outro, a resposta é `404`.
+
+### Request
+
+```http
+POST /chat/voice
+Content-Type: application/json
+X-Demo-Guest-Id: <guestHolder.id>
+Accept: audio/wav
+```
+
+```json
+{ "conversationId": "3f1c2a4e-8b7d-4c1e-9a2f-6d5e4b3a2c10", "messageId": 42 }
+```
+
+| Campo | Tipo | Regras |
+| --- | --- | --- |
+| `conversationId` | UUID v4 | A conversa do hóspede. |
+| `messageId` | inteiro ≥ 1 | `assistantMessageId` de `POST /chat` ou `POST /chat/actions`, ou o `id` de uma mensagem `assistant` em `GET /chat/:id/messages`. |
+
+Os mesmos headers das outras rotas (seção 2). Campos extras são rejeitados com `400`.
+
+### Resposta `200 OK`
+
+O corpo é o arquivo WAV, sem JSON e sem Base64.
+
+| Header | Valor |
+| --- | --- |
+| `Content-Type` | `audio/wav` (PCM 16 bits, mono, 24 kHz) |
+| `Content-Length` | Tamanho em bytes |
+| `Cache-Control` | `no-store`: não guarde o áudio em cache HTTP compartilhado |
+| `X-Voice-Cache` | `hit` (áudio já gerado, resposta imediata) ou `miss` (gerado agora) |
+
+### O que é narrado
+
+O áudio não lê tudo o que está na bolha:
+
+- Markdown, JSON, links e identificadores internos são omitidos.
+- Quando a resposta tem cards, só a introdução e a conclusão são narradas; os itens que já estão nos cards não são lidos.
+- Respostas longas são narradas até cerca de 400 caracteres, sempre em frases inteiras.
+- Nenhum dado é reescrito: datas, horários, valores e nomes saem exatamente como no texto.
+
+### Tempo de resposta e timeout
+
+A síntese roda no próprio Mac (M3, 8 GB), uma de cada vez. Tempos medidos: **~30 s** para uma frase curta e **~2 min** para uma resposta de 180 caracteres. O servidor desiste após **180 s**, contando a espera na fila (`VOICEBOX_TIMEOUT_MS`).
+
+- Use timeout de **200 s** no app.
+- Exiba o texto primeiro e peça o áudio em segundo plano (ou só quando o hóspede tocar em "ouvir").
+- Pedidos repetidos da mesma mensagem não geram o áudio duas vezes: chamadas simultâneas aguardam a mesma síntese, e o resultado fica em cache na memória do servidor (`X-Voice-Cache: hit`). O cache é perdido quando a API reinicia.
+- Ainda assim, não dispare uma segunda chamada enquanto a primeira estiver em andamento.
+- Um pedido que espera na fila e fica com menos de 30 s de prazo responde `504` sem iniciar a síntese.
+
+Limitações conhecidas:
+
+- Se o app desistir da chamada (sair da tela, timeout), o servidor conclui a síntese mesmo assim e guarda o áudio no cache; ela continua ocupando a fila até terminar.
+- Uma única frase maior que o limite de caracteres é cortada na última palavra que cabe, e o final dela não é narrado (o texto completo continua na bolha).
+
+### Erros
+
+Corpo no formato da seção 9. Nenhum desses erros afeta o chat em texto.
+
+| Status | Quando | O que o app deve fazer |
+| --- | --- | --- |
+| `400` | Body inválido (`messageId` não inteiro, UUID inválido, campo extra) | Bug do app. |
+| `401`/`403` | Mesmas regras das outras rotas (seção 9) | Idem. |
+| `404` | Conversa de outro hóspede, mensagem inexistente, de outra conversa ou escrita pelo hóspede | Não ofereça áudio para essa mensagem. |
+| `422` | A mensagem não tem texto narrável (ex.: só identificadores) | Não ofereça áudio para essa mensagem. |
+| `502` | O Voicebox falhou ou devolveu um áudio inválido | Voz nativa; pode tentar de novo mais tarde. |
+| `503` | Narração desativada, Voicebox fora do ar ou fila cheia (outras narrações em andamento) | Voz nativa. |
+| `504` | O áudio não ficou pronto em 180 s | Voz nativa. A geração é cancelada no servidor. |
+
+### Exemplo no React Native
+
+A rota é `POST`, então o download precisa de uma biblioteca que salve o corpo em arquivo. O exemplo usa `react-native-blob-util`; adapte ao player já usado pelo app.
+
+```ts
+import ReactNativeBlobUtil from 'react-native-blob-util';
+
+const VOICE_TIMEOUT_MS = 200_000;
+// Uma narração por mensagem: evita chamadas duplicadas da mesma resposta.
+const pendingVoice = new Map<number, Promise<string | null>>();
+
+/** Caminho local do WAV, ou null quando a narração não está disponível. */
+export function fetchVoice(guestHolderId: string, conversationId: string, messageId: number): Promise<string | null> {
+  const pending = pendingVoice.get(messageId);
+  if (pending) return pending;
+
+  const job = ReactNativeBlobUtil.config({ fileCache: true, appendExt: 'wav', timeout: VOICE_TIMEOUT_MS })
+    .fetch(
+      'POST',
+      `${API_URL}/chat/voice`,
+      { 'Content-Type': 'application/json', Accept: 'audio/wav', 'X-Demo-Guest-Id': guestHolderId },
+      JSON.stringify({ conversationId, messageId }),
+    )
+    .then(async (response) => {
+      const { status, headers } = response.info();
+      const type = headers['Content-Type'] ?? headers['content-type'] ?? '';
+      if (status === 200 && type.startsWith('audio/wav')) return response.path();
+      await response.flush(); // remove o arquivo com o JSON de erro
+      return null;
+    })
+    .catch(() => null) // rede ou timeout
+    .finally(() => pendingVoice.delete(messageId));
+
+  pendingVoice.set(messageId, job);
+  return job;
+}
+
+// Depois de exibir a resposta do POST /chat:
+async function speakReply(guestHolderId: string, response: ChatResponse) {
+  const path = response.assistantMessageId
+    ? await fetchVoice(guestHolderId, response.conversationId, response.assistantMessageId)
+    : null;
+
+  if (path) await player.play(`file://${path}`); // player de áudio já existente no app
+  else speakWithNativeVoice(response.reply);     // fallback: voz nativa do aparelho
+}
+```
+
+- Apague os arquivos antigos (`ReactNativeBlobUtil.fs.unlink(path)`) ao sair da conversa.
+- Sem `assistantMessageId` (API antiga), use a voz nativa.
+
+### Configuração do servidor
+
+| Variável | Padrão | Uso |
+| --- | --- | --- |
+| `VOICEBOX_ENABLED` | `false` | `true` liga a narração. Desligada, a rota responde `503`. |
+| `VOICEBOX_BASE_URL` | `http://127.0.0.1:17493` | Voicebox local; nunca exposto ao app. |
+| `VOICEBOX_PROFILE_ID` | (obrigatório) | Perfil de voz (Luigi). Inválido ou ausente desliga a narração. |
+| `VOICEBOX_ENGINE` / `VOICEBOX_MODEL_SIZE` / `VOICEBOX_LANGUAGE` | `qwen` / `1.7B` / `pt` | Motor, modelo e idioma. |
+| `VOICEBOX_TIMEOUT_MS` | `180000` | Prazo total de uma narração, contando a fila. Mantenha abaixo de 300 s (timeout padrão de requisição do Node). |
+| `VOICEBOX_MAX_QUEUE` | `2` | Narrações aguardando a vez; acima disso, `503`. |
+| `VOICEBOX_MAX_CHARS` | `400` | Texto máximo narrado (frases inteiras). |
+| `VOICEBOX_CACHE_MAX_MB` | `32` | Cache em memória dos áudios gerados. |
+| `VOICEBOX_MAX_AUDIO_MB` | `20` | Tamanho máximo aceito de um áudio do Voicebox. |
+
