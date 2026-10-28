@@ -2,6 +2,8 @@
 
 Contrato para implementar a tela de chat do Yago (concierge) no aplicativo React Native.
 
+> **Cards de todos os módulos** (`catalog.list`, `menu.view`, `booking.list`, `request.list`, as telas novas de `navigate` e os fluxos de confirmação) estão documentados em [`mobile-ai-cards-integration.md`](mobile-ai-cards-integration.md). Ele é a referência atual para os cards.
+
 > **Status: MVP de demonstração.** A API ainda não valida o token do app. O hóspede é identificado pelo header `X-Demo-Guest-Id` e só são aceitas conexões locais. Reservas de experiências feitas pelo chat são **simuladas** e não vão para o sistema oficial do resort. Leia a seção 11 antes de usar com qualquer dado real.
 
 ---

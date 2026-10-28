@@ -35,6 +35,10 @@ const ALL_INTENTS: Record<ChatIntent, true> = {
   'restaurant.booking': true,
   'restaurant.list': true,
   'restaurant.details': true,
+  'restaurant.menu': true,
+  'favorite.list': true,
+  'favorite.manage': true,
+  'leisure.enroll': true,
   'event.list': true,
   'experience.list': true,
   'experience.search': true,
@@ -75,7 +79,7 @@ describe('capability catalog', () => {
     const registry = new OperationsToolRegistryService(
       ...(Array.from({ length: 2 }, () => ({})) as [never, never]),
       new ConfigService({}),
-      ...(Array.from({ length: 10 }, () => ({})) as [never, never, never, never, never, never, never, never, never, never]),
+      ...(Array.from({ length: 13 }, () => ({})) as [never, never, never, never, never, never, never, never, never, never, never, never, never]),
     );
     const tools = new Set(registry.listTools().map(({ name }) => name));
 
@@ -98,8 +102,12 @@ describe('capability catalog', () => {
       expect(NAVIGATION_SCREENS, module).toContain(screen);
       expect(SCREEN_PARAMS, module).toHaveProperty(screen);
     }
-    // Todas as telas do contrato têm um dono no catálogo.
-    expect(new Set(CAPABILITIES.map(({ screen }) => screen))).toEqual(new Set(NAVIGATION_SCREENS));
+    // Toda tela de módulo tem um dono no catálogo; as demais são telas de
+    // detalhe (Restaurant, Experience) e pessoais (Minhas Reservas…).
+    const owned = new Set<string>(CAPABILITIES.map(({ screen }) => screen));
+    expect(NAVIGATION_SCREENS.filter((screen) => !owned.has(screen)).sort()).toEqual(
+      ['Experience', 'MyFavorites', 'MyRequests', 'MyReservation', 'Restaurant'],
+    );
   });
 
   it('keeps the screen allow-list restricted to id-like params', () => {

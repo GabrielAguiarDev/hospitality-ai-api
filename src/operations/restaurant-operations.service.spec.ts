@@ -324,8 +324,10 @@ describe('RestaurantOperationsService', () => {
       const bookable = await service.handle('O Omakase está aberto à noite?', { ...list, entities: { period: 'evening' } }, guest, ctx);
       expect(bookable.actions?.at(-1)).toMatchObject({ type: 'navigate', params: { restaurantId: 'j1' } });
 
+      // Sem reserva pelo app: a página do restaurante, nunca a tela de reserva.
       const walkIn = await service.handle('O Gino está aberto à noite?', { ...list, entities: { period: 'evening' } }, guest, ctx);
-      expect(walkIn.actions?.some((action) => action.type === 'navigate')).toBe(false);
+      const screens = walkIn.actions?.flatMap((action) => (action.type === 'navigate' ? [action.screen] : []));
+      expect(screens).toEqual(['Restaurant']);
     });
 
     it('returns no match with the filters and a pending question to see everything', async () => {

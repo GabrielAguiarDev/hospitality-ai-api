@@ -9,6 +9,7 @@ export interface BoutiqueProduct {
   name: string;
   category: string;
   price: number | null;
+  description?: string | null;
 }
 
 export interface SpaService {
@@ -19,6 +20,7 @@ export interface SpaService {
   price: number | null;
   // Texto livre do cadastro: "50 min" ou "50 min R$ 250,00 | 30 min R$ 180,00".
   details: string | null;
+  description?: string | null;
 }
 
 export interface Tip {
@@ -28,6 +30,7 @@ export interface Tip {
 }
 
 export interface EsgInfo {
+  id?: string;
   title: string | null;
   description: string;
 }
@@ -72,13 +75,20 @@ export class ModulesCatalogService {
   }
 
   private async loadBoutique(): Promise<BoutiqueProduct[]> {
-    const rows = await this.snapshot.select<{ id: string; name: string | null; category: string | null; price: string | null }>(
+    const rows = await this.snapshot.select<{
+      id: string;
+      name: string | null;
+      category: string | null;
+      price: string | null;
+      description: string | null;
+    }>(
       `
         SELECT
           p.id_produto AS id,
           p.nome_produto AS name,
           c.titulo_categoriaproduto AS category,
-          p.preco_produto AS price
+          p.preco_produto AS price,
+          p.descricao_produto AS description
         FROM tb_produto p
         INNER JOIN tb_categoriaproduto c
           ON c.id_categoriaproduto = p.id_categoriaproduto
@@ -94,6 +104,7 @@ export class ModulesCatalogService {
       name: text(row.name, 120) ?? 'Produto',
       category: text(row.category, 80) ?? 'Boutique',
       price: money(row.price),
+      description: summarizeText(row.description, 300) || null,
     }));
   }
 
@@ -104,6 +115,7 @@ export class ModulesCatalogService {
       category: string | null;
       price: string | null;
       details: string | null;
+      description: string | null;
     }>(
       `
         SELECT
@@ -111,7 +123,8 @@ export class ModulesCatalogService {
           s.titulo_servicospa AS name,
           c.titulo_categoriaspa AS category,
           s.valor_servicospa AS price,
-          s.tempo_servicospa AS details
+          s.tempo_servicospa AS details,
+          s.descricao_servicospa AS description
         FROM tb_servicospa s
         LEFT JOIN tb_categoriaspa c
           ON c.id_categoriaspa = s.id_categoriaspa
@@ -134,6 +147,7 @@ export class ModulesCatalogService {
           price: money(row.price),
           // "25" sem unidade é a duração em minutos.
           details: details && /^\d+$/.test(details) ? `${details} min` : details,
+          description: summarizeText(row.description, 300) || null,
         };
       })
       // O cadastro repete serviços ("Máscara Tensora Dourada" duas vezes).
@@ -202,9 +216,9 @@ export class ModulesCatalogService {
 
   // Somente textos publicados: títulos e parceiros sem conteúdo são ignorados.
   async esg(): Promise<EsgInfo[]> {
-    const rows = await this.snapshot.select<{ title: string | null; description: string | null }>(
+    const rows = await this.snapshot.select<{ id: string; title: string | null; description: string | null }>(
       `
-        SELECT e.titulo_esg AS title, e.descricao_esg AS description
+        SELECT e.id_esg AS id, e.titulo_esg AS title, e.descricao_esg AS description
         FROM tb_esg e
         WHERE e.descricao_esg IS NOT NULL AND TRIM(e.descricao_esg) <> ''
         LIMIT 10
@@ -213,7 +227,7 @@ export class ModulesCatalogService {
 
     return rows.flatMap((row) => {
       const description = summarizeText(row.description, 300);
-      return description ? [{ title: text(row.title, 120), description }] : [];
+      return description ? [{ ...(row.id != null ? { id: String(row.id) } : {}), title: text(row.title, 120), description }] : [];
     });
   }
 }

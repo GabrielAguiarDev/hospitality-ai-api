@@ -17,6 +17,8 @@ import type { EventOperationsService } from './event-operations.service.js';
 
 import type { ModuleOperationsService } from './module-operations.service.js';
 
+import type { GuestOperationsService } from './guest-operations.service.js';
+
 import { OperationsDispatcherService } from './operations-dispatcher.service.js';
 
 describe('OperationsDispatcherService', () => {
@@ -82,6 +84,11 @@ describe('OperationsDispatcherService', () => {
     })),
   };
 
+  const guestOperations = {
+    bookings: vi.fn(async () => ({ tool: 'reservations.list' as const, reply: 'Minhas reservas', actions: [] })),
+    favorites: vi.fn(async () => ({ tool: 'favorites.list' as const, reply: 'Favoritos', actions: [] })),
+  };
+
   const CONTEXT = {
     conversationId: '6f1c2a5e-8c1d-4b7a-9e2f-3a4b5c6d7e8f',
     state: {},
@@ -94,6 +101,7 @@ describe('OperationsDispatcherService', () => {
     restaurants as unknown as RestaurantOperationsService,
     events as unknown as EventOperationsService,
     modules as unknown as ModuleOperationsService,
+    guestOperations as unknown as GuestOperationsService,
   );
 
   beforeEach(() => {
@@ -113,8 +121,28 @@ describe('OperationsDispatcherService', () => {
     expect(reservations.ask).not.toHaveBeenCalled();
   });
 
+  it('routes reservation.list to the unified bookings handler (restaurants + experiences)', async () => {
+    const decision: IntentDecision = { intent: 'reservation.list', detail: 'none' };
+
+    const result = await dispatcher.dispatch('Minhas reservas', decision, GUEST, CONTEXT);
+
+    expect(result.reply).toBe('Minhas reservas');
+    expect(guestOperations.bookings).toHaveBeenCalledWith('Minhas reservas', decision, GUEST, CONTEXT);
+    expect(reservations.ask).not.toHaveBeenCalled();
+  });
+
   it.each([
-    ['reservation.list', 'none'],
+    ['favorite.list', 'favorites'],
+    ['favorite.manage', 'favorites'],
+  ] as const)('routes %s to the guest operations', async (intent, method) => {
+    const decision: IntentDecision = { intent, detail: 'none' };
+
+    await dispatcher.dispatch('Meus favoritos', decision, GUEST, CONTEXT);
+
+    expect(guestOperations[method]).toHaveBeenCalledWith('Meus favoritos', decision, GUEST, CONTEXT);
+  });
+
+  it.each([
     ['reservation.details', 'party_size'],
     ['reservation.status', 'none'],
   ] as const)('routes %s to reservations.list', async (intent, detail) => {
@@ -203,16 +231,23 @@ describe('OperationsDispatcherService', () => {
     };
 
     const decision: IntentDecision = {
-      intent: 'reservation.list',
+      intent: 'reservation.status',
       detail: 'none',
     };
 
     await dispatcher.dispatch('Minhas reservas', decision, anotherGuest);
+    await dispatcher.dispatch('Minhas reservas', { intent: 'reservation.list', detail: 'none' }, anotherGuest);
 
     expect(reservations.ask).toHaveBeenCalledExactlyOnceWith(
       'Minhas reservas',
       anotherGuest,
       decision,
+    );
+    expect(guestOperations.bookings).toHaveBeenCalledExactlyOnceWith(
+      'Minhas reservas',
+      { intent: 'reservation.list', detail: 'none' },
+      anotherGuest,
+      undefined,
     );
   });
 

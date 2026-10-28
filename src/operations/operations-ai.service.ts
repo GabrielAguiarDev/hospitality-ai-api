@@ -184,7 +184,7 @@ export class OperationsAiService {
 
     const reservations = result.data;
 
-    const reply = this.formatReservationReply(
+    const reply = formatRestaurantReservations(
       reservations,
       resolvedDecision,
       message,
@@ -201,127 +201,128 @@ export class OperationsAiService {
       reservationsFound: reservations.length,
     };
   }
+}
 
-  private formatReservationReply(
-    reservations: RestaurantReservation[],
-    decision: IntentDecision,
-    question: string,
-  ): string {
-    if (reservations.length === 0) {
-      return 'Não encontrei reservas de restaurante no seu cadastro.';
-    }
+/** Texto das reservas de restaurante (também usado em Minhas Reservas). */
+export function formatRestaurantReservations(
+  reservations: RestaurantReservation[],
+  decision: IntentDecision,
+  question: string,
+): string {
+  if (reservations.length === 0) {
+    return 'Não encontrei reservas de restaurante no seu cadastro.';
+  }
 
-    const statusLabels: Record<string, string> = {
-      aprovada: 'confirmada',
-      cancelada: 'cancelada',
-      confirmed: 'confirmada',
-      pending: 'pendente',
-      cancelled: 'cancelada',
-      canceled: 'cancelada',
-    };
+  const statusLabels: Record<string, string> = {
+    aprovada: 'confirmada',
+    cancelada: 'cancelada',
+    confirmed: 'confirmada',
+    pending: 'pendente',
+    cancelled: 'cancelada',
+    canceled: 'cancelada',
+  };
 
-    const normalize = (text: string): string =>
-      text
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .toLowerCase()
-        .trim();
+  const normalize = (text: string): string =>
+    text
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
 
-    const formatStatus = (status: string): string =>
-      statusLabels[status.toLowerCase()] ?? `registrada com status "${status}"`;
+  const formatStatus = (status: string): string =>
+    statusLabels[status.toLowerCase()] ?? `registrada com status "${status}"`;
 
-    if (decision.intent === 'reservation.list') {
-      const details = reservations.map((reservation, index) => {
-        const date = reservation.reservedAt.replace(' ', ' às ');
-
-        return [
-          `${index + 1}. ${reservation.restaurant}`,
-          `Data: ${date}`,
-          `Pessoas: ${formatPartySize(reservation.partySize)}`,
-          `Status: ${formatStatus(reservation.status)}`,
-        ].join('\n');
-      });
-
-      const count = reservations.length;
+  if (decision.intent === 'reservation.list') {
+    const details = reservations.map((reservation, index) => {
+      const date = reservation.reservedAt.replace(' ', ' às ');
 
       return [
-        `Encontrei ${count} ${
-          count === 1 ? 'reserva' : 'reservas'
-        } de restaurante no seu cadastro:`,
-        '',
-        details.join('\n\n'),
+        `${index + 1}. ${reservation.restaurant}`,
+        `Data: ${date}`,
+        `Pessoas: ${formatPartySize(reservation.partySize)}`,
+        `Status: ${formatStatus(reservation.status)}`,
       ].join('\n');
-    }
+    });
 
-    const normalizedQuestion = normalize(question);
+    const count = reservations.length;
 
-    const matchingReservations = reservations.filter((reservation) =>
-      normalizedQuestion.includes(normalize(reservation.restaurant)),
-    );
+    return [
+      `Encontrei ${count} ${
+        count === 1 ? 'reserva' : 'reservas'
+      } de restaurante no seu cadastro:`,
+      '',
+      details.join('\n\n'),
+    ].join('\n');
+  }
 
-    const candidates =
-      matchingReservations.length > 0 ? matchingReservations : reservations;
+  const normalizedQuestion = normalize(question);
 
-    // Não escolhe uma reserva arbitrariamente.
-    if (candidates.length !== 1) {
-      return [
-        `Encontrei ${candidates.length} reservas relacionadas à sua consulta.`,
-        'De qual reserva você deseja os detalhes?',
-        'Informe o restaurante ou a data.',
-      ].join(' ');
-    }
+  const matchingReservations = reservations.filter((reservation) =>
+    normalizedQuestion.includes(normalize(reservation.restaurant)),
+  );
 
-    const reservation = candidates[0];
+  const candidates =
+    matchingReservations.length > 0 ? matchingReservations : reservations;
 
-    const restaurant = reservation.restaurant;
-    const status = formatStatus(reservation.status);
+  // Não escolhe uma reserva arbitrariamente.
+  if (candidates.length !== 1) {
+    return [
+      `Encontrei ${candidates.length} reservas relacionadas à sua consulta.`,
+      'De qual reserva você deseja os detalhes?',
+      'Informe o restaurante ou a data.',
+    ].join(' ');
+  }
 
-    const [date, time] = reservation.reservedAt.split(' ');
-    const timeLabel = time ?? 'horário não informado';
+  const reservation = candidates[0];
 
-    if (decision.intent === 'reservation.status') {
-      return `Sua reserva na ${restaurant} está ${status}.`;
-    }
+  const restaurant = reservation.restaurant;
+  const status = formatStatus(reservation.status);
 
-    switch (decision.detail) {
-      case 'party_size': {
-        if (reservation.partySize === null) {
-          return (
-            `O sistema não informa a quantidade de pessoas da sua reserva na ${restaurant}: ` +
-            'não há pedidos de pratos registrados para ela.'
-          );
-        }
+  const [date, time] = reservation.reservedAt.split(' ');
+  const timeLabel = time ?? 'horário não informado';
 
-        const peopleLabel = reservation.partySize === 1 ? 'pessoa' : 'pessoas';
+  if (decision.intent === 'reservation.status') {
+    return `Sua reserva na ${restaurant} está ${status}.`;
+  }
 
+  switch (decision.detail) {
+    case 'party_size': {
+      if (reservation.partySize === null) {
         return (
-          `Sua reserva na ${restaurant} é para ` +
-          `${reservation.partySize} ${peopleLabel}.`
+          `O sistema não informa a quantidade de pessoas da sua reserva na ${restaurant}: ` +
+          'não há pedidos de pratos registrados para ela.'
         );
       }
 
-      case 'date':
-        return `Sua reserva na ${restaurant} ` + `está marcada para ${date}.`;
+      const peopleLabel = reservation.partySize === 1 ? 'pessoa' : 'pessoas';
 
-      case 'time':
-        if (!time) {
-          return `O horário da sua reserva na ${restaurant} não está informado no sistema.`;
-        }
-
-        return (
-          `Sua reserva na ${restaurant} ` + `está marcada para as ${time}.`
-        );
-
-      case 'restaurant':
-        return `Sua reserva está cadastrada ` + `no restaurante ${restaurant}.`;
-
-      default:
-        return [
-          `Sua reserva na ${restaurant}:`,
-          `Data: ${date} às ${timeLabel}`,
-          `Pessoas: ${formatPartySize(reservation.partySize)}`,
-          `Status: ${status}`,
-        ].join('\n');
+      return (
+        `Sua reserva na ${restaurant} é para ` +
+        `${reservation.partySize} ${peopleLabel}.`
+      );
     }
+
+    case 'date':
+      return `Sua reserva na ${restaurant} ` + `está marcada para ${date}.`;
+
+    case 'time':
+      if (!time) {
+        return `O horário da sua reserva na ${restaurant} não está informado no sistema.`;
+      }
+
+      return (
+        `Sua reserva na ${restaurant} ` + `está marcada para as ${time}.`
+      );
+
+    case 'restaurant':
+      return `Sua reserva está cadastrada ` + `no restaurante ${restaurant}.`;
+
+    default:
+      return [
+        `Sua reserva na ${restaurant}:`,
+        `Data: ${date} às ${timeLabel}`,
+        `Pessoas: ${formatPartySize(reservation.partySize)}`,
+        `Status: ${status}`,
+      ].join('\n');
   }
 }

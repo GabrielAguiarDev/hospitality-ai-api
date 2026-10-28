@@ -15,6 +15,7 @@ import { RequestsService } from './requests.service.js';
 import { EventOperationsService } from './event-operations.service.js';
 import { ModuleOperationsService } from './module-operations.service.js';
 import { ExperienceOperationsService } from './experience-operations.service.js';
+import { GuestOperationsService } from './guest-operations.service.js';
 import { RestaurantOperationsService } from './restaurant-operations.service.js';
 
 @Module({
@@ -37,6 +38,7 @@ import { RestaurantOperationsService } from './restaurant-operations.service.js'
     RestaurantOperationsService,
     EventOperationsService,
     ModuleOperationsService,
+    GuestOperationsService,
   ],
   exports: [
     OperationsAiService,

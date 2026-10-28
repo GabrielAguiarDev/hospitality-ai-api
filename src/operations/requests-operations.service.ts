@@ -8,6 +8,7 @@ import { GuestContext } from '../guest/guest-context.js';
 import { GuestRequestService } from '../requests/guest-request.service.js';
 import type { RequestDepartment } from '../resort/requests-catalog.service.js';
 
+import { requestItems, requestList } from './card-builders.js';
 import { OperationsToolRegistryService, type OperationToolName, type OperationToolResult } from './operations-tool-registry.service.js';
 import type { DispatchContext, DispatchResult } from './operations.types.js';
 import { matchItems, mentionedDepartment, requestTokens, symptomDepartment, type MatchedItem } from './request-matching.js';
@@ -47,6 +48,9 @@ const LATEST = /\b(?:anterior|ultima|ultimo|mais recente|recente|ela|essa|dela)\
 
 const requestsScreen = (departmentId?: string) =>
   navigateAction('Requests', 'Abrir Solicitações', departmentId ? { departmentId } : {});
+const myRequestsScreen = () => navigateAction('MyRequests', 'Abrir Minhas Solicitações');
+
+const LEISURE_STATUS: Record<string, string> = { pendente: 'pendente', aprovado: 'aprovada', negado: 'negada ou cancelada' };
 
 const describeItems = (items: { name: string; quantity: number }[]) =>
   nameList(items.map(({ name, quantity }) => (quantity > 1 ? `${quantity}x ${name}` : name)), 4);
@@ -347,12 +351,22 @@ export class RequestsOperationsService {
     conversation: ConversationState,
     state: RequestConversationState,
   ): Promise<DispatchResult> {
-    const requests = await this.execute('requests.list', guest);
+    // Inscrições de lazer também são "solicitações" no app (R-LAZ-07).
+    const [requests, enrollments] = await Promise.all([
+      this.execute('requests.list', guest),
+      this.execute('leisure.enrollments', guest),
+    ]);
     const label = (request: GuestRequest) =>
       `${request.category} (${request.description})${request.simulated ? `, protocolo ${request.protocol}` : ''}`;
     const statusOf = (request: GuestRequest) => STATUS_LABELS[request.status.toLowerCase()] ?? request.status;
+    const pendingEnrollments = enrollments.filter(({ status }) => status === 'pendente').length;
+    const leisureLine = enrollments.length
+      ? `Inscrições de lazer: ${enrollments.length}${pendingEnrollments ? ` (${pendingEnrollments} ${pendingEnrollments === 1 ? 'pendente' : 'pendentes'})` : ''}.`
+      : '';
+    const cards = (selected: GuestRequest[], leisure = enrollments) =>
+      [...requestList('Minhas solicitações', requestItems(selected, leisure)), myRequestsScreen()];
 
-    if (requests.length === 0) {
+    if (requests.length === 0 && enrollments.length === 0) {
       return {
         tool: 'requests.list',
         reply: 'Você não tem solicitações nesta estadia. Se precisar de algo, é só dizer, por exemplo "preciso de toalhas".',
@@ -361,23 +375,38 @@ export class RequestsOperationsService {
       };
     }
 
+    if (requests.length === 0) {
+      const [latest] = enrollments;
+      return {
+        tool: 'requests.list',
+        reply: `Você não tem solicitações a departamentos nesta estadia. ${leisureLine} A mais recente: ${latest.title}, ${LEISURE_STATUS[latest.status] ?? latest.status}.`,
+        actions: cards([]),
+        resultCount: enrollments.length,
+        state: this.state(conversation, state),
+      };
+    }
+
     if (intent === 'request.status' || requests.length === 1) {
       const selected = this.select(message, requests, state.lastRequestId);
 
       if (selected) {
+        const reply = selected.simulated
+          ? `Sua solicitação simulada de ${selected.category} (${selected.description}) foi registrada em ${selected.createdAt}, ` +
+            `protocolo ${selected.protocol}. Ela não chega ao departamento.`
+          : `Sua solicitação de ${label(selected)}, aberta em ${selected.createdAt}, está ${statusOf(selected)}.`;
+        // Status pedido: só a solicitação escolhida. Lista com uma só: as inscrições também.
+        const listing = intent === 'request.list';
+
         return {
           tool: 'requests.list',
-          reply: selected.simulated
-            ? `Sua solicitação simulada de ${selected.category} (${selected.description}) foi registrada em ${selected.createdAt}, ` +
-              `protocolo ${selected.protocol}. Ela não chega ao departamento.`
-            : `Sua solicitação de ${label(selected)}, aberta em ${selected.createdAt}, está ${statusOf(selected)}.`,
-          actions: [requestsScreen()],
+          reply: listing && leisureLine ? `${reply} ${leisureLine}` : reply,
+          actions: listing ? cards([selected]) : cards([selected], []),
           state: this.state(conversation, { ...state, lastRequestId: selected.id }),
         };
       }
     }
 
-    // Resumo por status; os detalhes completos ficam na tela de Solicitações.
+    // Resumo por status; os detalhes completos ficam nos cards e em Minhas Solicitações.
     const counts = Object.entries(
       requests.reduce<Record<string, number>>((total, request) => {
         const status = statusOf(request);
@@ -391,9 +420,9 @@ export class RequestsOperationsService {
       tool: 'requests.list',
       reply:
         `Você tem ${requests.length} ${requests.length === 1 ? 'solicitação' : 'solicitações'} nesta estadia: ${nameList(counts, 4)}. ` +
-        `A mais recente: ${label(latest)}, ${statusOf(latest)}.`,
-      actions: [requestsScreen()],
-      resultCount: requests.length,
+        `A mais recente: ${label(latest)}, ${statusOf(latest)}.${leisureLine ? ` ${leisureLine}` : ''}`,
+      actions: cards(requests),
+      resultCount: requests.length + enrollments.length,
       state: this.state(conversation, { ...state, lastRequestId: latest.id }),
     };
   }

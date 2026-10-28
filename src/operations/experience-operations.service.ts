@@ -3,6 +3,7 @@ import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { compactText, matchByName, nameList, normalizeText, summarizeText } from '../common/text.js';
 import {
   bookingCard,
+  navigateAction,
   type ChatAction,
   type ExperienceBookingCardAction,
   type ExperienceOptionsAction,
@@ -32,6 +33,7 @@ import type {
 import type { GuestContext } from '../guest/guest-context.js';
 import { ResortClock } from '../resort/resort-clock.service.js';
 
+import { bookingItems, bookingList } from './card-builders.js';
 import {
   OperationsToolRegistryService,
   type OperationToolName,
@@ -334,7 +336,8 @@ export class ExperienceOperationsService {
     const previous = context.state.experience ?? {};
     // Qualquer nova interação invalida a confirmação por texto
     // de uma pré-reserva anterior, exceto a própria confirmação.
-    const state: ExperienceConversationState = { ...previous, pendingPreviewId: undefined };
+    // A coleta de dados da reserva também vale só para a mensagem seguinte.
+    const state: ExperienceConversationState = { ...previous, pendingPreviewId: undefined, awaiting: undefined };
 
     switch (decision.intent) {
       case 'experience.booking.confirm':
@@ -767,7 +770,10 @@ export class ExperienceOperationsService {
     ].filter(Boolean);
 
     if (missing.length) {
-      return this.result('experiences.details', `Para preparar a reserva de ${experience.title}, preciso saber ${missing.join(' e ')}.`, context.state, state);
+      return this.result('experiences.details', `Para preparar a reserva de ${experience.title}, preciso saber ${missing.join(' e ')}.`, context.state, {
+        ...state,
+        awaiting: 'booking',
+      });
     }
 
     if (party!.adults + party!.children > MAX_PARTY_SIZE) {
@@ -964,6 +970,9 @@ export class ExperienceOperationsService {
       ...simulated.map((booking) =>
         `- ${booking.experienceTitle} — ${ResortClock.formatDate(booking.bookingDate)}${booking.bookingTime ? ` às ${booking.bookingTime}` : ''}, ${describeParty(booking)}, código ${booking.confirmationCode}`,
       ),
-    ].filter(Boolean).join('\n'), conversation, state);
+    ].filter(Boolean).join('\n'), conversation, state, [
+      ...bookingList('Reservas de experiências', bookingItems({ restaurants: [], experiences: official, simulated })),
+      navigateAction('MyReservation', 'Abrir Minhas Reservas', { tab: 'Experience' }),
+    ]);
   }
 }

@@ -66,10 +66,10 @@ describe('ModulesCatalogService', () => {
       ]);
 
       await expect(catalog.boutique()).resolves.toEqual([
-        { id: '1', name: 'Chapéu', category: 'Praia', price: 45 },
-        { id: '2', name: 'Brinde', category: 'Boutique', price: null },
-        { id: '3', name: 'Produto', category: 'Praia', price: null },
-        { id: '4', name: 'Errado', category: 'Praia', price: null },
+        { id: '1', name: 'Chapéu', category: 'Praia', price: 45, description: null },
+        { id: '2', name: 'Brinde', category: 'Boutique', price: null, description: null },
+        { id: '3', name: 'Produto', category: 'Praia', price: null, description: null },
+        { id: '4', name: 'Errado', category: 'Praia', price: null, description: null },
       ]);
       expect(sqlOf()).toMatch(/situacao_produto = 1/);
       expect(sqlOf()).toMatch(/situacao_categoriaproduto = 1/);

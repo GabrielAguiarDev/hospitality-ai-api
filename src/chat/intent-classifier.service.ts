@@ -14,6 +14,7 @@ import type {
   ReservationDetail,
 } from './chat-intent.types.js';
 import { detectModule } from './intent-detectors/modules.js';
+import { detectCatalogFollowUp, detectFavorites, detectLeisureEnrollment, detectMenu } from './intent-detectors/personal.js';
 import { detectRequestCatalogOrCreate, detectRequestFollowUp } from './intent-detectors/requests.js';
 import { extractEntities } from './message-entities.js';
 
@@ -323,7 +324,7 @@ export class IntentClassifierService {
     }
 
     const personalReservation =
-      /\b(?:minhas? reservas?|meu agendamento|tenho\b.{0,50}\breservas?|reservei|agendei)\b/;
+      /\b(?:minhas? (?:proxima |proximas |ultima )?reservas?|meu agendamento|tenho\b.{0,50}\breservas?|reservei|agendei)\b/;
 
     if (!personalReservation.test(text)) {
       return null;
@@ -348,7 +349,7 @@ export class IntentClassifierService {
     const current = this.normalize(message);
 
     const reservationContext =
-      /\bsua reserva\b|\bencontrei \d+ reservas?\b|\breserva de restaurante no seu cadastro\b/;
+      /\bsua reserva\b|\bencontrei \d+ reservas?\b|\breserva de restaurante no seu cadastro\b|\bvoce tem \d+ reservas?\b|\bsua proxima reserva\b/;
 
     if (!reservationContext.test(previous)) {
       return null;
@@ -872,6 +873,14 @@ export class IntentClassifierService {
       return this.decision('experience.booking', message);
     }
 
+    // Resposta aos dados pedidos pela reserva ("Para duas pessoas", "amanhã às 9h"):
+    // continua a reserva da experiência escolhida, sem outra experiência citada.
+    const bookingData = [entities.people, entities.adults, entities.children, entities.date, entities.time].some((value) => value !== undefined);
+
+    if (context.awaiting === 'booking' && context.selectedId && bookingData && entities.ordinal === undefined && !mentionsListed) {
+      return this.decision('experience.booking', message);
+    }
+
     if (PRICE_WORDS.test(text)) return this.decision('experience.price', message);
 
     if (entities.ordinal !== undefined || mentionsListed) {
@@ -1010,6 +1019,17 @@ export class IntentClassifierService {
       return pending;
     }
 
+    // "O segundo" logo depois de uma lista do SPA, da Boutique, de Dicas…
+    const catalogFollowUp = detectCatalogFollowUp(
+      normalizeText(message),
+      extractEntities(message, this.clock.today()).ordinal,
+      state,
+    );
+
+    if (catalogFollowUp) {
+      return this.decision(catalogFollowUp, message);
+    }
+
     const requestIntent = this.detectRequestIntent(message, history);
 
     if (requestIntent) {
@@ -1033,6 +1053,16 @@ export class IntentClassifierService {
 
     if (itemAnswer) {
       return this.decision(itemAnswer, message);
+    }
+
+    // Cardápio, Meus Favoritos e inscrição de lazer.
+    const personal =
+      detectFavorites(normalizeText(message)) ??
+      detectLeisureEnrollment(normalizeText(message), state) ??
+      detectMenu(normalizeText(message), state);
+
+    if (personal) {
+      return this.decision(personal, message);
     }
 
     const event = this.detectEvent(message, state);

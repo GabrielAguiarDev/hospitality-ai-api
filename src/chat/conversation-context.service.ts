@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import type { EntityManager, Repository } from 'typeorm';
 
 import { normalizeText } from '../common/text.js';
+import { CUISINE_CUE } from '../operations/restaurant-search.js';
 import { pendingConfirmation, type ConversationPhase, type ConversationState } from '../contracts/conversation-state.js';
 import type { GuestContext } from '../guest/guest-context.js';
 import type { DispatchResult } from '../operations/operations.types.js';
@@ -25,7 +26,7 @@ const EXPERIENCE_TARGETED = new Set<ChatIntent>([
   'experience.availability',
   'experience.booking',
 ]);
-const RESTAURANT_TARGETED = new Set<ChatIntent>(['restaurant.details', 'restaurant.booking']);
+const RESTAURANT_TARGETED = new Set<ChatIntent>(['restaurant.details', 'restaurant.booking', 'restaurant.menu']);
 
 export interface StoredContext {
   state: ConversationState;
@@ -143,7 +144,11 @@ export class ConversationContextService {
     if (RESTAURANT_TARGETED.has(decision.intent) && state.restaurant) {
       const { listed = [], selectedId } = state.restaurant;
 
-      if (selectedId && (demonstrative || decision.intent === 'restaurant.booking')) {
+      // "Quero reservar" e "mostre o cardápio" logo após um restaurante falam dele.
+      // O cardápio usa a selecionada só dentro do assunto e sem outra cozinha pedida.
+      const menuOfSelected =
+        decision.intent === 'restaurant.menu' && state.topic === 'restaurant' && !CUISINE_CUE.test(normalizeText(message));
+      if (selectedId && (demonstrative || decision.intent === 'restaurant.booking' || menuOfSelected)) {
         return this.withTarget(decision, 'restaurant', selectedId, 'selected');
       }
 

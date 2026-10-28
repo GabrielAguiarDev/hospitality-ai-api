@@ -358,12 +358,30 @@ describe.each([
     expect(result.reply).toContain('Pessoas: 4');
     expect(result.reply).toContain('Status: confirmada');
     expect(result.retrievedSources).toEqual([]);
-    expect(result.actions).toEqual([]);
+    // O texto continua completo; o card de Minhas Reservas vem junto.
+    expect(result.actions).toEqual([
+      {
+        type: 'booking.list',
+        label: 'Minhas reservas',
+        items: [
+          {
+            bookingId: 'res-1', kind: 'restaurant', title: 'Trattoria Aurora', date: '2026-10-24', time: '20:00',
+            status: 'confirmed', statusLabel: 'Confirmada', people: 4, simulated: false, confirmationCode: null,
+            buttons: [{ kind: 'navigate', label: 'Ver em Minhas Reservas', navigate: { screen: 'MyReservation', params: { tab: 'Gastronomy' } } }],
+          },
+        ],
+      },
+      { type: 'navigate', label: 'Abrir Minhas Reservas', screen: 'MyReservation', params: { tab: 'Gastronomy' } },
+    ]);
+    expect(result.actions.every(isValidChatAction)).toBe(true);
 
-    // Titular resolvido no snapshot e reservas filtradas pela hospedagem.
-    expect(resortQuery).toHaveBeenCalledTimes(2);
-    expect(resortQuery.mock.calls[0][1]).toEqual([GUEST.guestId]);
-    expect(resortQuery.mock.calls[1][1]).toEqual([9001, '2026-10-21', '2026-10-25', 9001, '2026-10-25', '2026-10-21']);
+    // Titular resolvido no snapshot (uma vez por ferramenta: restaurantes e
+    // experiências) e reservas filtradas pela hospedagem.
+    expect(resortQuery).toHaveBeenCalledTimes(3);
+    const stays = resortQuery.mock.calls.filter(([sql]) => /FROM tb_hospede h/.test(sql));
+    expect(stays.map(([, parameters]) => parameters)).toEqual([[GUEST.guestId], [GUEST.guestId]]);
+    const bookings = resortQuery.mock.calls.find(([sql]) => /FROM tb_reservarestaurante/.test(sql));
+    expect(bookings?.[1]).toEqual([9001, '2026-10-21', '2026-10-25', 9001, '2026-10-25', '2026-10-21']);
     // O banco interno não recebe consultas operacionais.
     expect(store.dataSource.query).not.toHaveBeenCalled();
     expect(embeddings.embed).not.toHaveBeenCalled();
@@ -376,7 +394,7 @@ describe.each([
       GUEST,
     );
 
-    expect(resortQuery).toHaveBeenCalledTimes(2);
+    expect(resortQuery).toHaveBeenCalledTimes(3);
     for (const [sql, parameters] of resortQuery.mock.calls) {
       expect(sql).not.toContain('guest-999');
       expect(sql).not.toContain('outro');

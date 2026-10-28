@@ -11,6 +11,7 @@ import {
 
 import { EventOperationsService } from './event-operations.service.js';
 import { ExperienceOperationsService } from './experience-operations.service.js';
+import { GuestOperationsService } from './guest-operations.service.js';
 import { INTENT_TOOL_MAP } from './intent-tool-map.js';
 import { ModuleOperationsService } from './module-operations.service.js';
 import { OperationsAiService } from './operations-ai.service.js';
@@ -33,6 +34,7 @@ export class OperationsDispatcherService {
     private readonly restaurantOperationsService: RestaurantOperationsService,
     private readonly eventOperationsService: EventOperationsService,
     private readonly moduleOperationsService: ModuleOperationsService,
+    private readonly guestOperationsService: GuestOperationsService,
   ) {}
 
   /** Produto da Boutique citado numa pergunta que o RAG não respondeu. */
@@ -62,6 +64,19 @@ export class OperationsDispatcherService {
     const tool = INTENT_TOOL_MAP[decision.intent];
 
     this.logger.log(`Intenção: ${decision.intent} → Ferramenta: ${tool}`);
+
+    // Minhas Reservas (restaurantes e experiências) em uma lista só.
+    if (decision.intent === 'reservation.list') {
+      return this.guestOperationsService.bookings(message, decision, guest, context);
+    }
+
+    if (decision.intent === 'favorite.list' || decision.intent === 'favorite.manage') {
+      return this.guestOperationsService.favorites(message, decision, guest, context);
+    }
+
+    if (decision.intent === 'leisure.enroll') {
+      return this.eventOperationsService.enroll(guest, context ?? { conversationId: '', state: {} });
+    }
 
     if (isRestaurantIntent(decision.intent)) {
       // Sem a conversa, a reserva só é encaminhada; o catálogo usa um estado vazio.

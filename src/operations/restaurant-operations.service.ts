@@ -2,7 +2,7 @@ import { Injectable, InternalServerErrorException } from '@nestjs/common';
 
 import type { IntentDecision, RestaurantIntent } from '../chat/chat-intent.types.js';
 import { matchByName, nameList, normalizeText, summarizeText } from '../common/text.js';
-import { RESTAURANT_TYPES, type ChatAction, type NavigateAction, type RestaurantOptionsAction } from '../contracts/chat-actions.js';
+import { navigateAction, RESTAURANT_TYPES, type ChatAction, type NavigateAction, type RestaurantOptionsAction } from '../contracts/chat-actions.js';
 import type {
   ConversationState,
   RestaurantConversationState,
@@ -10,7 +10,10 @@ import type {
 } from '../contracts/conversation-state.js';
 import type { GuestContext } from '../guest/guest-context.js';
 import { ResortClock } from '../resort/resort-clock.service.js';
+import type { MenuCategoryInfo } from '../resort/restaurant-menus.service.js';
 import type { RestaurantInfo } from '../resort/restaurants-catalog.service.js';
+
+import { menuView } from './card-builders.js';
 
 import { OperationsToolRegistryService } from './operations-tool-registry.service.js';
 import type { DispatchContext, DispatchResult } from './operations.types.js';
@@ -89,6 +92,29 @@ function compactFilters(filters: RestaurantSearchFilters): RestaurantSearchFilte
   return entries.length ? (Object.fromEntries(entries) as RestaurantSearchFilters) : undefined;
 }
 
+// Categorias citadas na pergunta ("o que tem de sobremesa?"), pelo nome do cadastro.
+const MENU_SECTIONS: RegExp[] = [
+  /\bsobremesas?\b/,
+  /\bentradas?\b/,
+  /\b(?:bebidas?|drinks?|sucos?|vinhos?|cervejas?)\b/,
+  /\bprincipa(?:l|is)\b/,
+  /\b(?:kids|infantil|criancas?)\b/,
+  /\bvegetarian[oa]s?\b/,
+  /\bvegan[oa]s?\b/,
+  /\b(?:massas?|pizzas?|sushis?|lanches?)\b/,
+];
+
+function sectionsAsked(message: string, categories: MenuCategoryInfo[]): MenuCategoryInfo[] {
+  const text = normalizeText(message);
+  const cues = MENU_SECTIONS.filter((cue) => cue.test(text));
+  return cues.length ? categories.filter((category) => cues.some((cue) => cue.test(normalizeText(category.name)))) : [];
+}
+
+// Página do restaurante (informativa + cardápio) para quem não reserva pelo app.
+function restaurantPage(restaurant: RestaurantInfo): NavigateAction {
+  return navigateAction('Restaurant', 'Ver restaurante', { restaurantId: String(restaurant.id) });
+}
+
 function gastronomyAction(restaurantId?: string): NavigateAction {
   return {
     type: 'navigate',
@@ -137,9 +163,14 @@ export class RestaurantOperationsService {
     guest: GuestContext,
     context: DispatchContext,
   ): Promise<DispatchResult> {
-    const state = context.state.restaurant ?? {};
+    // "De qual restaurante?" (cardápio) vale só para a mensagem seguinte.
+    const { awaiting, ...state }: RestaurantConversationState = context.state.restaurant ?? {};
     const all = await this.catalog(guest);
     const resolved = this.resolve(message, decision, state, all);
+
+    if (decision.intent === 'restaurant.menu' || (awaiting === 'menu' && decision.intent === 'restaurant.details' && resolved)) {
+      return this.menu(message, decision, guest, resolved, all, context.state, state);
+    }
 
     if (decision.intent === 'restaurant.booking') {
       const result = await this.handleBooking(message, guest, resolved ?? undefined, all);
@@ -192,7 +223,7 @@ export class RestaurantOperationsService {
             ? `Não consegui conferir pelo horário cadastrado de ${restaurant.name}: ${trimEnd(restaurant.openingHours)}.`
             : `O horário de funcionamento de ${restaurant.name} não está cadastrado.`
           : `${open ? 'Sim' : 'Não'}, ${restaurant.name} ${open ? 'está' : 'não está'} em funcionamento ${filters.windowLabel}.${hours}`,
-      actions: [...optionsAction([restaurant]), ...(restaurant.acceptsReservations ? [gastronomyAction(restaurant.id)] : [])],
+      actions: [...optionsAction([restaurant]), restaurant.acceptsReservations ? gastronomyAction(restaurant.id) : restaurantPage(restaurant)],
       resultCount: 1,
       state: this.state(conversation, { ...state, selectedId: restaurant.id, selectedName: restaurant.name }),
     };
@@ -306,6 +337,80 @@ export class RestaurantOperationsService {
     };
   }
 
+  /**
+   * Cardápio publicado (tb_catcardapio/tb_cardapio). Sem restaurante
+   * identificado, pergunta qual; nada é inferido sobre restrições
+   * alimentares além das categorias e textos do cadastro.
+   */
+  private async menu(
+    message: string,
+    decision: IntentDecision,
+    guest: GuestContext,
+    resolved: RestaurantInfo | null,
+    all: RestaurantInfo[],
+    conversation: ConversationState,
+    state: RestaurantConversationState,
+  ): Promise<DispatchResult> {
+    const filters = restaurantFilters(message, decision.entities ?? {}, this.clock.time());
+    // Uma cozinha pedida ("o italiano") vence o restaurante do contexto, se não for citado pelo nome.
+    const named = matchByName(withoutTimeWords(message), all).length === 1;
+    const byCuisine = filters.cuisine && !named ? all.filter((restaurant) => matchesCuisine(restaurant, filters)) : [];
+    const restaurant = byCuisine.length === 1 ? byCuisine[0] : byCuisine.length > 1 ? null : resolved;
+
+    if (!restaurant) {
+      const options = (byCuisine.length ? byCuisine : all.filter(({ type }) => type !== 'alimentacao')).slice(0, MAX_LISTED);
+      return {
+        tool: 'restaurants.menu',
+        reply: options.length
+          ? `De qual restaurante você quer ver o cardápio? ${nameList(options.map(({ name }) => name), 4)}${options.length > 4 ? ', entre outros' : ''}.`
+          : 'Não encontrei restaurantes ativos no cadastro do resort.',
+        actions: [...optionsAction(options), gastronomyAction()],
+        resultCount: options.length,
+        state: this.state(conversation, { ...state, listed: options.map(({ id, name }) => ({ id, name })), selectedId: undefined, selectedName: undefined, awaiting: 'menu' }),
+      };
+    }
+
+    const result = await this.registry.execute('restaurants.menu', guest, { restaurantId: String(restaurant.id) });
+
+    if (result.tool !== 'restaurants.menu') {
+      throw new InternalServerErrorException('Resultado inesperado da ferramenta.');
+    }
+
+    const selected = { ...state, selectedId: restaurant.id, selectedName: restaurant.name };
+    const menu = result.data;
+    const page = restaurant.acceptsReservations ? gastronomyAction(restaurant.id) : restaurantPage(restaurant);
+
+    if (menu.categories.length === 0) {
+      return {
+        tool: 'restaurants.menu',
+        reply: `O cardápio de ${restaurant.name} não está publicado no app.${restaurant.openingHours ? ` Funcionamento: ${trimEnd(restaurant.openingHours)}.` : ''}`,
+        actions: [restaurantPage(restaurant)],
+        resultCount: 0,
+        state: this.state(conversation, selected),
+      };
+    }
+
+    const sections = sectionsAsked(message, menu.categories);
+    const asked = sections.length > 0;
+    const shown = asked ? { ...menu, categories: sections } : menu;
+    const dishes = shown.categories.flatMap(({ dishes: items }) => items);
+    const booking = restaurant.acceptsReservations ? ' Os pratos são escolhidos na reserva, pelo app.' : '';
+    // Cita uma categoria pedida que não existe no cadastro, sem supor pratos.
+    const missing = !asked && MENU_SECTIONS.some((cue) => cue.test(normalizeText(message)));
+    const cards = menuView(restaurant, shown);
+
+    return {
+      tool: 'restaurants.menu',
+      reply: asked
+        ? `Em ${nameList(sections.map(({ name }) => name), 2)}, ${restaurant.name} tem ${nameList(dishes.map(({ name }) => name), 4)}${dishes.length > 4 ? ` e mais ${dishes.length - 4}` : ''}.${booking}`
+        : `${missing ? 'Não encontrei essa categoria no cardápio. ' : ''}Este é o cardápio de ${restaurant.name}: ${dishes.length} ${dishes.length === 1 ? 'prato' : 'pratos'} em ` +
+          `${nameList(menu.categories.map(({ name }) => name), 4)}.${booking}`,
+      actions: cards.length ? cards : [page],
+      resultCount: dishes.length,
+      state: this.state(conversation, selected),
+    };
+  }
+
   private details(
     restaurant: RestaurantInfo,
     conversation: ConversationState,
@@ -326,7 +431,7 @@ export class RestaurantOperationsService {
           ? 'A reserva é feita pelo aplicativo, em Gastronomia, com a seleção dos pratos. Quer que eu abra a Gastronomia?'
           : 'Não é preciso reservar.',
       ].filter(Boolean).join('\n'),
-      actions: [...optionsAction([restaurant]), ...(restaurant.acceptsReservations ? [gastronomyAction(restaurant.id)] : [])],
+      actions: [...optionsAction([restaurant]), restaurant.acceptsReservations ? gastronomyAction(restaurant.id) : restaurantPage(restaurant)],
       resultCount: 1,
       ...(restaurant.acceptsReservations
         ? { pendingQuestion: { intent: 'restaurant.booking' as const, targetId: restaurant.id } }
@@ -357,7 +462,7 @@ export class RestaurantOperationsService {
             restaurant.openingHours ? `Funcionamento: ${restaurant.openingHours}.` : '',
             bookable.length ? `Restaurantes com reserva pelo aplicativo: ${bookableNames}.` : '',
           ].filter(Boolean).join(' '),
-          actions: [gastronomyAction(restaurant.id)],
+          actions: [restaurantPage(restaurant)],
         };
       }
 

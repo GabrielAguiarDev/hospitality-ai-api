@@ -1,0 +1,2433 @@
+{
+  "schemaVersion": "1.0.0",
+  "generatedAt": "2026-10-28",
+  "app": {
+    "name": "yago-mobile-front",
+    "version": "5.18.1",
+    "branch": "feat/chat",
+    "stack": [
+      "react-native 0.79",
+      "expo 53",
+      "typescript",
+      "@tanstack/react-query 5",
+      "zustand",
+      "axios",
+      "socket.io-client"
+    ]
+  },
+  "conventions": {
+    "apiBaseUrlEnv": "EXPO_PUBLIC_API",
+    "aiApiBaseUrlEnv": "EXPO_PUBLIC_CONCIERGE_API",
+    "socketEnv": "EXPO_PUBLIC_SOCKET_IO",
+    "imageBucketEnv": "EXPO_PUBLIC_BUCKET",
+    "timezone": "America/Sao_Paulo",
+    "rulesDocument": "docs/yago-ai-audit/03-business-rules.md",
+    "note": "Endpoints are called by the mobile app; none is currently available to yago-ai-api. Tools and cards are proposals (implemented=false)."
+  },
+  "existingChatContract": {
+    "actionTypes": [
+      "navigate",
+      "experience.booking.card",
+      "experience.options"
+    ],
+    "actionRequestTypes": [
+      "experience.booking.confirm",
+      "experience.booking.cancel"
+    ],
+    "actionStatuses": [
+      "confirmed",
+      "already_confirmed",
+      "cancelled",
+      "expired",
+      "unavailable",
+      "changed"
+    ],
+    "navigateScreensAllowlist": [
+      "Gastronomy"
+    ],
+    "source": [
+      "src/services/concierge/chatApi.types.ts",
+      "src/screens/Concierge/chatScreenRoutes.ts"
+    ]
+  },
+  "proposedChatContract": {
+    "newActionTypes": [
+      "catalog.list",
+      "menu.view",
+      "booking.list",
+      "request.list",
+      "operation.card",
+      "favorite.changed"
+    ],
+    "newActionRequestTypes": [
+      "operation.confirm",
+      "operation.cancel",
+      "favorite.add",
+      "favorite.remove"
+    ],
+    "navigateScreens": [
+      "Gastronomy",
+      "Restaurant",
+      "Experiences",
+      "Experience",
+      "Events",
+      "Leisure",
+      "Requests",
+      "Spa",
+      "Boutique",
+      "Esg",
+      "Tips",
+      "Quiz",
+      "MyReservation",
+      "MyRequests",
+      "MyFavorites",
+      "Map"
+    ]
+  },
+  "modules": [
+    {
+      "id": "requests",
+      "name": "Solicitações",
+      "status": "implemented_with_api",
+      "chatViability": "operation_with_confirmation",
+      "priority": "P0",
+      "endpoints": [
+        "E06",
+        "E08"
+      ],
+      "routes": [
+        "requests"
+      ],
+      "source": "src/screens/Requests"
+    },
+    {
+      "id": "gastronomy",
+      "name": "Gastronomia",
+      "status": "implemented_with_api",
+      "chatViability": "query_card + navigate (booking)",
+      "priority": "P0",
+      "endpoints": [
+        "E16",
+        "E17",
+        "E18",
+        "E19",
+        "E21",
+        "E22",
+        "E23"
+      ],
+      "routes": [
+        "gastronomy",
+        "gastronomyId",
+        "bookingGastronomyDetails"
+      ],
+      "source": "src/screens/Gastronomy, src/screens/Booking/Gastronomy"
+    },
+    {
+      "id": "experiences",
+      "name": "Experiências",
+      "status": "implemented_with_api",
+      "chatViability": "operation_with_confirmation",
+      "priority": "P0",
+      "endpoints": [
+        "E28",
+        "E29",
+        "E30",
+        "E31",
+        "E32"
+      ],
+      "routes": [
+        "experiences",
+        "experienceId",
+        "bookingExperienceDetails"
+      ],
+      "source": "src/screens/Experiences, src/screens/Booking/Experience"
+    },
+    {
+      "id": "events",
+      "name": "Eventos",
+      "status": "implemented_with_api",
+      "chatViability": "query_card",
+      "priority": "P0",
+      "endpoints": [
+        "E35"
+      ],
+      "routes": [
+        "events"
+      ],
+      "source": "src/screens/Events"
+    },
+    {
+      "id": "leisure",
+      "name": "Lazer",
+      "status": "implemented_with_api",
+      "chatViability": "query_card + navigate (enrollment)",
+      "priority": "P1",
+      "endpoints": [
+        "E10",
+        "E11",
+        "E12",
+        "E13",
+        "E49"
+      ],
+      "routes": [
+        "leisure",
+        "signature"
+      ],
+      "source": "src/screens/Leisure, src/screens/Signature"
+    },
+    {
+      "id": "boutique",
+      "name": "Boutique",
+      "status": "implemented_with_api (informational only)",
+      "chatViability": "query_card",
+      "priority": "P2",
+      "endpoints": [
+        "E40",
+        "E41"
+      ],
+      "routes": [
+        "boutique"
+      ],
+      "source": "src/screens/Boutique"
+    },
+    {
+      "id": "spa",
+      "name": "SPA",
+      "status": "implemented_with_api (informational only)",
+      "chatViability": "query_card",
+      "priority": "P1",
+      "endpoints": [
+        "E42",
+        "E43",
+        "E44"
+      ],
+      "routes": [
+        "spa"
+      ],
+      "source": "src/screens/SPA"
+    },
+    {
+      "id": "esg",
+      "name": "ESG",
+      "status": "implemented_with_api",
+      "chatViability": "query_card + RAG",
+      "priority": "P2",
+      "endpoints": [
+        "E45",
+        "E46",
+        "E47"
+      ],
+      "routes": [
+        "esg"
+      ],
+      "source": "src/screens/ESG"
+    },
+    {
+      "id": "tips",
+      "name": "Dicas",
+      "status": "partial (only first tip shown)",
+      "chatViability": "query + RAG",
+      "priority": "P2",
+      "endpoints": [
+        "E48"
+      ],
+      "routes": [
+        "tip"
+      ],
+      "source": "src/screens/Tip"
+    },
+    {
+      "id": "quiz",
+      "name": "Quiz",
+      "status": "implemented_with_api (contract undocumented)",
+      "chatViability": "navigate",
+      "priority": "P3",
+      "endpoints": [
+        "E50",
+        "E51",
+        "E52",
+        "E53",
+        "E54",
+        "E55",
+        "E56"
+      ],
+      "routes": [
+        "quiz"
+      ],
+      "source": "src/screens/Quiz, src/services/quiz"
+    },
+    {
+      "id": "my_reservations",
+      "name": "Minhas Reservas",
+      "status": "implemented_with_api",
+      "chatViability": "query_card + operation_with_confirmation (cancel)",
+      "priority": "P0",
+      "endpoints": [
+        "E24",
+        "E25",
+        "E26",
+        "E27",
+        "E33",
+        "E34"
+      ],
+      "routes": [
+        "myReservation"
+      ],
+      "source": "src/screens/MyReservation"
+    },
+    {
+      "id": "my_requests",
+      "name": "Minhas Solicitações",
+      "status": "implemented_with_api",
+      "chatViability": "query_card + operation_with_confirmation (cancel)",
+      "priority": "P0",
+      "endpoints": [
+        "E07",
+        "E09",
+        "E14",
+        "E15"
+      ],
+      "routes": [
+        "myRequests"
+      ],
+      "source": "src/screens/MyRequests"
+    },
+    {
+      "id": "favorites",
+      "name": "Meus Favoritos",
+      "status": "implemented_with_api (events only)",
+      "chatViability": "query_card + light_operation",
+      "priority": "P1",
+      "endpoints": [
+        "E36",
+        "E37",
+        "E39"
+      ],
+      "routes": [
+        "myFavorites"
+      ],
+      "source": "src/screens/MyFavorites"
+    },
+    {
+      "id": "auth_context",
+      "name": "Autenticação e contexto",
+      "status": "implemented_with_api",
+      "chatViability": "context (no /me endpoint)",
+      "priority": "P0",
+      "endpoints": [
+        "E01",
+        "E02"
+      ],
+      "routes": [
+        "login"
+      ],
+      "source": "src/screens/Login, src/stores"
+    },
+    {
+      "id": "map",
+      "name": "Mapa",
+      "status": "implemented (no API)",
+      "chatViability": "navigate",
+      "priority": "P1",
+      "endpoints": [],
+      "routes": [
+        "map"
+      ],
+      "source": "src/screens/Map"
+    },
+    {
+      "id": "concierge",
+      "name": "Concierge (chat)",
+      "status": "partial (demo auth, simulated bookings)",
+      "chatViability": "—",
+      "priority": "P0",
+      "endpoints": [
+        "A01",
+        "A02",
+        "A03",
+        "A04"
+      ],
+      "routes": [
+        "concierge",
+        "conciergeVoice"
+      ],
+      "source": "src/screens/Concierge, src/services/concierge"
+    }
+  ],
+  "endpoints": [
+    {
+      "id": "E01",
+      "module": "auth",
+      "method": "POST",
+      "path": "access-control/guest-auth",
+      "class": "WRITE",
+      "function": "useLogin",
+      "source": "src/services/user/index.ts:17-39",
+      "auth": "none",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "no",
+      "notes": "room + laterName -> IUser"
+    },
+    {
+      "id": "E02",
+      "module": "system",
+      "method": "GET",
+      "path": "system/responsible",
+      "class": "READ",
+      "function": "getResponsible",
+      "source": "src/services/system/index.ts:64-87",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": "responsibleId = id where name === 'Hospede'"
+    },
+    {
+      "id": "E03",
+      "module": "system",
+      "method": "GET",
+      "path": "system/app-version",
+      "class": "READ",
+      "function": "getVersionApplication",
+      "source": "src/services/system/index.ts:41-62",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "no",
+      "notes": null
+    },
+    {
+      "id": "E04",
+      "module": "system",
+      "method": "GET",
+      "path": "image/find-by-type/:type",
+      "class": "READ",
+      "function": "getImageFindByType",
+      "source": "src/services/system/index.ts:18-39",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "partial",
+      "notes": null
+    },
+    {
+      "id": "E05",
+      "module": "push",
+      "method": "POST",
+      "path": "notification/assign",
+      "class": "WRITE",
+      "function": "saveNotificationToken",
+      "source": "src/services/system/index.ts:89-96",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "no",
+      "notes": null
+    },
+    {
+      "id": "E06",
+      "module": "requests",
+      "method": "GET",
+      "path": "department",
+      "class": "READ",
+      "function": "getDepartments",
+      "source": "src/services/department/index.ts:38-65",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E07",
+      "module": "requests",
+      "method": "GET",
+      "path": "order",
+      "class": "READ",
+      "function": "getOrderDepartments",
+      "source": "src/services/department/index.ts:67-81",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E08",
+      "module": "requests",
+      "method": "POST",
+      "path": "order",
+      "class": "TRANSACTIONAL",
+      "function": "createOrderDepartment",
+      "source": "src/services/department/index.ts:83-103",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "yes",
+      "notes": "no quantity field; no idempotency"
+    },
+    {
+      "id": "E09",
+      "module": "requests",
+      "method": "PATCH",
+      "path": "order/update-situation/:id",
+      "class": "TRANSACTIONAL",
+      "function": "updateSituationOrderDepartment",
+      "source": "src/services/department/index.ts:105-130",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "yes",
+      "notes": "situation=cancelada; only when pendente"
+    },
+    {
+      "id": "E10",
+      "module": "leisure",
+      "method": "GET",
+      "path": "leisure/leisure",
+      "class": "READ",
+      "function": "fetchLeisure",
+      "source": "src/services/leisure/index.ts:30-46",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E11",
+      "module": "leisure",
+      "method": "GET",
+      "path": "leisure/category",
+      "class": "READ",
+      "function": "getLeisureCategory",
+      "source": "src/services/leisure/index.ts:52-77",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E12",
+      "module": "leisure",
+      "method": "GET",
+      "path": "leisure/info/:categoryId",
+      "class": "READ",
+      "function": "getLeisureInfo",
+      "source": "src/services/leisure/index.ts:48-50",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E13",
+      "module": "leisure",
+      "method": "POST",
+      "path": "leisure/sign",
+      "class": "TRANSACTIONAL",
+      "function": "signLeisure",
+      "source": "src/services/leisure/index.ts:79-90",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "partial",
+      "notes": "one POST per leisureForm; dynamic form"
+    },
+    {
+      "id": "E14",
+      "module": "leisure",
+      "method": "GET",
+      "path": "leisure/sign",
+      "class": "READ",
+      "function": "getLeisureSubscription",
+      "source": "src/services/leisure/index.ts:92-106",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E15",
+      "module": "leisure",
+      "method": "PATCH",
+      "path": "leisure/sign/update-situation/:id",
+      "class": "TRANSACTIONAL",
+      "function": "updateSituationOrderSubscription",
+      "source": "src/services/leisure/index.ts:108-133",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "yes",
+      "notes": "situation=negado"
+    },
+    {
+      "id": "E16",
+      "module": "gastronomy",
+      "method": "GET",
+      "path": "restaurant",
+      "class": "READ",
+      "function": "fetchRestaurants",
+      "source": "src/services/gastronomy/index.ts:48-68",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E17",
+      "module": "gastronomy",
+      "method": "GET",
+      "path": "restaurant/:id",
+      "class": "READ",
+      "function": "fetchRestaurantId",
+      "source": "src/services/gastronomy/index.ts:75-92",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E18",
+      "module": "gastronomy",
+      "method": "GET",
+      "path": "category-menu/list-by-restaurant/:restaurantId",
+      "class": "READ",
+      "function": "getCategoryListRestaurantId",
+      "source": "src/services/gastronomy/index.ts:106-116",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E19",
+      "module": "gastronomy",
+      "method": "GET",
+      "path": "menu/list-by-category/:categoryId",
+      "class": "READ",
+      "function": "getMenuListCategoryId",
+      "source": "src/services/gastronomy/index.ts:94-104",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E20",
+      "module": "gastronomy",
+      "method": "GET",
+      "path": "section-menu/list-by-restaurant-id/:restaurantId",
+      "class": "READ",
+      "function": "getSectionListRestaurantId",
+      "source": "src/services/gastronomy/index.ts:118-128",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": false,
+      "personalData": false,
+      "aiReuse": "unknown",
+      "notes": "not called by any screen"
+    },
+    {
+      "id": "E21",
+      "module": "gastronomy",
+      "method": "GET",
+      "path": "block-category/list-by-category-menu/:categoryId",
+      "class": "READ",
+      "function": "getBlockCategoryMenuId",
+      "source": "src/services/gastronomy/index.ts:130-144",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E22",
+      "module": "gastronomy",
+      "method": "GET",
+      "path": "availability-restaurant/find-bookings-available",
+      "class": "READ",
+      "function": "fetchRestaurantAvailability",
+      "source": "src/services/gastronomy/index.ts:189-218",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": "query dateCheckin,dateCheckout,numberOfGuests,restaurantId"
+    },
+    {
+      "id": "E23",
+      "module": "gastronomy",
+      "method": "POST",
+      "path": "booking-restaurant",
+      "class": "TRANSACTIONAL",
+      "function": "bookingGastronomy",
+      "source": "src/services/gastronomy/index.ts:220-278",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "no",
+      "notes": "requires per-guest dish selection"
+    },
+    {
+      "id": "E24",
+      "module": "gastronomy",
+      "method": "GET",
+      "path": "booking-restaurant/find-by-lodging-pms/:lodgingIdPms",
+      "class": "READ",
+      "function": "getBookingGastronomy",
+      "source": "src/services/gastronomy/index.ts:280-318",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E25",
+      "module": "gastronomy",
+      "method": "PATCH",
+      "path": "booking-restaurant/update-situation-by-lodging-pms",
+      "class": "TRANSACTIONAL",
+      "function": "updateSituationBookingGastronomy",
+      "source": "src/services/gastronomy/index.ts:320-358",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "partial",
+      "notes": "cancels by lodgingIdPms+restaurantId, not by booking id"
+    },
+    {
+      "id": "E26",
+      "module": "gastronomy",
+      "method": "PUT",
+      "path": "order-restaurant/:orderRestaurantId",
+      "class": "TRANSACTIONAL",
+      "function": "updateOrderGastronomy",
+      "source": "src/services/gastronomy/index.ts:360-370",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "no",
+      "notes": null
+    },
+    {
+      "id": "E27",
+      "module": "gastronomy",
+      "method": "PATCH",
+      "path": "booking-restaurant/update-obs/:reservationId",
+      "class": "WRITE",
+      "function": "updateBookingObservation",
+      "source": "src/services/gastronomy/index.ts:372-381",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "no",
+      "notes": null
+    },
+    {
+      "id": "E28",
+      "module": "experiences",
+      "method": "GET",
+      "path": "experience",
+      "class": "READ",
+      "function": "fetchExperiences",
+      "source": "src/services/experience/index.ts:41-58",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E29",
+      "module": "experiences",
+      "method": "GET",
+      "path": "experience/:id",
+      "class": "READ",
+      "function": "fetchExperienceId",
+      "source": "src/services/experience/index.ts:65-82",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E30",
+      "module": "experiences",
+      "method": "POST",
+      "path": "experience-availability/find-availability",
+      "class": "READ",
+      "function": "fetchExperienceAvailability",
+      "source": "src/services/experience/index.ts:114-135",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E31",
+      "module": "experiences",
+      "method": "POST",
+      "path": "experience-booking",
+      "class": "TRANSACTIONAL",
+      "function": "bookingExperience",
+      "source": "src/services/experience/index.ts:146-236",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "yes",
+      "notes": "experienceAvailabilityId required"
+    },
+    {
+      "id": "E32",
+      "module": "experiences",
+      "method": "POST",
+      "path": "experience/sign",
+      "class": "TRANSACTIONAL",
+      "function": "signExperience",
+      "source": "src/services/experience/index.ts:137-139",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "partial",
+      "notes": "may not exist in production (docs/expsign-yago-mobile-api.md)"
+    },
+    {
+      "id": "E33",
+      "module": "experiences",
+      "method": "GET",
+      "path": "experience-booking/find-by-lodging-pms/:lodgingIdPms",
+      "class": "READ",
+      "function": "getBookingExperience",
+      "source": "src/services/experience/index.ts:244-267",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E34",
+      "module": "experiences",
+      "method": "PATCH",
+      "path": "experience-booking/update-situation/:reservationId",
+      "class": "TRANSACTIONAL",
+      "function": "updateSituationBookingExperience",
+      "source": "src/services/experience/index.ts:269-304",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "yes",
+      "notes": "situation=cancelado"
+    },
+    {
+      "id": "E35",
+      "module": "events",
+      "method": "GET",
+      "path": "event?dateStart=&dateEnd=",
+      "class": "READ",
+      "function": "fetchEvents",
+      "source": "src/services/event/index.ts:25-45",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E36",
+      "module": "favorites",
+      "method": "GET",
+      "path": "notification",
+      "class": "READ",
+      "function": "getNotifications",
+      "source": "src/services/notification/index.ts:26-43",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E37",
+      "module": "favorites",
+      "method": "POST",
+      "path": "notification",
+      "class": "WRITE",
+      "function": "createNotification",
+      "source": "src/services/notification/index.ts:45-91",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "partial",
+      "notes": "favorite = notification eventType 'evento'; local reminder scheduled by app"
+    },
+    {
+      "id": "E38",
+      "module": "notifications",
+      "method": "PATCH",
+      "path": "notification/:id",
+      "class": "WRITE",
+      "function": "readNotification",
+      "source": "src/services/notification/index.ts:93-116",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "no",
+      "notes": null
+    },
+    {
+      "id": "E39",
+      "module": "favorites",
+      "method": "DELETE",
+      "path": "notification/:id",
+      "class": "WRITE",
+      "function": "removeNotification",
+      "source": "src/services/notification/index.ts:118-138",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E40",
+      "module": "boutique",
+      "method": "GET",
+      "path": "product/category",
+      "class": "READ",
+      "function": "getBoutiqueCategories",
+      "source": "src/services/boutique/index.ts:13-32",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E41",
+      "module": "boutique",
+      "method": "GET",
+      "path": "product/?productCategoryId=",
+      "class": "READ",
+      "function": "getBoutiqueProductsCategoryId",
+      "source": "src/services/boutique/index.ts:34-49",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E42",
+      "module": "spa",
+      "method": "GET",
+      "path": "spa",
+      "class": "READ",
+      "function": "getSpa",
+      "source": "src/services/spa/index.ts:13-27",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E43",
+      "module": "spa",
+      "method": "GET",
+      "path": "spa-category",
+      "class": "READ",
+      "function": "getSpaService",
+      "source": "src/services/spa/index.ts:29-52",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E44",
+      "module": "spa",
+      "method": "GET",
+      "path": "spa-service",
+      "class": "READ",
+      "function": "getSpaService",
+      "source": "src/services/spa/index.ts:35",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E45",
+      "module": "esg",
+      "method": "GET",
+      "path": "esg",
+      "class": "READ",
+      "function": "getEsg",
+      "source": "src/services/esg/index.ts:12-26",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E46",
+      "module": "esg",
+      "method": "GET",
+      "path": "esg/partner",
+      "class": "READ",
+      "function": "getEsgPartner",
+      "source": "src/services/esg/index.ts:28-42",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E47",
+      "module": "esg",
+      "method": "GET",
+      "path": "esg/initiative",
+      "class": "READ",
+      "function": "getEsgInitiative",
+      "source": "src/services/esg/index.ts:44-58",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E48",
+      "module": "tips",
+      "method": "GET",
+      "path": "system/tip",
+      "class": "READ",
+      "function": "getTip",
+      "source": "src/services/tip/index.ts:12-26",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E49",
+      "module": "forms",
+      "method": "GET",
+      "path": "form/:id",
+      "class": "READ",
+      "function": "getSignatureForm",
+      "source": "src/services/signature/index.ts:7-26",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E50",
+      "module": "quiz",
+      "method": "GET",
+      "path": "quiz/?offset=&limit=",
+      "class": "READ",
+      "function": "quiz api list",
+      "source": "src/services/quiz/api.ts:24-42",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E51",
+      "module": "quiz",
+      "method": "GET",
+      "path": "quiz/:quizId",
+      "class": "READ",
+      "function": "quiz api detail",
+      "source": "src/services/quiz/api.ts:49-65",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": false,
+      "aiReuse": "no",
+      "notes": null
+    },
+    {
+      "id": "E52",
+      "module": "quiz",
+      "method": "POST",
+      "path": "quiz-participation/",
+      "class": "WRITE",
+      "function": "quiz api participate",
+      "source": "src/services/quiz/api.ts:67-70",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "no",
+      "notes": null
+    },
+    {
+      "id": "E53",
+      "module": "quiz",
+      "method": "GET",
+      "path": "quiz-participation/:quizId/me",
+      "class": "READ",
+      "function": "quiz api me",
+      "source": "src/services/quiz/api.ts:72-77",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "yes",
+      "notes": null
+    },
+    {
+      "id": "E54",
+      "module": "quiz",
+      "method": "POST",
+      "path": "quiz-participation/answers",
+      "class": "WRITE",
+      "function": "quiz api answer",
+      "source": "src/services/quiz/api.ts:79-82",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "no",
+      "notes": null
+    },
+    {
+      "id": "E55",
+      "module": "quiz",
+      "method": "POST",
+      "path": "quiz-participation/next",
+      "class": "WRITE",
+      "function": "quiz api next",
+      "source": "src/services/quiz/api.ts:84-90",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "no",
+      "notes": null
+    },
+    {
+      "id": "E56",
+      "module": "quiz",
+      "method": "GET",
+      "path": "quiz-participation/:participationId/result",
+      "class": "READ",
+      "function": "quiz api result",
+      "source": "src/services/quiz/api.ts:92-97",
+      "auth": "bearer_guest_jwt",
+      "usedByScreens": true,
+      "personalData": true,
+      "aiReuse": "yes",
+      "notes": null
+    }
+  ],
+  "aiApi": [
+    {
+      "id": "A01",
+      "method": "POST",
+      "path": "/chat",
+      "source": "src/services/concierge/chatApi.ts:103-108"
+    },
+    {
+      "id": "A02",
+      "method": "POST",
+      "path": "/chat/actions",
+      "source": "src/services/concierge/chatApi.ts:111-117"
+    },
+    {
+      "id": "A03",
+      "method": "POST",
+      "path": "/chat/voice",
+      "source": "src/services/concierge/chatApi.ts:126-146"
+    },
+    {
+      "id": "A04",
+      "method": "GET",
+      "path": "/chat/:conversationId/messages",
+      "source": "src/services/concierge/chatApi.ts:149-155"
+    }
+  ],
+  "socket": {
+    "namespace": "/quiz",
+    "source": "src/services/quiz/liveSession.ts:249-263",
+    "clientEvents": [
+      "quiz:join",
+      "answer:submit",
+      "quiz:leave"
+    ],
+    "serverEvents": [
+      "quiz:joined",
+      "quiz:rejected",
+      "player:joined",
+      "player:left",
+      "quiz:started",
+      "question:started",
+      "question:ended",
+      "answer:result",
+      "leaderboard:update",
+      "quiz:ended",
+      "host:disconnected",
+      "error",
+      "pong"
+    ]
+  },
+  "tools": [
+    {
+      "id": "T01",
+      "name": "guest.getStayContext",
+      "module": "context",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "GAP",
+      "priority": "P0",
+      "endpoints": [],
+      "cards": [],
+      "rules": [
+        "R-CTX-01",
+        "R-CTX-07"
+      ],
+      "gaps": [
+        "G1"
+      ],
+      "implemented": false
+    },
+    {
+      "id": "T02",
+      "name": "restaurants.list",
+      "module": "gastronomy",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY_WITH_APP_RULES",
+      "priority": "P0",
+      "endpoints": [
+        "E16"
+      ],
+      "cards": [
+        "C01"
+      ],
+      "rules": [
+        "R-GAS-01",
+        "R-GAS-02",
+        "R-GAS-04"
+      ],
+      "gaps": [],
+      "implemented": false
+    },
+    {
+      "id": "T03",
+      "name": "restaurants.getDetails",
+      "module": "gastronomy",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY",
+      "priority": "P0",
+      "endpoints": [
+        "E17"
+      ],
+      "cards": [
+        "C01"
+      ],
+      "rules": [
+        "R-GAS-03"
+      ],
+      "gaps": [],
+      "implemented": false
+    },
+    {
+      "id": "T04",
+      "name": "restaurants.getMenu",
+      "module": "gastronomy",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY",
+      "priority": "P0",
+      "endpoints": [
+        "E18",
+        "E19"
+      ],
+      "cards": [
+        "C02",
+        "C03"
+      ],
+      "rules": [
+        "R-GAS-12"
+      ],
+      "gaps": [],
+      "implemented": false
+    },
+    {
+      "id": "T05",
+      "name": "restaurants.checkAvailability",
+      "module": "gastronomy",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY_WITH_APP_RULES",
+      "priority": "P0",
+      "endpoints": [
+        "E22",
+        "E24"
+      ],
+      "cards": [
+        "C01"
+      ],
+      "rules": [
+        "R-GAS-06",
+        "R-GAS-07",
+        "R-GAS-13"
+      ],
+      "gaps": [
+        "G12"
+      ],
+      "implemented": false
+    },
+    {
+      "id": "T06",
+      "name": "restaurants.startBooking",
+      "module": "gastronomy",
+      "kind": "NAVIGATION",
+      "confirmation": "SCREEN",
+      "viability": "READY",
+      "priority": "P0",
+      "endpoints": [],
+      "cards": [
+        "navigate"
+      ],
+      "rules": [
+        "R-GAS-03",
+        "R-GAS-06"
+      ],
+      "gaps": [],
+      "implemented": false
+    },
+    {
+      "id": "T07",
+      "name": "experiences.list",
+      "module": "experiences",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY",
+      "priority": "P0",
+      "endpoints": [
+        "E28",
+        "E30"
+      ],
+      "cards": [
+        "C04"
+      ],
+      "rules": [
+        "R-EXP-01",
+        "R-EXP-02"
+      ],
+      "gaps": [],
+      "implemented": false
+    },
+    {
+      "id": "T08",
+      "name": "experiences.getDetails",
+      "module": "experiences",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY",
+      "priority": "P0",
+      "endpoints": [
+        "E29"
+      ],
+      "cards": [
+        "C04"
+      ],
+      "rules": [
+        "R-EXP-14",
+        "R-EXP-12"
+      ],
+      "gaps": [],
+      "implemented": false
+    },
+    {
+      "id": "T09",
+      "name": "experiences.checkEligibility",
+      "module": "experiences",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY_WITH_APP_RULES",
+      "priority": "P0",
+      "endpoints": [
+        "E29",
+        "E33"
+      ],
+      "cards": [],
+      "rules": [
+        "R-EXP-03",
+        "R-EXP-04",
+        "R-EXP-05",
+        "R-EXP-06",
+        "R-EXP-07"
+      ],
+      "gaps": [],
+      "implemented": false
+    },
+    {
+      "id": "T10",
+      "name": "experiences.checkAvailability",
+      "module": "experiences",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY",
+      "priority": "P0",
+      "endpoints": [
+        "E30"
+      ],
+      "cards": [
+        "C04"
+      ],
+      "rules": [
+        "R-EXP-08",
+        "R-EXP-09",
+        "R-EXP-10"
+      ],
+      "gaps": [],
+      "implemented": false
+    },
+    {
+      "id": "T11",
+      "name": "experiences.prepareBooking",
+      "module": "experiences",
+      "kind": "TRANSACTIONAL",
+      "confirmation": "EXPLICIT",
+      "viability": "READY_WITH_APP_RULES",
+      "priority": "P0",
+      "endpoints": [
+        "E29",
+        "E30",
+        "E33",
+        "E31",
+        "E32"
+      ],
+      "cards": [
+        "experience.booking.card"
+      ],
+      "rules": [
+        "R-EXP-03",
+        "R-EXP-07",
+        "R-EXP-09",
+        "R-EXP-11",
+        "R-EXP-12",
+        "R-EXP-13"
+      ],
+      "gaps": [
+        "G1",
+        "G2",
+        "G6",
+        "G8",
+        "G9"
+      ],
+      "implemented": false
+    },
+    {
+      "id": "T12",
+      "name": "bookings.listMine",
+      "module": "my_reservations",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY",
+      "priority": "P0",
+      "endpoints": [
+        "E24",
+        "E18",
+        "E33"
+      ],
+      "cards": [
+        "C12"
+      ],
+      "rules": [
+        "R-GAS-15",
+        "R-GAS-17",
+        "R-EXP-15",
+        "R-EXP-16"
+      ],
+      "gaps": [],
+      "implemented": false
+    },
+    {
+      "id": "T13",
+      "name": "bookings.getDetails",
+      "module": "my_reservations",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY",
+      "priority": "P0",
+      "endpoints": [
+        "E24",
+        "E33"
+      ],
+      "cards": [
+        "C12"
+      ],
+      "rules": [],
+      "gaps": [
+        "G3"
+      ],
+      "implemented": false
+    },
+    {
+      "id": "T14",
+      "name": "bookings.prepareCancelExperience",
+      "module": "my_reservations",
+      "kind": "TRANSACTIONAL",
+      "confirmation": "EXPLICIT",
+      "viability": "READY_WITH_APP_RULES",
+      "priority": "P1",
+      "endpoints": [
+        "E33",
+        "E34"
+      ],
+      "cards": [
+        "C16"
+      ],
+      "rules": [
+        "R-EXP-16"
+      ],
+      "gaps": [
+        "G6"
+      ],
+      "implemented": false
+    },
+    {
+      "id": "T15",
+      "name": "bookings.prepareCancelRestaurant",
+      "module": "my_reservations",
+      "kind": "TRANSACTIONAL",
+      "confirmation": "EXPLICIT",
+      "viability": "GAP",
+      "priority": "P2",
+      "endpoints": [
+        "E24",
+        "E25"
+      ],
+      "cards": [
+        "C16"
+      ],
+      "rules": [
+        "R-GAS-15",
+        "R-GAS-16"
+      ],
+      "gaps": [
+        "G4"
+      ],
+      "implemented": false
+    },
+    {
+      "id": "T16",
+      "name": "bookings.editRestaurantDishes",
+      "module": "my_reservations",
+      "kind": "NAVIGATION",
+      "confirmation": "SCREEN",
+      "viability": "READY",
+      "priority": "P2",
+      "endpoints": [],
+      "cards": [
+        "navigate"
+      ],
+      "rules": [
+        "R-GAS-15"
+      ],
+      "gaps": [],
+      "implemented": false
+    },
+    {
+      "id": "T17",
+      "name": "events.list",
+      "module": "events",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY",
+      "priority": "P0",
+      "endpoints": [
+        "E35",
+        "E36"
+      ],
+      "cards": [
+        "C05"
+      ],
+      "rules": [
+        "R-EVT-01",
+        "R-EVT-02",
+        "R-DT-01"
+      ],
+      "gaps": [],
+      "implemented": false
+    },
+    {
+      "id": "T18",
+      "name": "events.getDetails",
+      "module": "events",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY",
+      "priority": "P1",
+      "endpoints": [
+        "E35"
+      ],
+      "cards": [
+        "C05"
+      ],
+      "rules": [],
+      "gaps": [
+        "G3"
+      ],
+      "implemented": false
+    },
+    {
+      "id": "T19",
+      "name": "requests.listDepartments",
+      "module": "requests",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY",
+      "priority": "P0",
+      "endpoints": [
+        "E06"
+      ],
+      "cards": [],
+      "rules": [
+        "R-REQ-01",
+        "R-REQ-06"
+      ],
+      "gaps": [],
+      "implemented": false
+    },
+    {
+      "id": "T20",
+      "name": "requests.findItems",
+      "module": "requests",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY",
+      "priority": "P0",
+      "endpoints": [
+        "E06"
+      ],
+      "cards": [
+        "C09"
+      ],
+      "rules": [
+        "R-REQ-01",
+        "R-REQ-02"
+      ],
+      "gaps": [],
+      "implemented": false
+    },
+    {
+      "id": "T21",
+      "name": "requests.prepareCreate",
+      "module": "requests",
+      "kind": "TRANSACTIONAL",
+      "confirmation": "EXPLICIT",
+      "viability": "READY_WITH_APP_RULES",
+      "priority": "P0",
+      "endpoints": [
+        "E06",
+        "E08"
+      ],
+      "cards": [
+        "C10",
+        "C16"
+      ],
+      "rules": [
+        "R-REQ-03",
+        "R-REQ-04",
+        "R-REQ-05"
+      ],
+      "gaps": [
+        "G9",
+        "G13"
+      ],
+      "implemented": false
+    },
+    {
+      "id": "T22",
+      "name": "requests.listMine",
+      "module": "my_requests",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY",
+      "priority": "P0",
+      "endpoints": [
+        "E07",
+        "E06",
+        "E14"
+      ],
+      "cards": [
+        "C11"
+      ],
+      "rules": [
+        "R-REQ-07",
+        "R-LAZ-06",
+        "R-LAZ-07"
+      ],
+      "gaps": [],
+      "implemented": false
+    },
+    {
+      "id": "T23",
+      "name": "requests.prepareCancel",
+      "module": "my_requests",
+      "kind": "TRANSACTIONAL",
+      "confirmation": "EXPLICIT",
+      "viability": "READY",
+      "priority": "P1",
+      "endpoints": [
+        "E07",
+        "E09"
+      ],
+      "cards": [
+        "C16"
+      ],
+      "rules": [
+        "R-REQ-07"
+      ],
+      "gaps": [],
+      "implemented": false
+    },
+    {
+      "id": "T24",
+      "name": "leisure.listActivities",
+      "module": "leisure",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY_WITH_APP_RULES",
+      "priority": "P1",
+      "endpoints": [
+        "E10",
+        "E11"
+      ],
+      "cards": [
+        "C06"
+      ],
+      "rules": [
+        "R-LAZ-01",
+        "R-LAZ-03",
+        "R-DT-04"
+      ],
+      "gaps": [
+        "G7"
+      ],
+      "implemented": false
+    },
+    {
+      "id": "T25",
+      "name": "leisure.getCategoryInfo",
+      "module": "leisure",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY",
+      "priority": "P1",
+      "endpoints": [
+        "E11",
+        "E12"
+      ],
+      "cards": [],
+      "rules": [
+        "R-LAZ-02"
+      ],
+      "gaps": [],
+      "implemented": false
+    },
+    {
+      "id": "T26",
+      "name": "leisure.startEnrollment",
+      "module": "leisure",
+      "kind": "NAVIGATION",
+      "confirmation": "SCREEN",
+      "viability": "READY",
+      "priority": "P1",
+      "endpoints": [],
+      "cards": [
+        "navigate"
+      ],
+      "rules": [
+        "R-LAZ-04"
+      ],
+      "gaps": [],
+      "implemented": false
+    },
+    {
+      "id": "T27",
+      "name": "leisure.prepareCancelEnrollment",
+      "module": "my_requests",
+      "kind": "TRANSACTIONAL",
+      "confirmation": "EXPLICIT",
+      "viability": "READY",
+      "priority": "P2",
+      "endpoints": [
+        "E14",
+        "E15"
+      ],
+      "cards": [
+        "C16"
+      ],
+      "rules": [
+        "R-LAZ-06"
+      ],
+      "gaps": [],
+      "implemented": false
+    },
+    {
+      "id": "T28",
+      "name": "favorites.list",
+      "module": "favorites",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY",
+      "priority": "P1",
+      "endpoints": [
+        "E36",
+        "E35"
+      ],
+      "cards": [
+        "C13"
+      ],
+      "rules": [
+        "R-FAV-01",
+        "R-FAV-03"
+      ],
+      "gaps": [],
+      "implemented": false
+    },
+    {
+      "id": "T29",
+      "name": "favorites.addEvent",
+      "module": "favorites",
+      "kind": "WRITE",
+      "confirmation": "LIGHT",
+      "viability": "GAP",
+      "priority": "P1",
+      "endpoints": [
+        "E35",
+        "E36",
+        "E37"
+      ],
+      "cards": [
+        "C05"
+      ],
+      "rules": [
+        "R-FAV-01",
+        "R-FAV-02"
+      ],
+      "gaps": [
+        "G6"
+      ],
+      "implemented": false
+    },
+    {
+      "id": "T30",
+      "name": "favorites.remove",
+      "module": "favorites",
+      "kind": "WRITE",
+      "confirmation": "LIGHT",
+      "viability": "READY",
+      "priority": "P1",
+      "endpoints": [
+        "E39"
+      ],
+      "cards": [
+        "C05"
+      ],
+      "rules": [
+        "R-FAV-02"
+      ],
+      "gaps": [
+        "G6"
+      ],
+      "implemented": false
+    },
+    {
+      "id": "T31",
+      "name": "spa.listServices",
+      "module": "spa",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY",
+      "priority": "P1",
+      "endpoints": [
+        "E42",
+        "E43",
+        "E44"
+      ],
+      "cards": [
+        "C07"
+      ],
+      "rules": [
+        "R-SPA-01"
+      ],
+      "gaps": [
+        "G10"
+      ],
+      "implemented": false
+    },
+    {
+      "id": "T32",
+      "name": "boutique.listProducts",
+      "module": "boutique",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY",
+      "priority": "P2",
+      "endpoints": [
+        "E40",
+        "E41"
+      ],
+      "cards": [
+        "C08"
+      ],
+      "rules": [
+        "R-BTQ-01"
+      ],
+      "gaps": [
+        "G10"
+      ],
+      "implemented": false
+    },
+    {
+      "id": "T33",
+      "name": "esg.getContent",
+      "module": "esg",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY",
+      "priority": "P2",
+      "endpoints": [
+        "E45",
+        "E46",
+        "E47"
+      ],
+      "cards": [
+        "C15"
+      ],
+      "rules": [
+        "R-ESG-01"
+      ],
+      "gaps": [],
+      "implemented": false
+    },
+    {
+      "id": "T34",
+      "name": "tips.list",
+      "module": "tips",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY",
+      "priority": "P2",
+      "endpoints": [
+        "E48"
+      ],
+      "cards": [
+        "C14"
+      ],
+      "rules": [
+        "R-TIP-01"
+      ],
+      "gaps": [],
+      "implemented": false
+    },
+    {
+      "id": "T35",
+      "name": "quiz.list",
+      "module": "quiz",
+      "kind": "READ",
+      "confirmation": "NONE",
+      "viability": "READY",
+      "priority": "P3",
+      "endpoints": [
+        "E50",
+        "E53"
+      ],
+      "cards": [
+        "C17"
+      ],
+      "rules": [
+        "R-QZ-01",
+        "R-QZ-03",
+        "R-QZ-05"
+      ],
+      "gaps": [
+        "G11"
+      ],
+      "implemented": false
+    },
+    {
+      "id": "T36",
+      "name": "navigation.open",
+      "module": "navigation",
+      "kind": "NAVIGATION",
+      "confirmation": "SCREEN",
+      "viability": "READY",
+      "priority": "P0",
+      "endpoints": [],
+      "cards": [
+        "navigate"
+      ],
+      "rules": [],
+      "gaps": [],
+      "implemented": false
+    }
+  ],
+  "cards": [
+    {
+      "id": "C01",
+      "kind": "restaurant",
+      "action": "catalog.list",
+      "existsInApp": false
+    },
+    {
+      "id": "C02",
+      "kind": "menu",
+      "action": "menu.view",
+      "existsInApp": false
+    },
+    {
+      "id": "C03",
+      "kind": "dish",
+      "action": "menu.view",
+      "existsInApp": false
+    },
+    {
+      "id": "C04",
+      "kind": "experience",
+      "action": "catalog.list|experience.options|experience.booking.card",
+      "existsInApp": "partial"
+    },
+    {
+      "id": "C05",
+      "kind": "event",
+      "action": "catalog.list",
+      "existsInApp": false
+    },
+    {
+      "id": "C06",
+      "kind": "leisure_activity",
+      "action": "catalog.list",
+      "existsInApp": false
+    },
+    {
+      "id": "C07",
+      "kind": "spa_service",
+      "action": "catalog.list",
+      "existsInApp": false
+    },
+    {
+      "id": "C08",
+      "kind": "product",
+      "action": "catalog.list",
+      "existsInApp": false
+    },
+    {
+      "id": "C09",
+      "kind": "request_item",
+      "action": "catalog.list",
+      "existsInApp": false
+    },
+    {
+      "id": "C10",
+      "kind": "request",
+      "action": "operation.card",
+      "existsInApp": false
+    },
+    {
+      "id": "C11",
+      "kind": "request.status",
+      "action": "request.list",
+      "existsInApp": false
+    },
+    {
+      "id": "C12",
+      "kind": "booking",
+      "action": "booking.list",
+      "existsInApp": false
+    },
+    {
+      "id": "C13",
+      "kind": "favorite",
+      "action": "catalog.list",
+      "existsInApp": false
+    },
+    {
+      "id": "C14",
+      "kind": "tip",
+      "action": "catalog.list",
+      "existsInApp": false
+    },
+    {
+      "id": "C15",
+      "kind": "esg",
+      "action": "catalog.list",
+      "existsInApp": false
+    },
+    {
+      "id": "C16",
+      "kind": "operation.confirm",
+      "action": "operation.card",
+      "existsInApp": false
+    },
+    {
+      "id": "C17",
+      "kind": "quiz",
+      "action": "catalog.list",
+      "existsInApp": false
+    }
+  ],
+  "routes": [
+    {
+      "route": "gastronomy",
+      "contractScreen": "Gastronomy",
+      "params": null,
+      "openFromChat": "yes",
+      "source": "src/screens/Gastronomy/index.tsx"
+    },
+    {
+      "route": "gastronomyId",
+      "contractScreen": "Restaurant",
+      "params": {
+        "id": "restaurantId"
+      },
+      "openFromChat": "yes",
+      "source": "src/screens/Gastronomy/screens/[gastronomyId].tsx"
+    },
+    {
+      "route": "bookingGastronomyDetails",
+      "contractScreen": "Gastronomy",
+      "params": {
+        "id": "restaurantId"
+      },
+      "openFromChat": "yes (already mapped)",
+      "source": "src/screens/Booking/Gastronomy/screens/Details.tsx"
+    },
+    {
+      "route": "bookingGastronomySelectDate",
+      "contractScreen": null,
+      "params": "TRestaurantSelectDate",
+      "openFromChat": "object_built_by_app",
+      "source": "src/screens/Booking/Gastronomy/screens/SelectDate.tsx"
+    },
+    {
+      "route": "bookingGastronomySelectDish",
+      "contractScreen": null,
+      "params": "TRestaurantSummary",
+      "openFromChat": "no",
+      "source": "src/screens/Booking/Gastronomy/screens/SelectDish/index.tsx"
+    },
+    {
+      "route": "experiences",
+      "contractScreen": "Experiences",
+      "params": null,
+      "openFromChat": "yes",
+      "source": "src/screens/Experiences/index.tsx"
+    },
+    {
+      "route": "experienceId",
+      "contractScreen": "Experience",
+      "params": {
+        "id": "experienceId"
+      },
+      "openFromChat": "yes",
+      "source": "src/screens/Experiences/screens/[experienceId].tsx"
+    },
+    {
+      "route": "bookingExperienceDetails",
+      "contractScreen": "Experience",
+      "params": {
+        "id": "experienceId"
+      },
+      "openFromChat": "yes",
+      "source": "src/screens/Booking/Experience/screens/Details.tsx"
+    },
+    {
+      "route": "bookingExperienceSelectDate",
+      "contractScreen": null,
+      "params": "TExperienceSelectDate",
+      "openFromChat": "object_built_by_app",
+      "source": "src/screens/Booking/Experience/screens/SelectDate.tsx"
+    },
+    {
+      "route": "events",
+      "contractScreen": "Events",
+      "params": null,
+      "openFromChat": "yes",
+      "source": "src/screens/Events/index.tsx"
+    },
+    {
+      "route": "leisure",
+      "contractScreen": "Leisure",
+      "params": null,
+      "openFromChat": "yes",
+      "source": "src/screens/Leisure/index.tsx"
+    },
+    {
+      "route": "signature",
+      "contractScreen": null,
+      "params": "TSignature",
+      "openFromChat": "no",
+      "source": "src/screens/Signature/index.tsx"
+    },
+    {
+      "route": "requests",
+      "contractScreen": "Requests",
+      "params": {
+        "nested": "department.name -> IDepartment"
+      },
+      "openFromChat": "yes (list) / object_built_by_app (department)",
+      "source": "src/screens/Requests/index.tsx"
+    },
+    {
+      "route": "spa",
+      "contractScreen": "Spa",
+      "params": null,
+      "openFromChat": "yes",
+      "source": "src/screens/SPA/index.tsx"
+    },
+    {
+      "route": "boutique",
+      "contractScreen": "Boutique",
+      "params": null,
+      "openFromChat": "yes",
+      "source": "src/screens/Boutique/index.tsx"
+    },
+    {
+      "route": "esg",
+      "contractScreen": "Esg",
+      "params": null,
+      "openFromChat": "yes",
+      "source": "src/screens/ESG/index.tsx"
+    },
+    {
+      "route": "tip",
+      "contractScreen": "Tips",
+      "params": null,
+      "openFromChat": "yes",
+      "source": "src/screens/Tip/index.tsx"
+    },
+    {
+      "route": "quiz",
+      "contractScreen": "Quiz",
+      "params": null,
+      "openFromChat": "yes",
+      "source": "src/screens/Quiz/index.tsx"
+    },
+    {
+      "route": "map",
+      "contractScreen": "Map",
+      "params": "TLocation",
+      "openFromChat": "object_built_by_app",
+      "source": "src/screens/Map/index.tsx"
+    },
+    {
+      "route": "myReservation",
+      "contractScreen": "MyReservation",
+      "params": {
+        "tab": "Gastronomy|Experience"
+      },
+      "openFromChat": "yes",
+      "source": "src/screens/MyReservation/index.tsx"
+    },
+    {
+      "route": "myRequests",
+      "contractScreen": "MyRequests",
+      "params": null,
+      "openFromChat": "yes",
+      "source": "src/screens/MyRequests/index.tsx"
+    },
+    {
+      "route": "myFavorites",
+      "contractScreen": "MyFavorites",
+      "params": null,
+      "openFromChat": "yes",
+      "source": "src/screens/MyFavorites/index.tsx"
+    },
+    {
+      "route": "webView",
+      "contractScreen": null,
+      "params": {
+        "title": "string",
+        "url": "http(s) allowlist"
+      },
+      "openFromChat": "allowlist_only",
+      "source": "src/screens/WebView/index.tsx"
+    },
+    {
+      "route": "config",
+      "contractScreen": null,
+      "params": null,
+      "openFromChat": "yes",
+      "source": "src/screens/Config/index.tsx"
+    }
+  ],
+  "rules": [
+    "R-CTX-01",
+    "R-CTX-02",
+    "R-CTX-03",
+    "R-CTX-04",
+    "R-CTX-05",
+    "R-CTX-06",
+    "R-CTX-07",
+    "R-REQ-01",
+    "R-REQ-02",
+    "R-REQ-03",
+    "R-REQ-04",
+    "R-REQ-05",
+    "R-REQ-06",
+    "R-REQ-07",
+    "R-REQ-08",
+    "R-REQ-09",
+    "R-GAS-01",
+    "R-GAS-02",
+    "R-GAS-03",
+    "R-GAS-04",
+    "R-GAS-05",
+    "R-GAS-06",
+    "R-GAS-07",
+    "R-GAS-08",
+    "R-GAS-09",
+    "R-GAS-10",
+    "R-GAS-11",
+    "R-GAS-12",
+    "R-GAS-13",
+    "R-GAS-14",
+    "R-GAS-15",
+    "R-GAS-16",
+    "R-GAS-17",
+    "R-GAS-18",
+    "R-EXP-01",
+    "R-EXP-02",
+    "R-EXP-03",
+    "R-EXP-04",
+    "R-EXP-05",
+    "R-EXP-06",
+    "R-EXP-07",
+    "R-EXP-08",
+    "R-EXP-09",
+    "R-EXP-10",
+    "R-EXP-11",
+    "R-EXP-12",
+    "R-EXP-13",
+    "R-EXP-14",
+    "R-EXP-15",
+    "R-EXP-16",
+    "R-EXP-17",
+    "R-EXP-18",
+    "R-EVT-01",
+    "R-EVT-02",
+    "R-EVT-03",
+    "R-FAV-01",
+    "R-FAV-02",
+    "R-FAV-03",
+    "R-LAZ-01",
+    "R-LAZ-02",
+    "R-LAZ-03",
+    "R-LAZ-04",
+    "R-LAZ-05",
+    "R-LAZ-06",
+    "R-LAZ-07",
+    "R-LAZ-08",
+    "R-SPA-01",
+    "R-BTQ-01",
+    "R-ESG-01",
+    "R-TIP-01",
+    "R-QZ-01",
+    "R-QZ-02",
+    "R-QZ-03",
+    "R-QZ-04",
+    "R-QZ-05",
+    "R-DT-01",
+    "R-DT-02",
+    "R-DT-03",
+    "R-DT-04",
+    "R-DT-05",
+    "R-DT-06"
+  ],
+  "gaps": [
+    {
+      "id": "G1",
+      "description": "No /me endpoint to derive guest context from token"
+    },
+    {
+      "id": "G2",
+      "description": "AI uses snapshot and simulated bookings"
+    },
+    {
+      "id": "G3",
+      "description": "No detail-by-id endpoints for bookings, requests, events"
+    },
+    {
+      "id": "G4",
+      "description": "Restaurant cancel by lodgingIdPms+restaurantId"
+    },
+    {
+      "id": "G5",
+      "description": "Unconfirmed server validation of lodgingIdPms and guest ids against token"
+    },
+    {
+      "id": "G6",
+      "description": "Reminders are local (notifee) and app-only"
+    },
+    {
+      "id": "G7",
+      "description": "Leisure age ranges hardcoded by category UUID in app"
+    },
+    {
+      "id": "G8",
+      "description": "POST experience/sign may not exist in production"
+    },
+    {
+      "id": "G9",
+      "description": "No idempotency on POST order / booking-restaurant / experience-booking"
+    },
+    {
+      "id": "G10",
+      "description": "No SPA scheduling or boutique purchase"
+    },
+    {
+      "id": "G11",
+      "description": "Quiz backend contract not documented in repo"
+    },
+    {
+      "id": "G12",
+      "description": "numberOfGuests = whole lodging, not selected party"
+    },
+    {
+      "id": "G13",
+      "description": "responsibleId resolved by name 'Hospede'"
+    },
+    {
+      "id": "G14",
+      "description": "Heterogeneous API error formats"
+    }
+  ],
+  "summary": {
+    "endpointsMainApi": 56,
+    "endpointsUnused": 1,
+    "aiApiRoutes": 4,
+    "tools": 36,
+    "cardTypes": 17,
+    "routes": 24,
+    "rules": 81,
+    "gaps": 14
+  }
+}

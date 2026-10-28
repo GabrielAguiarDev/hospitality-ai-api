@@ -16,6 +16,11 @@ import {
   type GuestRequestCardAction,
   type ExperienceOptionsAction,
   type RestaurantOptionsAction,
+  type BookingListAction,
+  type CatalogListAction,
+  type MenuViewAction,
+  type NavigateAction,
+  type RequestListAction,
 } from '../contracts/chat-actions.js';
 import { ExperienceAvailabilityService } from '../experiences/experience-availability.service.js';
 import { ExperienceBookingService } from '../experiences/experience-booking.service.js';
@@ -786,8 +791,9 @@ describe('Experience conversations (multi-turn)', () => {
       expect(replies[4].reply).toContain('Restaurante Central é um restaurante do resort');
       expect(replies[4].reply).not.toContain('City Tour');
       expect(replies[5].reply).toContain('Restaurante Central não trabalha com reservas pelo aplicativo');
+      // Sem reserva pelo app: a página do restaurante, não a tela de reserva.
       expect(replies[5].actions).toEqual([
-        { type: 'navigate', label: 'Abrir Gastronomia', screen: 'Gastronomy', params: { restaurantId: 'rest-central' } },
+        { type: 'navigate', label: 'Ver restaurante', screen: 'Restaurant', params: { restaurantId: 'rest-central' } },
       ]);
       expect(stateOf(id)).toMatchObject({ topic: 'restaurant', restaurant: { selectedId: 'rest-central' } });
       expect(embeddings.embed).not.toHaveBeenCalled();
@@ -1647,13 +1653,22 @@ describe('Experience conversations (multi-turn)', () => {
       const { replies } = await converse(['Quais produtos tem na boutique?', 'Quanto custa a massagem relaxante?', 'Tem quiz hoje?', 'O que vocês fazem de ESG?']);
 
       expect(replies[0].reply).toMatch(/^A Boutique tem 3 produtos em Praia e Vestuário\./);
-      expect(replies[0].actions).toEqual([expect.objectContaining({ type: 'navigate', screen: 'Boutique' })]);
+      // Catálogo curto: cards dos produtos + o botão da tela.
+      expect(replies[0].actions).toEqual([
+        expect.objectContaining({ type: 'catalog.list', kind: 'product' }),
+        expect.objectContaining({ type: 'navigate', screen: 'Boutique' }),
+      ]);
       expect(replies[1].reply).toContain('50 min R$');
       expect(replies[1].reply).not.toMatch(/R\$\s0(?:,00)?\b/);
-      expect(replies[1].actions).toEqual([expect.objectContaining({ screen: 'Spa' })]);
+      expect(replies[1].actions).toEqual([
+        expect.objectContaining({ type: 'catalog.list', kind: 'spa_service' }),
+        expect.objectContaining({ screen: 'Spa' }),
+      ]);
+      // Nenhum quiz ou texto ESG no cadastro: só o botão da tela.
       expect(replies[2].reply).toContain('Não há quiz ativo');
       expect(replies[2].actions).toEqual([expect.objectContaining({ screen: 'Quiz' })]);
       expect(replies[3].actions).toEqual([expect.objectContaining({ screen: 'Esg' })]);
+      for (const { actions } of replies) expect(actions.every(isValidChatAction)).toBe(true);
       for (const { reply } of replies) short(reply);
       expectNoModelNoRag();
     });
@@ -1678,6 +1693,230 @@ describe('Experience conversations (multi-turn)', () => {
       expect(requestFakes.rows.get(first.cardId)?.status).toBe('cancelled');
       expect(requestFakes.rows.get(second.cardId)?.status).toBe('preview');
       expect(stateOf(id)?.request?.pendingPreviewId).toBe(second.cardId);
+    });
+  });
+  describe('concierge across the app modules (menus, my bookings, my requests, favorites, catalog follow-ups)', () => {
+    // Linhas do snapshot por tabela; as demais consultas devolvem vazio.
+    function snapshot(rows: Record<string, unknown[]>) {
+      resortQuery.mockImplementation(async (sql: string) => {
+        if (/FROM tb_hospede h/.test(sql)) return [STAY_ROW];
+        const table = Object.keys(rows).find((name) => new RegExp(`FROM ${name}\\b`).test(sql));
+        return table ? rows[table] : [];
+      });
+    }
+
+    const MENU_ROWS = {
+      tb_catcardapio: [
+        { id: 'cat-entrada', name: 'Entrada', parent: null },
+        { id: 'cat-sobremesa', name: 'Sobremesa', parent: null },
+        { id: 'cat-vazia', name: 'Bebidas', parent: null },
+      ],
+      tb_cardapio: [
+        { id: 'p1', categoryId: 'cat-entrada', name: 'Carpaccio', description: 'Fatias finas de filé.', serves: null, image: 'a1b2.jpg' },
+        { id: 'p2', categoryId: 'cat-entrada', name: 'Bruschetta', description: null, serves: 2, image: 'https://evil.example/x.jpg' },
+        { id: 'p3', categoryId: 'cat-sobremesa', name: 'Tiramisù', description: null, serves: null, image: null },
+      ],
+    };
+
+    const navigations = (response: ChatResponse) =>
+      response.actions.filter((action): action is NavigateAction => action.type === 'navigate').map(({ screen, params }) => ({ screen, params }));
+
+    it('walks the requested booking conversation: list → "a segunda" → "essa" → "duas pessoas" → "Pode confirmar"', async () => {
+      const { id, replies } = await converse([
+        'Quais experiências estão disponíveis amanhã?',
+        'Me mostre a segunda',
+        'Quero reservar essa',
+        'Para duas pessoas',
+        'Pode confirmar',
+      ]);
+
+      const listed = experienceCards(replies[0]);
+      expect(listed.length).toBeGreaterThanOrEqual(2);
+      const second = listed[1];
+      // A segunda opção do card é a experiência detalhada e reservada.
+      expect(replies[1].reply).toContain(second.title);
+      const previewCall = booking.preview.mock.calls.at(-1)!;
+      expect(previewCall[2]).toMatchObject({ experienceId: second.experienceId, date: TOMORROW, party: { adults: 2, children: 0 } });
+
+      const preview = replies.flatMap(({ actions: list }) => list).find((action) => action.type === 'experience.booking.card');
+      expect(preview).toMatchObject({ cardId: PREVIEW_ID, status: 'preview' });
+      // A confirmação usa o mesmo card (atualizado no lugar), nunca outro.
+      expect(confirmBooking).toHaveBeenCalledOnce();
+      expect(confirmBooking.mock.calls[0][3]).toBe(PREVIEW_ID);
+      const confirmed = cardOf<ChatAction>(replies[4], 'experience.booking.card');
+      expect(confirmed).toMatchObject({ type: 'experience.booking.card', cardId: PREVIEW_ID, status: 'confirmed' });
+      expect(replies[4].reply.toLowerCase()).toContain('simulada');
+      expect(stateOf(id)?.experience?.pendingPreviewId).toBeUndefined();
+      for (const { actions: list } of replies) expect(list.every(isValidChatAction)).toBe(true);
+    });
+
+    it('never confirms without a pending preview', async () => {
+      embeddings.embed.mockResolvedValue([[0.1]]);
+      knowledge.searchByVector.mockResolvedValue([]);
+      const { replies } = await converse(['Pode confirmar']);
+
+      expect(confirmBooking).not.toHaveBeenCalled();
+      expect(replies[0].actions.some((action) => action.type === 'experience.booking.card')).toBe(false);
+    });
+
+    it('lists restaurants, opens "o segundo" and shows its menu as a menu.view card', async () => {
+      snapshot(MENU_ROWS);
+      const { id, replies } = await converse(['Quais restaurantes vocês têm?', 'Quero conhecer o segundo', 'Mostre o cardápio dele']);
+
+      const second = restaurantCards(replies[0])[1];
+      expect(replies[1].reply).toContain(`${second.name} é um restaurante`);
+      // Sem reserva pelo app: a página do restaurante.
+      expect(navigations(replies[1])).toContainEqual({ screen: 'Restaurant', params: { restaurantId: second.restaurantId } });
+
+      const menu = cardOf<MenuViewAction>(replies[2], 'menu.view')!;
+      expect(menu).toMatchObject({ restaurantId: second.restaurantId, restaurantName: second.name, totalDishes: 3 });
+      // Categoria sem pratos não aparece; imagem só como arquivo na pasta "menu".
+      expect(menu.categories.map(({ name }) => name)).toEqual(['Entrada', 'Sobremesa']);
+      expect(menu.categories[0].dishes.map(({ imagePath }) => imagePath)).toEqual(['menu/a1b2.jpg', null]);
+      expect(menu.categories[0].dishes[1].serves).toBe(2);
+      expect(isValidChatAction(menu)).toBe(true);
+      expect(replies[2].reply).toBe(`Este é o cardápio de ${second.name}: 3 pratos em Entrada e Sobremesa.`);
+      // O cardápio consultado é o do restaurante da conversa, por ID.
+      expect(resortQuery.mock.calls.filter(([sql]) => /FROM tb_catcardapio c/.test(sql)).map(([, parameters]) => parameters)).toEqual([[second.restaurantId]]);
+      expect(stateOf(id)?.restaurant?.selectedId).toBe(second.restaurantId);
+      expect(embeddings.embed).not.toHaveBeenCalled();
+    });
+
+    it('answers a menu section question and asks which restaurant when none is known', async () => {
+      snapshot(MENU_ROWS);
+      const { replies } = await converse(['Mostre o cardápio', 'o terceiro', 'O que tem de sobremesa no Omakase?']);
+
+      expect(replies[0].reply).toMatch(/^De qual restaurante você quer ver o cardápio\?/);
+      expect(replies[0].actions.some((action) => action.type === 'menu.view')).toBe(false);
+      // A resposta à pergunta abre o cardápio do restaurante escolhido.
+      const third = restaurantCards(replies[0])[2];
+      expect(cardOf<MenuViewAction>(replies[1], 'menu.view')?.restaurantId).toBe(third.restaurantId);
+      expect(replies[2].reply).toBe('Em Sobremesa, Omakase tem Tiramisù. Os pratos são escolhidos na reserva, pelo app.');
+      expect(cardOf<MenuViewAction>(replies[2], 'menu.view')?.categories.map(({ name }) => name)).toEqual(['Sobremesa']);
+    });
+
+    it('says the menu is not published instead of inventing dishes', async () => {
+      const { replies } = await converse(['Qual o cardápio do Omakase?']);
+
+      expect(replies[0].reply).toBe('O cardápio de Omakase não está publicado no app.');
+      expect(navigations(replies[0])).toEqual([{ screen: 'Restaurant', params: { restaurantId: 'rest-omakase' } }]);
+    });
+
+    it('answers "Minhas Reservas" with restaurants and experiences, by date and "a próxima"', async () => {
+      snapshot({
+        tb_reservarestaurante: [
+          { id: 'res-gino', restaurantId: 'rest-gino', restaurant: 'Gino Praia Gastronomia', date: '24/10/2026', time: '20:00', status: 'aprovada', diners: 2 },
+          { id: 'res-omakase', restaurantId: 'rest-omakase', restaurant: 'Omakase', date: '26/10/2026', time: '19:30', status: 'aprovada', diners: 2 },
+        ],
+      });
+      catalog.listStayReservations.mockResolvedValue([
+        { id: 'rx-city', title: 'Cidade Histórica / City Tour', date: TOMORROW, time: '08:00', status: 'pago', participants: 2 },
+      ] as never);
+
+      const { replies } = await converse(['Tenho alguma reserva amanhã?', 'Qual minha próxima reserva?', 'Mostre minhas reservas gastronômicas']);
+
+      expect(replies[0].reply).toBe(
+        'Sim, você tem 2 reservas para amanhã: Cidade Histórica / City Tour (amanhã às 08:00) e Gino Praia Gastronomia (amanhã às 20:00).',
+      );
+      const tomorrow = cardOf<BookingListAction>(replies[0], 'booking.list')!;
+      expect(tomorrow.items.map(({ kind, bookingId, status }) => [kind, bookingId, status])).toEqual([
+        ['experience', 'rx-city', 'confirmed'],
+        ['restaurant', 'res-gino', 'confirmed'],
+      ]);
+      expect(replies[1].reply).toBe('Sua próxima reserva: Cidade Histórica / City Tour (amanhã às 08:00), confirmada.');
+      expect(cardOf<BookingListAction>(replies[2], 'booking.list')!.items.map(({ bookingId }) => bookingId)).toEqual(['res-gino', 'res-omakase']);
+      expect(navigations(replies[2])).toContainEqual({ screen: 'MyReservation', params: { tab: 'Gastronomy' } });
+      for (const { actions: list } of replies) expect(list.every(isValidChatAction)).toBe(true);
+      catalog.listStayReservations.mockResolvedValue([]);
+    });
+
+    it('lists department requests and leisure enrollments together in "Minhas Solicitações"', async () => {
+      snapshot({
+        tb_solicitacao: [{ id: 'sol-1', department: 'Governança', items: 'Toalha de banho', status: 'pendente', createdAt: '23/10/2026 09:15' }],
+        tb_lazerassinatura: [{ id: 'lz-1', activity: null, category: '4 a 7 anos', form: 'FICHA INSCRIÇÃO RECREAÇÃO', status: 'pendente', date: '2026-10-22' }],
+      });
+
+      const { replies } = await converse(['Quais são minhas solicitações?']);
+
+      expect(replies[0].reply).toContain('Inscrições de lazer: 1 (1 pendente).');
+      const list = cardOf<RequestListAction>(replies[0], 'request.list')!;
+      expect(list.items.map(({ kind, title, status, date, time }) => [kind, title, status, date, time])).toEqual([
+        ['department', 'Governança', 'pending', '2026-10-23', '09:15'],
+        ['leisure', 'Recreação: 4 a 7 anos', 'pending', '2026-10-22', null],
+      ]);
+      expect(isValidChatAction(list)).toBe(true);
+      expect(navigations(replies[0])).toContainEqual({ screen: 'MyRequests', params: {} });
+    });
+
+    it('shows favorites as event cards and never favorites through the chat', async () => {
+      snapshot({
+        tb_notificacao: [
+          { favoriteId: 'fav-1', eventId: 'evt-circo', title: 'Show de Circo', date: TOMORROW, time: '22:00', location: 'Teatro' },
+          { favoriteId: 'fav-2', eventId: 'evt-circo', title: 'Show de Circo', date: TOMORROW, time: '22:00', location: 'Teatro' },
+          { favoriteId: 'fav-3', eventId: 'evt-mpb', title: 'Música ao vivo', date: '2026-10-25', time: '23:00', location: null },
+        ],
+      });
+
+      const { replies } = await converse(['Mostre meus favoritos', 'o segundo', 'Adicione essa experiência aos favoritos']);
+
+      const favorites = cardOf<CatalogListAction>(replies[0], 'catalog.list')!;
+      // Dois hóspedes da estadia com o mesmo evento: um card só.
+      expect(favorites).toMatchObject({ kind: 'event', label: 'Seus favoritos' });
+      expect(favorites.items.map(({ id, position, badges }) => [id, position, badges])).toEqual([
+        ['evt-circo', 1, ['Favorito']],
+        ['evt-mpb', 2, ['Favorito']],
+      ]);
+      expect(replies[1].reply).toBe('Música ao vivo: domingo, 25/10 às 23:00.');
+      expect(replies[2].reply).toContain('Pelo chat ainda não consigo favoritar');
+      expect(navigations(replies[2]).map(({ screen }) => screen)).toEqual(['Events', 'MyFavorites']);
+      // Somente leitura: nenhuma consulta de escrita chega ao snapshot nem ao banco interno.
+      for (const [sql] of resortQuery.mock.calls) expect(sql).toMatch(/^\s*SELECT/);
+    });
+
+    it('follows "a segunda" on an SPA list and keeps catalog follow-ups out of other topics', async () => {
+      const { id, replies } = await converse(['Quais massagens o spa oferece?', 'Me fala da segunda', 'Quais restaurantes vocês têm?', 'o segundo']);
+
+      const spa = cardOf<CatalogListAction>(replies[0], 'catalog.list')!;
+      expect(spa.kind).toBe('spa_service');
+      expect(spa.items.map(({ title }) => title)).toEqual(['Massagem Relaxante', 'Drenagem Linfática']);
+      expect(spa.items[1].buttons).toContainEqual({ kind: 'message', label: 'Ver detalhes', message: 'Opção 2' });
+      expect(replies[1].reply).toContain('Drenagem Linfática: R$');
+      expect(replies[1].reply).toContain('O agendamento é feito pelo SPA.');
+      // "o segundo" depois da lista de restaurantes é o restaurante, não o serviço do SPA.
+      expect(replies[3].reply).toContain(`${restaurantCards(replies[2])[1].name} é um restaurante`);
+      expect(stateOf(id)?.topic).toBe('restaurant');
+    });
+
+    it('a cuisine asked for the menu wins over the restaurant selected earlier', async () => {
+      snapshot(MENU_ROWS);
+      const { replies } = await converse(['Como é o Restaurante Central?', 'Mostre o cardápio do restaurante italiano']);
+
+      expect(cardOf<MenuViewAction>(replies[1], 'menu.view')?.restaurantId).toBe('rest-gino');
+    });
+
+    it('keeps reservation follow-ups working after the new "Você tem N reservas" phrasing', async () => {
+      snapshot({
+        tb_reservarestaurante: [
+          { id: 'res-gino', restaurantId: 'rest-gino', restaurant: 'Gino Praia Gastronomia', date: '24/10/2026', time: '20:00', status: 'aprovada', diners: 3 },
+        ],
+      });
+      catalog.listStayReservations.mockResolvedValue([
+        { id: 'rx-city', title: 'Cidade Histórica / City Tour', date: TOMORROW, time: '08:00', status: 'pago', participants: 2 },
+      ] as never);
+
+      const { replies } = await converse(['Tenho alguma reserva amanhã?', 'E para quantas pessoas?']);
+
+      expect(replies[0].reply).toMatch(/^Sim, você tem 2 reservas/);
+      expect(replies[1].reply).toBe('Sua reserva na Gino Praia Gastronomia é para 3 pessoas.');
+      catalog.listStayReservations.mockResolvedValue([]);
+    });
+
+    it('sends leisure enrollment to the Leisure screen without writing anything', async () => {
+      const { replies } = await converse(['Quero inscrever meu filho na recreação']);
+
+      expect(replies[0].reply).toContain('A inscrição nas atividades de lazer é feita pelo app');
+      expect(navigations(replies[0])[0]).toEqual({ screen: 'Leisure', params: {} });
+      expect(requestFakes.rows.all()).toEqual([]);
     });
   });
 });

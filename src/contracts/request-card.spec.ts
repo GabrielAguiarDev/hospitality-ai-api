@@ -190,7 +190,10 @@ describe('isValidChatAction - navigate params per screen', () => {
 
   it('exposes exactly the module screens', () => {
     expect([...NAVIGATION_SCREENS].sort()).toEqual(
-      ['Boutique', 'Esg', 'Events', 'Experiences', 'Gastronomy', 'Leisure', 'Quiz', 'Requests', 'Spa', 'Tips'],
+      [
+        'Boutique', 'Esg', 'Events', 'Experience', 'Experiences', 'Gastronomy', 'Leisure', 'MyFavorites',
+        'MyRequests', 'MyReservation', 'Quiz', 'Requests', 'Restaurant', 'Spa', 'Tips',
+      ],
     );
   });
 

@@ -23,6 +23,14 @@ export type ChatIntent =
   // Catálogo e detalhes de restaurantes e bares (sem reserva pelo chat).
   | 'restaurant.list'
   | 'restaurant.details'
+  // Cardápio publicado de um restaurante (somente leitura).
+  | 'restaurant.menu'
+  // Meus Favoritos (lembretes de eventos) e pedidos para favoritar/remover,
+  // que o chat ainda não executa: leva à tela de Eventos.
+  | 'favorite.list'
+  | 'favorite.manage'
+  // Inscrição em atividade de lazer: exige ficha e termo no app (navegação).
+  | 'leisure.enroll'
   // Eventos, shows e programação de lazer de uma data.
   | 'event.list'
   | 'experience.list'

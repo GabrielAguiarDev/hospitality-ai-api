@@ -2,7 +2,7 @@ import { Injectable, InternalServerErrorException } from '@nestjs/common';
 
 import type { IntentDecision } from '../chat/chat-intent.types.js';
 import { matchByName, nameList, normalizeText } from '../common/text.js';
-import type { ChatAction, EventListAction } from '../contracts/chat-actions.js';
+import { navigateAction, type ChatAction, type EventListAction } from '../contracts/chat-actions.js';
 import type { ConversationState, EventConversationState } from '../contracts/conversation-state.js';
 import { describeWindow, inWindow, timeWindowOf } from '../experiences/experience-search.js';
 import type { GuestContext } from '../guest/guest-context.js';
@@ -69,6 +69,32 @@ export class EventOperationsService {
     private readonly registry: OperationsToolRegistryService,
     private readonly clock: ResortClock,
   ) {}
+
+  /**
+   * "Quero participar dessa atividade": a inscrição exige responsável,
+   * ficha e termo (R-LAZ-04), então o chat leva à tela de Lazer e mostra
+   * as inscrições que a estadia já tem. Nada é gravado.
+   */
+  async enroll(guest: GuestContext, context: DispatchContext): Promise<DispatchResult> {
+    const result = await this.registry.execute('leisure.enrollments', guest, {});
+
+    if (result.tool !== 'leisure.enrollments') {
+      throw new InternalServerErrorException('Resultado inesperado da ferramenta.');
+    }
+
+    const pending = result.data.filter(({ status }) => status === 'pendente').length;
+
+    return {
+      tool: 'leisure.enrollments',
+      reply:
+        'A inscrição nas atividades de lazer é feita pelo app, com a ficha e a autorização do responsável. ' +
+        'Toque em "Abrir Lazer" e escolha a atividade.' +
+        (pending ? ` Você já tem ${pending} ${pending === 1 ? 'inscrição pendente' : 'inscrições pendentes'} em Minhas Solicitações.` : ''),
+      actions: [navigateAction('Leisure', 'Abrir Lazer'), ...(result.data.length ? [navigateAction('MyRequests', 'Abrir Minhas Solicitações')] : [])],
+      resultCount: result.data.length,
+      state: { ...context.state, topic: 'event' },
+    };
+  }
 
   async handle(
     message: string,

@@ -3,7 +3,11 @@ import type { Provider } from '@nestjs/common';
 import { vi } from 'vitest';
 
 import { GuestRequestService } from '../../src/requests/guest-request.service.js';
+import { GuestOperationsService } from '../../src/operations/guest-operations.service.js';
 import { ModuleOperationsService } from '../../src/operations/module-operations.service.js';
+import { FavoritesService } from '../../src/resort/favorites.service.js';
+import { LeisureEnrollmentsService } from '../../src/resort/leisure-enrollments.service.js';
+import { RestaurantMenusService } from '../../src/resort/restaurant-menus.service.js';
 import { ModulesCatalogService } from '../../src/resort/modules-catalog.service.js';
 import { RequestsCatalogService, type RequestDepartment } from '../../src/resort/requests-catalog.service.js';
 
@@ -68,7 +72,8 @@ export interface RequestFakes {
 }
 
 /**
- * Providers dos módulos Solicitações, Boutique, SPA, Dicas, Quiz e ESG
+ * Providers dos módulos Solicitações, Boutique, SPA, Dicas, Quiz, ESG,
+ * Minhas Reservas, Favoritos, Cardápio e inscrições de lazer
  * para os testes de integração: catálogos falsos (snapshot) e o
  * GuestRequestService REAL sobre um banco interno em memória.
  */
@@ -80,6 +85,11 @@ export function requestProviders(options: { departments?: RequestDepartment[] } 
     fakes: { departments, rows },
     providers: [
       ModuleOperationsService,
+      GuestOperationsService,
+      // Leituras reais sobre a conexão "resort" falsa de cada teste.
+      RestaurantMenusService,
+      FavoritesService,
+      LeisureEnrollmentsService,
       { provide: RequestsCatalogService, useValue: { departments } },
       {
         provide: ModulesCatalogService,

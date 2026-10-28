@@ -4,7 +4,7 @@
  * verificados; nunca a partir de texto do modelo.
  */
 
-import { SCREEN_PARAMS, type NavigationScreen } from '../capabilities/capabilities.js';
+import { RESERVATION_TABS, SCREEN_PARAMS, type NavigationScreen } from '../capabilities/capabilities.js';
 
 export type { NavigationScreen } from '../capabilities/capabilities.js';
 
@@ -21,6 +21,10 @@ export interface NavigateAction {
     restaurantId?: string;
     departmentId?: string;
     experienceId?: string;
+    // Events: aba do dia (AAAA-MM-DD, fuso do resort).
+    date?: string;
+    // MyReservation: aba inicial.
+    tab?: (typeof RESERVATION_TABS)[number];
   };
 }
 
@@ -292,13 +296,155 @@ export function requestCard(input: RequestCardInput): GuestRequestCardAction {
   };
 }
 
+/**
+ * Botão de um card. Navegação usa somente telas e parâmetros permitidos
+ * (SCREEN_PARAMS); "message" é enviado pelo app a POST /chat na mesma
+ * conversa, exatamente como as opções de experience.options.
+ */
+export type CardButton =
+  | { kind: 'navigate'; label: string; navigate: { screen: NavigationScreen; params: NavigateAction['params'] } }
+  | { kind: 'message'; label: string; message: string };
+
+export function navigateButton(screen: NavigationScreen, label: string, params: NavigateAction['params'] = {}): CardButton {
+  return { kind: 'navigate', label, navigate: { screen, params } };
+}
+
+export function messageButton(label: string, message: string): CardButton {
+  return { kind: 'message', label, message };
+}
+
+/**
+ * Tipos de item de catalog.list. Restaurantes, experiências e a
+ * programação do dia mantêm suas ações próprias (restaurant.options,
+ * experience.options, event.list); "event" aqui são os favoritos.
+ */
+export const CATALOG_KINDS = ['spa_service', 'product', 'tip', 'esg', 'quiz', 'event'] as const;
+
+export type CatalogKind = (typeof CATALOG_KINDS)[number];
+
+export interface CatalogItem {
+  // ID real do cadastro: identidade estável do card.
+  id: string;
+  // Posição na lista (1 = primeiro): "o segundo" e "Opção 2" referem-se a ela.
+  position: number;
+  title: string;
+  description: string | null;
+  // Caminho relativo no bucket de imagens do app ("spa/foto.jpg"); null
+  // quando não há imagem ou a pasta não é confirmada. Nunca uma URL inventada.
+  imagePath: string | null;
+  // Textos já formatados no fuso do resort; o app não reconverte.
+  meta: {
+    date?: string;
+    time?: string;
+    location?: string;
+    price?: string;
+    duration?: string;
+    category?: string;
+  };
+  badges: string[];
+  buttons: CardButton[];
+}
+
+export interface CatalogListAction {
+  type: 'catalog.list';
+  label: string;
+  kind: CatalogKind;
+  items: CatalogItem[];
+}
+
+export interface MenuDish {
+  id: string;
+  name: string;
+  description: string | null;
+  // Porção compartilhada (R-GAS-10): serve N pessoas; null quando não cadastrado.
+  serves: number | null;
+  imagePath: string | null;
+}
+
+export interface MenuCategory {
+  id: string;
+  name: string;
+  dishes: MenuDish[];
+  // Pratos da categoria que não couberam no card ("ver tudo" no app).
+  moreDishes: number;
+}
+
+/** Cardápio de um restaurante (somente leitura; pratos se escolhem na reserva). */
+export interface MenuViewAction {
+  type: 'menu.view';
+  label: string;
+  restaurantId: string;
+  restaurantName: string;
+  categories: MenuCategory[];
+  totalDishes: number;
+  buttons: CardButton[];
+}
+
+export const BOOKING_STATUSES = ['confirmed', 'pending', 'cancelled', 'unknown'] as const;
+
+export type BookingStatus = (typeof BOOKING_STATUSES)[number];
+
+export interface BookingItem {
+  // ID da reserva (snapshot) ou da reserva simulada (banco da IA).
+  bookingId: string;
+  kind: 'restaurant' | 'experience';
+  title: string;
+  date: string;
+  time: string | null;
+  status: BookingStatus;
+  statusLabel: string;
+  // Pessoas registradas; null quando o cadastro não permite inferir.
+  people: number | null;
+  // Reserva feita pelo chat: existe só no banco da IA.
+  simulated: boolean;
+  confirmationCode: string | null;
+  buttons: CardButton[];
+}
+
+/** Minhas Reservas: restaurantes e experiências da estadia. */
+export interface BookingListAction {
+  type: 'booking.list';
+  label: string;
+  items: BookingItem[];
+}
+
+export const REQUEST_STATUSES = ['pending', 'in_progress', 'done', 'cancelled', 'approved', 'denied', 'simulated', 'unknown'] as const;
+
+export type RequestStatus = (typeof REQUEST_STATUSES)[number];
+
+export interface RequestListItem {
+  requestId: string;
+  // Solicitação a um departamento ou inscrição de lazer (R-LAZ-07).
+  kind: 'department' | 'leisure';
+  title: string;
+  items: string[];
+  status: RequestStatus;
+  statusLabel: string;
+  date: string | null;
+  time: string | null;
+  simulated: boolean;
+  protocol: string | null;
+  buttons: CardButton[];
+}
+
+/** Minhas Solicitações: departamentos e inscrições de lazer. */
+export interface RequestListAction {
+  type: 'request.list';
+  label: string;
+  items: RequestListItem[];
+}
+
 export type ChatAction =
   | NavigateAction
   | ExperienceBookingCardAction
   | ExperienceOptionsAction
   | RestaurantOptionsAction
   | EventListAction
-  | GuestRequestCardAction;
+  | GuestRequestCardAction
+  | CatalogListAction
+  | MenuViewAction
+  | BookingListAction
+  | RequestListAction;
 
 export interface RetrievedSource {
   id: string;
@@ -344,22 +490,69 @@ function validSummary(summary: ExperienceBookingSummary | undefined): boolean {
   );
 }
 
+function validNavigation(screen: NavigationScreen, params: NavigateAction['params'] | undefined): boolean {
+  const allowed: readonly string[] = SCREEN_PARAMS[screen] ?? [];
+  return (
+    (NAVIGATION_SCREENS as readonly string[]).includes(screen) &&
+    !!params &&
+    typeof params === 'object' &&
+    Object.entries(params).every(
+      ([key, value]) =>
+        allowed.includes(key) &&
+        isText(value) &&
+        /^[\w-]+$/.test(value as string) &&
+        (key !== 'tab' || (RESERVATION_TABS as readonly string[]).includes(value as string)) &&
+        (key !== 'date' || ISO_DATE.test(value as string)),
+    )
+  );
+}
+
+function validButtons(buttons: CardButton[] | undefined): boolean {
+  return (
+    Array.isArray(buttons) &&
+    buttons.length <= 3 &&
+    buttons.every((button) =>
+      button?.kind === 'navigate'
+        ? isText(button.label, 40) && validNavigation(button.navigate?.screen, button.navigate?.params)
+        : button?.kind === 'message' && isText(button.label, 40) && isText(button.message, 120),
+    )
+  );
+}
+
+const isOptionalText = (value: unknown, max: number) => value === null || isText(value, max);
+// Somente as pastas do bucket confirmadas no app e um nome de arquivo de imagem.
+const IMAGE_PATH = /^(?:restaurant|menu|experience\/logos|spa|tip)\/[^/\\]+\.(?:jpe?g|png|webp|gif|svg)$/i;
+const isImagePath = (value: unknown) =>
+  value === null || (isText(value, 300) && IMAGE_PATH.test(value as string) && !(value as string).includes('..'));
+
+function validCatalogItem(item: CatalogItem, index: number): boolean {
+  const meta = item?.meta;
+  return (
+    item.position === index + 1 &&
+    isText(item.id) &&
+    isText(item.title, 160) &&
+    isOptionalText(item.description, 400) &&
+    isImagePath(item.imagePath) &&
+    !!meta &&
+    typeof meta === 'object' &&
+    Object.entries(meta).every(([key, value]) =>
+      ['date', 'time', 'location', 'price', 'duration', 'category'].includes(key) && isText(value, 160) &&
+      (key !== 'date' || ISO_DATE.test(value)) && (key !== 'time' || TIME.test(value))) &&
+    Array.isArray(item.badges) &&
+    item.badges.length <= 4 &&
+    item.badges.every((badge) => isText(badge, 40)) &&
+    validButtons(item.buttons)
+  );
+}
+
 /**
  * Validação em tempo de execução antes de enviar ao cliente.
  * Uma ação inválida é descartada em vez de chegar ao aplicativo.
  */
 export function isValidChatAction(action: ChatAction): boolean {
   switch (action?.type) {
-    case 'navigate': {
-      const allowed: readonly string[] = SCREEN_PARAMS[action.screen] ?? [];
-      return (
-        isText(action.label, 60) &&
-        (NAVIGATION_SCREENS as readonly string[]).includes(action.screen) &&
-        Object.entries(action.params ?? {}).every(
-          ([key, value]) => allowed.includes(key) && isText(value) && /^[\w-]+$/.test(value as string),
-        )
-      );
-    }
+    case 'navigate':
+      return isText(action.label, 60) && validNavigation(action.screen, action.params);
 
     case 'request.card': {
       const preview = action.status === 'preview';
@@ -486,6 +679,95 @@ export function isValidChatAction(action: ChatAction): boolean {
             (item.category === null || isText(item.category, 80)) &&
             (item.description === null || isText(item.description, 240)),
         )
+      );
+
+    case 'catalog.list':
+      return (
+        isText(action.label, 60) &&
+        (CATALOG_KINDS as readonly string[]).includes(action.kind) &&
+        Array.isArray(action.items) &&
+        action.items.length >= 1 &&
+        action.items.length <= 20 &&
+        action.items.every(validCatalogItem) &&
+        new Set(action.items.map(({ id }) => id)).size === action.items.length
+      );
+
+    case 'menu.view':
+      return (
+        isText(action.label, 60) &&
+        isText(action.restaurantId) &&
+        isText(action.restaurantName, 120) &&
+        Number.isInteger(action.totalDishes) &&
+        action.totalDishes >= 0 &&
+        Array.isArray(action.categories) &&
+        action.categories.length >= 1 &&
+        action.categories.length <= 20 &&
+        action.categories.every(
+          (category) =>
+            isText(category.id) &&
+            isText(category.name, 120) &&
+            Number.isInteger(category.moreDishes) &&
+            category.moreDishes >= 0 &&
+            Array.isArray(category.dishes) &&
+            category.dishes.length <= 10 &&
+            category.dishes.every(
+              (dish) =>
+                isText(dish.id) &&
+                isText(dish.name, 160) &&
+                isOptionalText(dish.description, 300) &&
+                (dish.serves === null || (Number.isInteger(dish.serves) && dish.serves >= 1 && dish.serves <= 50)) &&
+                isImagePath(dish.imagePath),
+            ),
+        ) &&
+        validButtons(action.buttons)
+      );
+
+    case 'booking.list':
+      return (
+        isText(action.label, 60) &&
+        Array.isArray(action.items) &&
+        action.items.length >= 1 &&
+        action.items.length <= 30 &&
+        action.items.every(
+          (item) =>
+            isText(item.bookingId) &&
+            (item.kind === 'restaurant' || item.kind === 'experience') &&
+            isText(item.title, 160) &&
+            ISO_DATE.test(item.date) &&
+            (item.time === null || TIME.test(item.time)) &&
+            (BOOKING_STATUSES as readonly string[]).includes(item.status) &&
+            isText(item.statusLabel, 40) &&
+            (item.people === null || (Number.isInteger(item.people) && item.people >= 1 && item.people <= 50)) &&
+            typeof item.simulated === 'boolean' &&
+            (item.confirmationCode === null || isText(item.confirmationCode, 20)) &&
+            validButtons(item.buttons),
+        ) &&
+        new Set(action.items.map(({ kind, bookingId }) => `${kind}:${bookingId}`)).size === action.items.length
+      );
+
+    case 'request.list':
+      return (
+        isText(action.label, 60) &&
+        Array.isArray(action.items) &&
+        action.items.length >= 1 &&
+        action.items.length <= 30 &&
+        action.items.every(
+          (item) =>
+            isText(item.requestId) &&
+            (item.kind === 'department' || item.kind === 'leisure') &&
+            isText(item.title, 160) &&
+            Array.isArray(item.items) &&
+            item.items.length <= 10 &&
+            item.items.every((name) => isText(name, 160)) &&
+            (REQUEST_STATUSES as readonly string[]).includes(item.status) &&
+            isText(item.statusLabel, 40) &&
+            (item.date === null || ISO_DATE.test(item.date)) &&
+            (item.time === null || TIME.test(item.time)) &&
+            typeof item.simulated === 'boolean' &&
+            (item.protocol === null || isText(item.protocol, 20)) &&
+            validButtons(item.buttons),
+        ) &&
+        new Set(action.items.map(({ kind, requestId }) => `${kind}:${requestId}`)).size === action.items.length
       );
 
     default:

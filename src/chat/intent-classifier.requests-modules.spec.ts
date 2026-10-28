@@ -168,4 +168,66 @@ describe('IntentClassifierService routing for requests and modules', () => {
   it('routes "O ar condicionado não está gelando" to request.create', async () => {
     await expect(route('O ar condicionado não está gelando')).resolves.toBe('request.create');
   });
+  describe('menus, favorites, leisure, my bookings and catalog follow-ups', () => {
+    it.each<[string, ChatIntent]>([
+      ['Mostre o cardápio do restaurante italiano', 'restaurant.menu'],
+      ['Mostre meus favoritos', 'favorite.list'],
+      ['Adicione essa experiência aos favoritos', 'favorite.manage'],
+      ['Quero inscrever meu filho na recreação', 'leisure.enroll'],
+      ['Tenho alguma reserva amanhã?', 'reservation.list'],
+      ['Qual minha próxima reserva?', 'reservation.list'],
+      ['Mostre minhas reservas gastronômicas', 'reservation.list'],
+      ['Preciso de duas toalhas extras', 'request.create'],
+      ['Quero solicitar limpeza no meu quarto', 'request.create'],
+      ['Qual o status da minha solicitação?', 'request.status'],
+    ])('routes %j to %s', async (message, intent) => {
+      await expect(route(message, {})).resolves.toBe(intent);
+    });
+
+    it('"a segunda" after an SPA list repeats spa.info with the position', async () => {
+      const state: ConversationState = {
+        topic: 'module',
+        lastIntent: 'spa.info',
+        catalog: { kind: 'spa_service', listed: [{ id: '1', title: 'A' }, { id: '2', title: 'B' }] },
+      };
+      const decision = await service.classify('Me fala da segunda', [], state);
+      expect(decision).toMatchObject({ intent: 'spa.info', entities: { ordinal: 2 } });
+    });
+
+    it('continues a booking that asked for the party instead of checking availability', async () => {
+      const asked: ConversationState = {
+        topic: 'experience',
+        lastIntent: 'experience.booking',
+        experience: { selectedId: 'exp-1', date: '2026-10-24', awaiting: 'booking' },
+      };
+      await expect(route('Para duas pessoas', asked)).resolves.toBe('experience.booking');
+      await expect(route('2 adultos e 1 criança', asked)).resolves.toBe('experience.booking');
+
+      // Sem a pergunta pendente, o mesmo texto continua sendo uma consulta de vagas.
+      const { awaiting: _asked, ...experience } = asked.experience!;
+      await expect(route('Para duas pessoas', { ...asked, experience })).resolves.toBe('experience.availability');
+    });
+  });
+  describe('review regressions: new detectors do not hijack other questions', () => {
+    it.each<[string, ConversationState | undefined, ChatIntent | RegExp]>([
+      ['Qual o restaurante favorito dos hóspedes?', undefined, /^(?!favorite\.)/],
+      ['Qual o passeio favorito das crianças?', undefined, /^(?!favorite\.)/],
+      ['Quais atividades posso participar amanhã?', undefined, /^(?!leisure\.enroll)/],
+      ['Quero participar do show de mágica', { topic: 'event', lastIntent: 'event.list', event: {} }, /^(?!leisure\.enroll)/],
+      ['O passeio de barco inclui cardápio?', undefined, /^(?!restaurant\.menu)/],
+    ])('%j is not captured by the new detectors', async (message, state, expected) => {
+      const intent = await route(message, state);
+      if (typeof expected === 'string') expect(intent).toBe(expected);
+      else expect(intent).toMatch(expected);
+    });
+
+    it.each([
+      ['spa.info', 'Quero reservar o primeiro restaurante'],
+      ['tips.list', 'Qual o status da primeira solicitação?'],
+      ['boutique.info', 'Me fala da primeira experiência'],
+    ] as const)('after %s, %j goes to its own domain, not the catalog list', async (lastIntent, message) => {
+      const state: ConversationState = { topic: 'module', lastIntent, catalog: { kind: 'tip', listed: [{ id: '1', title: 'A' }, { id: '2', title: 'B' }] } };
+      await expect(route(message, state)).resolves.not.toBe(lastIntent);
+    });
+  });
 });

@@ -169,6 +169,11 @@ export function parseEventListInput(input: unknown): { date: string } {
   return { date: isoDate(data.date) };
 }
 
+export function parseRestaurantIdInput(input: unknown): { restaurantId: string } {
+  const data = asObject(input, ['restaurantId']);
+  return { restaurantId: identifier(data.restaurantId, 'restaurantId') };
+}
+
 export function parseExperienceIdInput(input: unknown): { experienceId: string } {
   const data = asObject(input, ['experienceId']);
   return { experienceId: identifier(data.experienceId, 'experienceId') };

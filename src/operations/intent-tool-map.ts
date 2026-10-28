@@ -20,6 +20,14 @@ export const INTENT_TOOL_MAP = {
   'restaurant.booking': 'restaurants.list',
   'restaurant.list': 'restaurants.list',
   'restaurant.details': 'restaurants.list',
+  'restaurant.menu': 'restaurants.menu',
+
+  'favorite.list': 'favorites.list',
+  // Sem escrita: confere os favoritos e leva à tela de Eventos.
+  'favorite.manage': 'favorites.list',
+
+  // Sem escrita: a inscrição é feita na tela de Lazer.
+  'leisure.enroll': 'leisure.enrollments',
 
   'event.list': 'events.list',
 

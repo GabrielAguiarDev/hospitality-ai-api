@@ -45,6 +45,10 @@ export interface ExperienceConversationState {
   // O aviso de que as vagas vêm do snapshot já foi dado nesta conversa.
   snapshotNoticeShown?: boolean;
   pendingPreviewId?: string;
+  // Intenção em andamento: a reserva pediu dados (data, pessoas) e a
+  // próxima operação com esses dados continua a reserva. Qualquer outra
+  // operação de experiência o descarta; conversa e dúvidas intercaladas não.
+  awaiting?: 'booking';
 }
 
 export interface RestaurantConversationState {
@@ -55,6 +59,9 @@ export interface RestaurantConversationState {
   describedId?: string;
   // Filtros da última lista, para continuações ("E à noite?").
   filters?: RestaurantSearchFilters;
+  // "De qual restaurante?" perguntado para o cardápio: a próxima
+  // referência ("o segundo", um nome) abre o cardápio, não os detalhes.
+  awaiting?: 'menu';
 }
 
 export interface RestaurantSearchFilters {
@@ -82,6 +89,17 @@ export interface RequestConversationState {
   departmentId?: string;
   // Última solicitação apresentada ("e ela?", "a anterior").
   lastRequestId?: string;
+}
+
+/**
+ * Última lista de catálogo apresentada (SPA, Boutique, Dicas, ESG, Quiz,
+ * favoritos), na ordem dos cards: "o segundo" e "Opção 2" resolvem aqui,
+ * sempre para um ID do cadastro. Só vale logo depois da própria lista
+ * (lastIntent do mesmo módulo); outro assunto não a reutiliza.
+ */
+export interface CatalogConversationState {
+  kind: 'spa_service' | 'product' | 'tip' | 'esg' | 'quiz' | 'event';
+  listed: { id: string; title: string }[];
 }
 
 /**
@@ -115,6 +133,7 @@ export interface ConversationState {
   restaurant?: RestaurantConversationState;
   event?: EventConversationState;
   request?: RequestConversationState;
+  catalog?: CatalogConversationState;
 }
 
 export type PendingConfirmation = { kind: 'experience' | 'request'; id: string };

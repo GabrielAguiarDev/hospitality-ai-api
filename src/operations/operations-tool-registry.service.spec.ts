@@ -13,6 +13,9 @@ import type { RestaurantsCatalogService } from '../resort/restaurants-catalog.se
 import type { ModulesCatalogService } from '../resort/modules-catalog.service.js';
 import type { RequestsCatalogService } from '../resort/requests-catalog.service.js';
 import type { GuestRequestService } from '../requests/guest-request.service.js';
+import type { FavoritesService } from '../resort/favorites.service.js';
+import type { LeisureEnrollmentsService } from '../resort/leisure-enrollments.service.js';
+import type { RestaurantMenusService } from '../resort/restaurant-menus.service.js';
 
 import { OperationsToolRegistryService } from './operations-tool-registry.service.js';
 import type { RequestsService } from './requests.service.js';
@@ -69,6 +72,10 @@ describe('OperationsToolRegistryService', () => {
     cards: vi.fn(async () => []),
   };
 
+  const menus = { forRestaurant: vi.fn(async (restaurantId: string) => ({ restaurantId, categories: [] })) };
+  const favorites = { forStay: vi.fn(async () => []) };
+  const enrollments = { forStay: vi.fn(async () => []) };
+
   // Sexta-feira, 23/10/2026, 10:30 no resort.
   const clock = { today: () => '2026-10-23', time: () => '10:30', dateAt: () => '2026-10-23', timeAt: () => '10:00' };
 
@@ -87,6 +94,9 @@ describe('OperationsToolRegistryService', () => {
       requestsCatalog as unknown as RequestsCatalogService,
       modulesCatalog as unknown as ModulesCatalogService,
       guestRequests as unknown as GuestRequestService,
+      menus as unknown as RestaurantMenusService,
+      favorites as unknown as FavoritesService,
+      enrollments as unknown as LeisureEnrollmentsService,
     );
   }
 
@@ -321,6 +331,68 @@ describe('OperationsToolRegistryService', () => {
 
     it('refuses request tools outside development', async () => {
       await expect(createRegistry('production').execute('requests.catalog', GUEST, {})).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+  describe('menu, favorites and leisure enrollment tools', () => {
+    it('reads a menu only for a restaurant that exists in the active catalog', async () => {
+      restaurants.listActive.mockResolvedValue([{ id: 'rest-1' }] as never);
+      const registry = createRegistry();
+
+      await expect(registry.execute('restaurants.menu', GUEST, { restaurantId: 'rest-1' })).resolves.toEqual({
+        tool: 'restaurants.menu',
+        data: { restaurantId: 'rest-1', categories: [] },
+      });
+      await expect(registry.execute('restaurants.menu', GUEST, { restaurantId: 'rest-other' })).rejects.toThrow('Restaurante não encontrado.');
+      await expect(registry.execute('restaurants.menu', GUEST, { restaurantId: 'rest-1', sql: 'x' })).rejects.toBeInstanceOf(BadRequestException);
+      expect(menus.forRestaurant).toHaveBeenCalledExactlyOnceWith('rest-1');
+      restaurants.listActive.mockResolvedValue([]);
+    });
+
+    it.each(['favorites.list', 'leisure.enrollments'])('%s resolves the stay on the server and accepts no arguments', async (tool) => {
+      const registry = createRegistry();
+
+      await registry.execute(tool, GUEST, {});
+      expect(stay.resolve).toHaveBeenCalledWith(GUEST);
+      expect([...favorites.forStay.mock.calls, ...enrollments.forStay.mock.calls]).toEqual([[STAY]]);
+      await expect(registry.execute(tool, GUEST, { guestId: 'other' })).rejects.toThrow('Esta ferramenta não aceita argumentos.');
+    });
+  });
+
+  describe('tool catalog metadata', () => {
+    const tools = () => createRegistry().listTools();
+
+    it('describes every tool with domain, access, source, mode, confirmation and cards', () => {
+      for (const tool of tools()) {
+        expect(tool.description.length, tool.name).toBeGreaterThan(10);
+        expect(['catalog', 'guest'], tool.name).toContain(tool.access);
+        expect(['snapshot', 'ai_db', 'snapshot+ai_db'], tool.name).toContain(tool.source);
+        expect(tool.cards.length, tool.name).toBeGreaterThan(0);
+        // Somente leitura ⇔ modo de leitura; nada grava no snapshot do resort.
+        expect(tool.readOnly, tool.name).toBe(tool.mode === 'read');
+        if (tool.mode === 'simulated_write') expect(tool.source, tool.name).not.toBe('snapshot');
+      }
+      expect(new Set(tools().map(({ name }) => name)).size).toBe(tools().length);
+    });
+
+    it('requires explicit confirmation only for writes, and every write is simulated', () => {
+      for (const tool of tools().filter(({ confirmation }) => confirmation === 'explicit')) {
+        expect(tool.mode, tool.name).toBe('simulated_write');
+      }
+      expect(tools().filter(({ mode }) => mode === 'simulated_write').map(({ name }) => name).sort()).toEqual([
+        'experiences.booking.cancel',
+        'experiences.booking.confirm',
+        'experiences.booking.preview',
+        'requests.cancel',
+        'requests.confirm',
+        'requests.preview',
+      ]);
+    });
+
+    it('marks personal data tools as guest-scoped', () => {
+      const guestTools = tools().filter(({ access }) => access === 'guest').map(({ name }) => name);
+      for (const name of ['reservations.list', 'requests.list', 'favorites.list', 'leisure.enrollments', 'experiences.reservations']) {
+        expect(guestTools).toContain(name);
+      }
     });
   });
 });

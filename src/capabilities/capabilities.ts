@@ -32,17 +32,29 @@ export type AppModule = (typeof APP_MODULES)[number];
  * Os nomes são provisórios: o app os mapeia para as rotas reais.
  */
 export const SCREEN_PARAMS = {
+  // Com restaurantId: tela de reserva (somente restaurantes com reserva).
   Gastronomy: ['restaurantId'],
+  // Página informativa e cardápio de um restaurante.
+  Restaurant: ['restaurantId'],
   Requests: ['departmentId'],
   Experiences: ['experienceId'],
-  Events: [],
+  // Uma experiência: o app escolhe reserva ou página informativa (R-EXP-02).
+  Experience: ['experienceId'],
+  // date (AAAA-MM-DD) escolhe a aba do dia.
+  Events: ['date'],
   Leisure: [],
   Boutique: [],
   Spa: [],
   Esg: [],
   Tips: [],
   Quiz: [],
+  MyReservation: ['tab'],
+  MyRequests: [],
+  MyFavorites: [],
 } as const satisfies Record<string, readonly string[]>;
+
+// Abas de Minhas Reservas aceitas em MyReservation.tab.
+export const RESERVATION_TABS = ['Gastronomy', 'Experience'] as const;
 
 export type NavigationScreen = keyof typeof SCREEN_PARAMS;
 
@@ -81,8 +93,8 @@ export const CAPABILITIES: readonly Capability[] = [
   {
     module: 'gastronomy',
     label: 'Gastronomia',
-    description: 'Restaurantes, bares e lanches: horários, filtros por tipo, cozinha e horário, e reserva pelo app.',
-    intents: ['restaurant.list', 'restaurant.details', 'restaurant.booking', 'reservation.list', 'reservation.details', 'reservation.status'],
+    description: 'Restaurantes, bares e lanches: horários, cardápio, filtros por tipo, cozinha e horário, e reserva pelo app.',
+    intents: ['restaurant.list', 'restaurant.details', 'restaurant.menu', 'restaurant.booking', 'reservation.list', 'reservation.details', 'reservation.status'],
     params: ['tipo', 'cozinha', 'horário', 'período'],
     kinds: ['read', 'navigation'],
     limitations: ['O chat não cria reservas de restaurante: a reserva exige escolher os pratos no app.'],
@@ -113,11 +125,14 @@ export const CAPABILITIES: readonly Capability[] = [
   {
     module: 'events',
     label: 'Eventos',
-    description: 'Eventos e shows por data e período.',
-    intents: ['event.list'],
+    description: 'Eventos e shows por data e período, e os eventos favoritados (Meus Favoritos).',
+    intents: ['event.list', 'favorite.list', 'favorite.manage'],
     params: ['data', 'período'],
     kinds: ['read', 'navigation'],
-    limitations: ['Mostra eventos dos próximos dias registrados no snapshot.'],
+    limitations: [
+      'Mostra eventos dos próximos dias registrados no snapshot.',
+      'O chat não favorita nem remove favoritos: isso é feito na tela de Eventos ou Meus Favoritos.',
+    ],
     screen: 'Events',
     cue: /\b(?:eventos?|shows?|apresentac(?:ao|oes)|musica ao vivo|festas?)\b/,
   },
@@ -125,10 +140,10 @@ export const CAPABILITIES: readonly Capability[] = [
     module: 'leisure',
     label: 'Lazer',
     description: 'Programação semanal de recreação, filtrada por data, período e público.',
-    intents: ['event.list'],
+    intents: ['event.list', 'leisure.enroll'],
     params: ['data', 'período', 'público'],
     kinds: ['read', 'navigation'],
-    limitations: [],
+    limitations: ['A inscrição exige ficha e termo: é feita na tela de Lazer, não pelo chat.'],
     screen: 'Leisure',
     cue: /\b(?:lazer|recreac(?:ao|oes)|programacao|atividades|kids|monitores?)\b/,
   },
