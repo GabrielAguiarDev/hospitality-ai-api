@@ -10,7 +10,6 @@ import { ChromaClient } from 'chromadb-client';
 import { EmbeddingsService } from './embeddings.service.js';
 import { enabledKnowledgeSources } from './sources/knowledge-source.js';
 
-// Lotes menores evitam timeouts do modelo de embeddings local.
 const EMBEDDING_BATCH_SIZE = 16;
 
 export interface KnowledgeDocument {
@@ -31,8 +30,6 @@ export interface RetrievedDocument {
 export class KnowledgeService {
   private readonly client: ChromaClient;
 
-  // Nova coleção: não misturamos documentos antigos
-  // com a estrutura multi-resort.
   private readonly collectionName =
     'yago_knowledge_multi_v2';
 
@@ -67,8 +64,6 @@ export class KnowledgeService {
     }
   }
 
-  // Evita colisões entre documentos de resorts
-  // e fontes diferentes que utilizem o mesmo ID.
   private documentKey(
     resortId: string,
     source: string,
@@ -95,8 +90,6 @@ export class KnowledgeService {
       .digest('hex');
   }
 
-  // Recupera hashes somente dos documentos
-  // desta fonte e deste resort.
   async listIndexedHashes(
     resortId: string,
     source: string,
@@ -146,7 +139,6 @@ export class KnowledgeService {
     return indexed;
   }
 
-  // Insere e atualiza documentos de um resort.
   async upsertDocuments(
     documents: KnowledgeDocument[],
     resortId: string,
@@ -209,8 +201,6 @@ export class KnowledgeService {
     return documents.length;
   }
 
-  // Remove documentos pertencentes somente
-  // à fonte e ao resort informados.
   async deleteDocuments(
     documentIds: string[],
     resortId: string,
@@ -243,8 +233,6 @@ export class KnowledgeService {
     });
   }
 
-  // Recupera documentos específicos por ID (ex.: programação do dia),
-  // sempre restritos ao resort e às fontes habilitadas.
   async getDocuments(
     documentIds: string[],
     resortId: string,
@@ -283,13 +271,11 @@ export class KnowledgeService {
         id: String(metadata?.documentId ?? id),
         title: String(metadata?.title ?? 'Documento'),
         content: page.documents?.[index] ?? '',
-        // Documento selecionado deterministicamente pela data.
         distance: 0,
       };
     });
   }
 
-  // Busca vetorial com filtro obrigatório de resort.
   async searchByVector(
     vector: number[],
     resortId: string,
@@ -303,8 +289,6 @@ export class KnowledgeService {
       return [];
     }
 
-    // Somente fontes habilitadas: documentos de fontes desligadas
-    // (ex.: conhecimento fictício) não são recuperados.
     const sources = enabledKnowledgeSources(
       this.configService.get<string>('KNOWLEDGE_SOURCES'),
     );
@@ -338,7 +322,6 @@ export class KnowledgeService {
       const metadata = metadatas[index];
 
       return {
-        // Preserva o ID original no retorno do RAG.
         id: String(metadata?.documentId ?? id),
         title: String(
           metadata?.title ?? 'Documento',

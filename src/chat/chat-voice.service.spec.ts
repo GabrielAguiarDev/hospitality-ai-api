@@ -48,7 +48,6 @@ describe('ChatVoiceService', () => {
   beforeEach(async () => {
     settings = { ...voiceSettings(() => undefined), enabled: true };
     store = new InMemoryChatStore();
-    // IDs 1 (usuário) e 2 (assistente) na conversa do hóspede.
     store.seedConversation(
       CONVERSATION_ID,
       [
@@ -57,7 +56,6 @@ describe('ChatVoiceService', () => {
       ],
       GUEST,
     );
-    // ID 3: resposta de outro hóspede.
     store.seedConversation(OTHER_CONVERSATION_ID, [{ role: 'assistant', content: 'Seu quarto é o 1204.' }], OTHER_GUEST);
     synthesize.mockResolvedValue(fakeWav());
     await build();
@@ -124,7 +122,6 @@ describe('ChatVoiceService', () => {
     });
 
     it('returns 404 when the message belongs to another conversation', async () => {
-      // Conversa própria + mensagem (ID 3) de outra conversa.
       await expect(service.narrate(CONVERSATION_ID, 3, GUEST)).rejects.toBeInstanceOf(NotFoundException);
       expect(synthesize).not.toHaveBeenCalled();
     });
@@ -196,7 +193,6 @@ describe('ChatVoiceService', () => {
 
       await service.narrate(CONVERSATION_ID, 2, GUEST);
       await service.narrate(CONVERSATION_ID, 11, GUEST);
-      // Mensagem 2 usada de novo: a mais antiga passa a ser a 11.
       await service.narrate(CONVERSATION_ID, 2, GUEST);
       await service.narrate(CONVERSATION_ID, 12, GUEST);
 

@@ -20,9 +20,7 @@ interface OllamaChatResponse {
     role: string;
     content: string;
   };
-  // "length": a geração parou no limite de num_predict.
   done_reason?: string;
-  // Métricas do Ollama (durações em nanossegundos).
   load_duration?: number;
   prompt_eval_count?: number;
   prompt_eval_duration?: number;
@@ -32,7 +30,6 @@ interface OllamaChatResponse {
 
 const ms = (nanoseconds = 0) => Math.round(nanoseconds / 1e6);
 
-// Resposta cortada no limite de tokens: mantém só as frases completas.
 export function completeSentences(content: string): string {
   const end = Math.max(...['.', '!', '?', '\n'].map((mark) => content.lastIndexOf(mark)));
   return end > content.length / 2 ? content.slice(0, end + 1).trim() : content.trim();
@@ -42,7 +39,6 @@ export function completeSentences(content: string): string {
 export class OllamaService implements OnModuleInit {
   private readonly logger = new Logger(OllamaService.name);
 
-  // Lido do .env na construção (OLLAMA_CHAT_MODEL, OLLAMA_BASE_URL…).
   private readonly settings = llmSettings();
 
   onModuleInit(): void {
@@ -51,11 +47,6 @@ export class OllamaService implements OnModuleInit {
     llmOverrides().forEach((warning) => this.logger.warn(warning));
   }
 
-  /**
-   * Carrega os modelos com o mesmo num_ctx das chamadas: a primeira
-   * pergunta do hóspede não espera o carregamento (1 a 5 s).
-   * Chamado pelo main.ts depois que o servidor HTTP sobe.
-   */
   async warmup(): Promise<void> {
     const { baseUrl, chatModel, classifierModel, keepAlive, numCtx, warmup } = this.settings;
 
@@ -141,7 +132,6 @@ export class OllamaService implements OnModuleInit {
       );
     }
 
-    // Recarga do modelo (load alto) ou prompt grande aparecem aqui.
     this.logger.debug(
       `Ollama: carga ${ms(data.load_duration)} ms, prompt ${data.prompt_eval_count ?? '?'} tokens em ${ms(data.prompt_eval_duration)} ms, ` +
         `resposta ${data.eval_count ?? '?'} tokens em ${ms(data.eval_duration)} ms${data.done_reason === 'length' ? ' (limite atingido)' : ''}.`,

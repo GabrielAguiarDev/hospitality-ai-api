@@ -233,7 +233,6 @@ describe('evaluateBooking', () => {
 });
 
 describe('evaluateBooking — current time in the resort', () => {
-  // Hoje é 26/10/2026, 10:30 no fuso do resort.
   const today = { today: '2026-10-26', now: '10:30', date: '2026-10-26' };
   const at = (time: string | null) => slot({ date: '2026-10-26', time, slotId: time ? `h-${time}` : null });
 

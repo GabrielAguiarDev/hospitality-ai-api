@@ -117,7 +117,6 @@ describe('GuestStayService.resolve', () => {
     await expect(
       build({ DEMO_REQUIRE_ACTIVE_STAY: 'false', DEMO_DATASET: 'synthetic' }).resolve(guest),
     ).resolves.toBeDefined();
-    // synthetic alone does not disable the check
     await expect(build({ DEMO_DATASET: 'synthetic' }).resolve(guest)).rejects.toThrow(ForbiddenException);
   });
 });

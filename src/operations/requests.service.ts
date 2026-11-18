@@ -11,16 +11,11 @@ import { ResortSnapshotGateway } from '../resort/resort-snapshot.gateway.js';
 
 export interface GuestRequest {
   id: string;
-  // Departamento responsável (ex.: Manutenção, Governança).
   category: string;
-  // Itens solicitados. Observações livres não são expostas.
   description: string;
-  // Valores do snapshot: atendida | cancelada | pendente | executando.
   status: string;
   createdAt: string;
-  // O snapshot não registra a data da última atualização.
   updatedAt: string | null;
-  // Solicitação simulada pelo chat (banco interno), nunca enviada ao resort.
   simulated?: true;
   protocol?: string;
 }
@@ -33,10 +28,6 @@ interface RequestRow {
   createdAt: string | null;
 }
 
-/**
- * Solicitações reais do snapshot feitas pelos hóspedes
- * da estadia atual do titular.
- */
 @Injectable()
 export class RequestsService {
   constructor(

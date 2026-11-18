@@ -4,7 +4,6 @@ import type { OperationToolName } from './operations-tool-registry.service.js';
 
 export type OperationalIntent = Exclude<ChatIntent, 'knowledge.search' | ConversationIntent>;
 
-// Mapeamento centralizado entre intenções e ferramentas.
 export const INTENT_TOOL_MAP = {
   'reservation.list': 'reservations.list',
   'reservation.details': 'reservations.list',
@@ -23,10 +22,8 @@ export const INTENT_TOOL_MAP = {
   'restaurant.menu': 'restaurants.menu',
 
   'favorite.list': 'favorites.list',
-  // Sem escrita: confere os favoritos e leva à tela de Eventos.
   'favorite.manage': 'favorites.list',
 
-  // Sem escrita: a inscrição é feita na tela de Lazer.
   'leisure.enroll': 'leisure.enrollments',
 
   'event.list': 'events.list',
@@ -38,7 +35,6 @@ export const INTENT_TOOL_MAP = {
   'esg.info': 'esg.info',
 
   'experience.list': 'experiences.list',
-  // A busca usa a mesma ferramenta, com filtros opcionais.
   'experience.search': 'experiences.list',
   'experience.details': 'experiences.details',
   'experience.availability': 'experiences.availability',

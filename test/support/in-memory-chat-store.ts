@@ -33,20 +33,13 @@ type StoredState = Pick<ChatConversationState, 'conversationId' | 'resortId' | '
 
 type StateOwner = Partial<Pick<StoredState, 'conversationId' | 'resortId' | 'guestId'>>;
 
-// Como no banco: todo critério informado precisa coincidir.
 const ownedBy = (stored: StoredState | undefined, where: StateOwner): stored is StoredState =>
   !!stored &&
   (where.resortId === undefined || stored.resortId === where.resortId) &&
   (where.guestId === undefined || stored.guestId === where.guestId);
 
-/** Fixed resort date used by the chat tests: Friday, 2026-10-23. */
 export const TEST_TODAY = '2026-10-23';
 
-/**
- * In-memory replacement for the TypeORM pieces used by ChatService:
- * the two repositories and DataSource.transaction(). Writes made inside a
- * transaction are only committed if the callback resolves.
- */
 export class InMemoryChatStore {
   readonly conversations = new Map<string, StoredConversation>();
   readonly messages: StoredMessage[] = [];
@@ -67,8 +60,6 @@ export class InMemoryChatStore {
   };
 
   readonly conversationsRepository = {
-    // Every criterion must match, so a conversation owned by another guest
-    // is not found, as with the real repository.
     findOneBy: vi.fn(async (where: Partial<StoredConversation>) => {
       const conversation = where.id ? this.conversations.get(where.id) : undefined;
       if (!conversation) return null;
@@ -98,7 +89,6 @@ export class InMemoryChatStore {
     }),
   };
 
-  /** Also used as the DataSource for ReservationsService.query(). */
   readonly dataSource = {
     query: vi.fn<DataSource['query']>(),
     transaction: vi.fn(
@@ -170,7 +160,6 @@ export class InMemoryChatStore {
 
           if (entity === ChatMessage && !Array.isArray(values)) {
             const message = values as MessageInput;
-            // Como o AUTO_INCREMENT: o ID é reservado na inserção, mesmo com rollback.
             const id = this.nextMessageId++;
             staged.push(() => this.messages.push({ id, ...message }));
             return { identifiers: [{ id }] };

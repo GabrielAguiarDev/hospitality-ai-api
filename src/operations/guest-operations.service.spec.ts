@@ -9,7 +9,6 @@ import type { OperationsToolRegistryService } from './operations-tool-registry.s
 const GUEST: GuestContext = { resortId: 'demo', guestId: '0a0b0c0d-1111-4222-8333-444455556666' };
 const CONTEXT = { conversationId: '6f1c2a5e-8c1d-4b7a-9e2f-3a4b5c6d7e8f', state: {} };
 
-// Sexta-feira, 23/10/2026, 15:00 no resort.
 const clock = { today: () => '2026-10-23', time: () => '15:00' } as unknown as ResortClock;
 
 describe('GuestOperationsService', () => {
@@ -102,7 +101,6 @@ describe('GuestOperationsService', () => {
 
       const manage = await service.favorites('Remove dos favoritos', decision('favorite.manage'), GUEST, CONTEXT);
       expect(manage.reply).toContain('Pelo chat ainda não consigo favoritar nem remover favoritos.');
-      // Nenhuma ferramenta de escrita existe para favoritos.
       expect(execute.mock.calls.map(([name]) => name)).toEqual(['favorites.list']);
     });
   });

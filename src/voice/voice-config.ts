@@ -1,9 +1,3 @@
-/**
- * Configuração do Voicebox (síntese de voz local), lida do .env.
- *
- * O perfil, o motor e o endereço vêm somente do servidor: o aplicativo
- * nunca escolhe a voz nem a URL de geração.
- */
 export interface VoiceSettings {
   enabled: boolean;
   baseUrl: string;
@@ -11,17 +5,13 @@ export interface VoiceSettings {
   engine: string;
   modelSize: string;
   language: string;
-  // Prazo de uma narração, da entrada na fila até o áudio pronto.
   timeoutMs: number;
   healthTimeoutMs: number;
   pollIntervalMs: number;
-  // Narrações aceitas ao mesmo tempo, incluindo a que está em síntese.
   maxQueue: number;
-  // Texto máximo enviado para narração (frases inteiras).
   maxChars: number;
   cacheMaxBytes: number;
   maxAudioBytes: number;
-  // Motivo da desativação quando a configuração é inválida.
   problem: string | null;
 }
 
@@ -34,7 +24,6 @@ function positiveInt(value: string | undefined, fallback: number): number {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-// Valores aceitos pelo Voicebox 0.5 (GenerationRequest em /openapi.json).
 const ENGINES = /^(qwen|qwen_custom_voice|luxtts|chatterbox|chatterbox_turbo|tada|kokoro)$/;
 const MODEL_SIZES = /^(1\.7B|0\.6B|1B|3B)$/;
 const LANGUAGES = /^(zh|en|ja|ko|de|fr|ru|pt|es|it|he|ar|da|el|fi|hi|ms|nl|no|pl|sv|sw|tr)$/;
@@ -56,8 +45,6 @@ export function voiceSettings(read: Read = (key) => process.env[key]): VoiceSett
     engine: text(read('VOICEBOX_ENGINE')) ?? 'qwen',
     modelSize: text(read('VOICEBOX_MODEL_SIZE')) ?? '1.7B',
     language: text(read('VOICEBOX_LANGUAGE')) ?? 'pt',
-    // Qwen3-TTS 1.7B no M3 (medido): ~30 s para uma frase curta e
-    // ~115 s para 180 caracteres (12 s de áudio).
     timeoutMs: positiveInt(read('VOICEBOX_TIMEOUT_MS'), 180_000),
     healthTimeoutMs: positiveInt(read('VOICEBOX_HEALTH_TIMEOUT_MS'), 3_000),
     pollIntervalMs: positiveInt(read('VOICEBOX_POLL_INTERVAL_MS'), 500),
@@ -79,7 +66,6 @@ export function voiceSettings(read: Read = (key) => process.env[key]): VoiceSett
             ? `VOICEBOX_LANGUAGE não suportado: ${settings.language}`
             : null;
 
-  // Problema só importa quando a narração foi ligada.
   const requested = text(read('VOICEBOX_ENABLED')) === 'true';
 
   return {

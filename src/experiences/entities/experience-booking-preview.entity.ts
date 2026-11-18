@@ -14,10 +14,6 @@ const decimal = {
   from: (value: string | null) => (value === null ? null : Number(value)),
 };
 
-/**
- * Pré-reserva simulada. Guarda as condições validadas pelo servidor;
- * a confirmação nunca usa dados reenviados pelo cliente.
- */
 @Entity('experience_booking_previews')
 @Index('idx_previews_owner', ['resortId', 'guestId', 'conversationId'])
 export class ExperienceBookingPreview {
@@ -72,7 +68,6 @@ export class ExperienceBookingPreview {
   @Column({ type: 'enum', enum: ['pending', 'confirmed', 'expired', 'cancelled', 'failed'], default: 'pending' })
   status!: PreviewStatus;
 
-  // Motivo de uma confirmação que falhou (revalidação ou valor alterado).
   @Column({ name: 'failure_reason', type: 'varchar', length: 255, nullable: true })
   failureReason!: string | null;
 

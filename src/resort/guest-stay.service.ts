@@ -7,18 +7,9 @@ import { requireConfiguredResortId } from '../guest/resort-config.js';
 import { ResortClock } from './resort-clock.service.js';
 import { ResortSnapshotGateway } from './resort-snapshot.gateway.js';
 
-// Formatos de id_hospede existentes no snapshot: UUID (padrão) ou
-// numérico (registros antigos/de teste do sistema, ex.: "1").
-// O formato só filtra entradas absurdas; o controle real é a consulta
-// ao titular com hospedagem ativa.
 export const GUEST_ID_PATTERN =
   /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9]{1,20})$/;
 
-/**
- * Hospedagem do titular. O ID de hospedagem do PMS é reutilizado
- * entre estadias, portanto toda consulta deve combinar
- * lodgingId com a janela de datas da estadia.
- */
 export interface GuestStay {
   resortId: string;
   holderId: string;
@@ -34,14 +25,6 @@ interface StayRow {
   checkOut: string | null;
 }
 
-/**
- * Condição SQL que seleciona os hóspedes da mesma estadia:
- * mesma hospedagem e datas sobrepostas à estadia do titular.
- *
- * A sobreposição é estrita: no dia de troca, o hóspede que sai
- * (ou o que entra) na mesma hospedagem não faz parte da estadia.
- * Parâmetros: lodgingId, checkOut, checkIn.
- */
 export const STAY_PARTY_SUBQUERY = `
   SELECT party.id_hospede
   FROM tb_hospede party
@@ -65,7 +48,6 @@ export class GuestStayService {
   ) {}
 
   private requireActiveStay(): boolean {
-    // Só é possível desligar a verificação com dados sintéticos.
     const disabled =
       this.configService.get<string>('DEMO_REQUIRE_ACTIVE_STAY') === 'false';
     const synthetic =
@@ -81,7 +63,6 @@ export class GuestStayService {
 
     const guestId = guest?.guestId?.trim().toLowerCase() ?? '';
 
-    // O snapshot representa um único resort.
     if (guest?.resortId !== resortId || !GUEST_ID_PATTERN.test(guestId)) {
       throw new ForbiddenException('Hospedagem não identificada.');
     }
@@ -116,7 +97,6 @@ export class GuestStayService {
     if (this.requireActiveStay()) {
       const today = this.clock.today();
 
-      // Permite o acesso a partir da véspera do check-in.
       if (
         today < ResortClock.addDays(row.checkIn, -1) ||
         today > row.checkOut

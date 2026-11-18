@@ -1,6 +1,5 @@
 import { IsInt, IsUUID, Max, Min } from 'class-validator';
 
-// Somente identificadores: o texto narrado vem da mensagem persistida.
 export class ChatVoiceDto {
   @IsUUID('4')
   conversationId!: string;

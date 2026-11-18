@@ -1,34 +1,22 @@
-/**
- * Contrato das ações estruturadas retornadas ao aplicativo.
- * Ações são montadas apenas pelo servidor, a partir de dados
- * verificados; nunca a partir de texto do modelo.
- */
-
 import { RESERVATION_TABS, SCREEN_PARAMS, type NavigationScreen } from '../capabilities/capabilities.js';
 
 export type { NavigationScreen } from '../capabilities/capabilities.js';
 
-// Telas que o aplicativo pode abrir (nomes provisórios, mapeados pelo app
-// para as rotas reais) e os parâmetros aceitos em cada uma.
 export const NAVIGATION_SCREENS = Object.keys(SCREEN_PARAMS) as NavigationScreen[];
 
 export interface NavigateAction {
   type: 'navigate';
   label: string;
   screen: NavigationScreen;
-  // Somente os parâmetros da tela (SCREEN_PARAMS), com IDs do cadastro.
   params: {
     restaurantId?: string;
     departmentId?: string;
     experienceId?: string;
-    // Events: aba do dia (AAAA-MM-DD, fuso do resort).
     date?: string;
-    // MyReservation: aba inicial.
     tab?: (typeof RESERVATION_TABS)[number];
   };
 }
 
-// Ponto único de montagem de navegação: o rótulo vem do módulo.
 export function navigateAction(screen: NavigationScreen, label: string, params: NavigateAction['params'] = {}): NavigateAction {
   return { type: 'navigate', label, screen, params };
 }
@@ -43,15 +31,9 @@ export interface ExperienceBookingSummary {
   totalPrice: number | null;
   currency: 'BRL';
   priceNote: string | null;
-  // Sempre true: reservas feitas pelo chat são simulações.
   simulated: true;
 }
 
-/**
- * Estados do card de reserva. O servidor devolve preview, confirmed,
- * expired, failed e cancelled; "confirming" é o estado local do
- * aplicativo enquanto POST /chat/actions está em andamento.
- */
 export const BOOKING_CARD_STATUSES = ['preview', 'confirming', 'confirmed', 'expired', 'failed', 'cancelled'] as const;
 
 export type BookingCardStatus = (typeof BOOKING_CARD_STATUSES)[number];
@@ -62,26 +44,16 @@ interface BookingCardRequest<T extends 'experience.booking.confirm' | 'experienc
   body: { type: T; conversationId: string; previewId: string };
 }
 
-/**
- * Um único card por reserva: `cardId` (o ID da pré-reserva) não muda
- * durante todo o ciclo. Uma nova ação com o mesmo cardId ATUALIZA o
- * card existente no aplicativo; nunca cria uma segunda representação.
- */
 export interface ExperienceBookingCardAction {
   type: 'experience.booking.card';
   cardId: string;
   status: BookingCardStatus;
   label: string;
   summary: ExperienceBookingSummary;
-  // Avisos do cadastro exibidos no card (idade mínima, responsável…).
   notes: string[];
-  // Somente em "preview".
   expiresAt: string | null;
-  // Somente em "confirmed".
   booking: { bookingId: string; confirmationCode: string } | null;
-  // Motivo em "expired", "failed" e "cancelled".
   reason: string | null;
-  // Botões disponíveis somente em "preview".
   confirm: BookingCardRequest<'experience.booking.confirm'> | null;
   cancel: BookingCardRequest<'experience.booking.cancel'> | null;
   updatedAt: string;
@@ -108,7 +80,6 @@ export interface BookingCardInput {
   updatedAt?: Date;
 }
 
-// Ponto único de montagem do card: os botões existem só em "preview".
 export function bookingCard(input: BookingCardInput): ExperienceBookingCardAction {
   const request = <T extends 'experience.booking.confirm' | 'experience.booking.cancel'>(type: T): BookingCardRequest<T> => ({
     method: 'POST',
@@ -133,18 +104,11 @@ export function bookingCard(input: BookingCardInput): ExperienceBookingCardActio
   };
 }
 
-/**
- * Opções de experiência apresentadas na resposta, na mesma ordem
- * numerada do texto. Ao tocar em uma opção, o aplicativo envia
- * `message` para POST /chat na mesma conversa.
- */
 export interface ExperienceOption {
   position: number;
   experienceId: string;
   title: string;
-  // Horários registrados no snapshot para a data consultada (HH:MM).
   times: string[];
-  // Resumo verificado para o card ("10 vagas para adultos", "com reserva").
   summary: string | null;
   message: string;
 }
@@ -152,29 +116,21 @@ export interface ExperienceOption {
 export interface ExperienceOptionsAction {
   type: 'experience.options';
   label: string;
-  // Data consultada (AAAA-MM-DD) ou null para o catálogo sem data.
   date: string | null;
   options: ExperienceOption[];
 }
 
 export const RESTAURANT_TYPES = ['restaurante', 'bar', 'alimentacao'] as const;
 
-/**
- * Restaurantes e bares apresentados na resposta, na ordem da lista.
- * Ao tocar, o aplicativo envia `message` para POST /chat na mesma
- * conversa; para reservar, usa a ação `navigate` da resposta.
- */
 export interface RestaurantOption {
   position: number;
   restaurantId: string;
   name: string;
   type: (typeof RESTAURANT_TYPES)[number] | null;
-  // Texto do cadastro ("10h às 18h"); null quando não cadastrado.
   openingHours: string | null;
   location: string | null;
   minimumAge: number | null;
   acceptsReservations: boolean;
-  // Turnos de reserva cadastrados (HH:MM).
   reservationTimes: string[];
   message: string;
 }
@@ -185,36 +141,24 @@ export interface RestaurantOptionsAction {
   options: RestaurantOption[];
 }
 
-/**
- * Programação de um dia: eventos e shows (tb_evento) e atividades
- * semanais de lazer (tb_programacaolazer). Somente leitura.
- */
 export interface EventItem {
   eventId: string;
   kind: 'event' | 'leisure';
   title: string;
   date: string;
-  // HH:MM; null quando o cadastro não tem horário.
   time: string | null;
   location: string | null;
   category: string | null;
-  // Resumo da descrição cadastrada.
   description: string | null;
 }
 
 export interface EventListAction {
   type: 'event.list';
   label: string;
-  // Data consultada (AAAA-MM-DD).
   date: string;
   items: EventItem[];
 }
 
-/**
- * Solicitação SIMULADA (Governança, Manutenção, TI…). Mesmo ciclo do card
- * de reserva: um card por `cardId`, atualizado no lugar; botões só em
- * "preview". Nada é enviado ao departamento.
- */
 export const REQUEST_CARD_STATUSES = ['preview', 'confirming', 'confirmed', 'expired', 'cancelled'] as const;
 
 export type RequestCardStatus = (typeof REQUEST_CARD_STATUSES)[number];
@@ -229,7 +173,6 @@ export interface GuestRequestSummary {
   departmentId: string;
   departmentName: string;
   items: { itemId: string; name: string; quantity: number }[];
-  // Texto do próprio hóspede, resumido.
   note: string | null;
   simulated: true;
 }
@@ -240,10 +183,8 @@ export interface GuestRequestCardAction {
   status: RequestCardStatus;
   label: string;
   summary: GuestRequestSummary;
-  // Avisos do departamento (horário de atendimento, prazo).
   notes: string[];
   expiresAt: string | null;
-  // Somente em "confirmed": protocolo da simulação (SIM-…).
   request: { requestId: string; protocol: string } | null;
   reason: string | null;
   confirm: RequestCardRequest<'request.confirm'> | null;
@@ -271,7 +212,6 @@ export interface RequestCardInput {
   updatedAt?: Date;
 }
 
-// Ponto único de montagem do card de solicitação: botões só em "preview".
 export function requestCard(input: RequestCardInput): GuestRequestCardAction {
   const request = <T extends 'request.confirm' | 'request.cancel'>(type: T): RequestCardRequest<T> => ({
     method: 'POST',
@@ -296,11 +236,6 @@ export function requestCard(input: RequestCardInput): GuestRequestCardAction {
   };
 }
 
-/**
- * Botão de um card. Navegação usa somente telas e parâmetros permitidos
- * (SCREEN_PARAMS); "message" é enviado pelo app a POST /chat na mesma
- * conversa, exatamente como as opções de experience.options.
- */
 export type CardButton =
   | { kind: 'navigate'; label: string; navigate: { screen: NavigationScreen; params: NavigateAction['params'] } }
   | { kind: 'message'; label: string; message: string };
@@ -313,26 +248,16 @@ export function messageButton(label: string, message: string): CardButton {
   return { kind: 'message', label, message };
 }
 
-/**
- * Tipos de item de catalog.list. Restaurantes, experiências e a
- * programação do dia mantêm suas ações próprias (restaurant.options,
- * experience.options, event.list); "event" aqui são os favoritos.
- */
 export const CATALOG_KINDS = ['spa_service', 'product', 'tip', 'esg', 'quiz', 'event'] as const;
 
 export type CatalogKind = (typeof CATALOG_KINDS)[number];
 
 export interface CatalogItem {
-  // ID real do cadastro: identidade estável do card.
   id: string;
-  // Posição na lista (1 = primeiro): "o segundo" e "Opção 2" referem-se a ela.
   position: number;
   title: string;
   description: string | null;
-  // Caminho relativo no bucket de imagens do app ("spa/foto.jpg"); null
-  // quando não há imagem ou a pasta não é confirmada. Nunca uma URL inventada.
   imagePath: string | null;
-  // Textos já formatados no fuso do resort; o app não reconverte.
   meta: {
     date?: string;
     time?: string;
@@ -356,7 +281,6 @@ export interface MenuDish {
   id: string;
   name: string;
   description: string | null;
-  // Porção compartilhada (R-GAS-10): serve N pessoas; null quando não cadastrado.
   serves: number | null;
   imagePath: string | null;
 }
@@ -365,11 +289,9 @@ export interface MenuCategory {
   id: string;
   name: string;
   dishes: MenuDish[];
-  // Pratos da categoria que não couberam no card ("ver tudo" no app).
   moreDishes: number;
 }
 
-/** Cardápio de um restaurante (somente leitura; pratos se escolhem na reserva). */
 export interface MenuViewAction {
   type: 'menu.view';
   label: string;
@@ -385,7 +307,6 @@ export const BOOKING_STATUSES = ['confirmed', 'pending', 'cancelled', 'unknown']
 export type BookingStatus = (typeof BOOKING_STATUSES)[number];
 
 export interface BookingItem {
-  // ID da reserva (snapshot) ou da reserva simulada (banco da IA).
   bookingId: string;
   kind: 'restaurant' | 'experience';
   title: string;
@@ -393,15 +314,12 @@ export interface BookingItem {
   time: string | null;
   status: BookingStatus;
   statusLabel: string;
-  // Pessoas registradas; null quando o cadastro não permite inferir.
   people: number | null;
-  // Reserva feita pelo chat: existe só no banco da IA.
   simulated: boolean;
   confirmationCode: string | null;
   buttons: CardButton[];
 }
 
-/** Minhas Reservas: restaurantes e experiências da estadia. */
 export interface BookingListAction {
   type: 'booking.list';
   label: string;
@@ -414,7 +332,6 @@ export type RequestStatus = (typeof REQUEST_STATUSES)[number];
 
 export interface RequestListItem {
   requestId: string;
-  // Solicitação a um departamento ou inscrição de lazer (R-LAZ-07).
   kind: 'department' | 'leisure';
   title: string;
   items: string[];
@@ -427,7 +344,6 @@ export interface RequestListItem {
   buttons: CardButton[];
 }
 
-/** Minhas Solicitações: departamentos e inscrições de lazer. */
 export interface RequestListAction {
   type: 'request.list';
   label: string;
@@ -455,7 +371,6 @@ export interface RetrievedSource {
 export interface ChatResponse {
   reply: string;
   conversationId: string;
-  // Mensagem do assistente gravada com esta resposta (narração: POST /chat/voice).
   assistantMessageId?: number;
   retrievedSources: RetrievedSource[];
   actions: ChatAction[];
@@ -520,7 +435,6 @@ function validButtons(buttons: CardButton[] | undefined): boolean {
 }
 
 const isOptionalText = (value: unknown, max: number) => value === null || isText(value, max);
-// Somente as pastas do bucket confirmadas no app e um nome de arquivo de imagem.
 const IMAGE_PATH = /^(?:restaurant|menu|experience\/logos|spa|tip)\/[^/\\]+\.(?:jpe?g|png|webp|gif|svg)$/i;
 const isImagePath = (value: unknown) =>
   value === null || (isText(value, 300) && IMAGE_PATH.test(value as string) && !(value as string).includes('..'));
@@ -545,10 +459,6 @@ function validCatalogItem(item: CatalogItem, index: number): boolean {
   );
 }
 
-/**
- * Validação em tempo de execução antes de enviar ao cliente.
- * Uma ação inválida é descartada em vez de chegar ao aplicativo.
- */
 export function isValidChatAction(action: ChatAction): boolean {
   switch (action?.type) {
     case 'navigate':

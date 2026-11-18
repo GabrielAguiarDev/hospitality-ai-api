@@ -45,7 +45,6 @@ describe('ReservationsService', () => {
     expect(select).toHaveBeenCalledOnce();
     const [sql, parameters] = select.mock.calls[0];
 
-    // Hospedagem + janela da estadia + hóspedes da mesma estadia.
     expect(parameters).toEqual([4321, '2026-10-21', '2026-10-25', 4321, '2026-10-25', '2026-10-21']);
     expect(sql).toMatch(/r\.idhospedagempms_reservarestaurante = \?/);
     expect(sql).toMatch(/r\.data_reservarestaurante BETWEEN \? AND \?/);
@@ -55,12 +54,9 @@ describe('ReservationsService', () => {
     expect(sql).toMatch(/^\s*SELECT\b/);
     expect(sql).not.toMatch(/\b(INSERT|UPDATE|DELETE|DROP|ALTER)\b/i);
     expect(sql).toMatch(/LIMIT 20/);
-    // Somente campos necessários: sem nome, telefone ou observações.
     expect(sql).not.toMatch(/nome_hospede|observacao|celular|dtnascimento/);
   });
 
-  // IDs de hospedagem são reutilizados: no dia de troca, o hóspede que
-  // sai ou o que entra não pode fazer parte da estadia atual.
   it('uses a strict stay overlap so previous or next occupants are excluded', async () => {
     select.mockResolvedValue([]);
 
@@ -111,7 +107,6 @@ describe('ReservationsService', () => {
         date: '25/10/2026',
         time: null,
         reservedAt: '25/10/2026',
-        // Sem pedidos de pratos, a quantidade não é inventada.
         partySize: null,
         status: 'cancelada',
       },

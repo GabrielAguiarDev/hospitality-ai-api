@@ -16,7 +16,6 @@ async function bootstrap() {
 
   await app.listen(process.env.PORT ?? 3000, '0.0.0.0');
 
-  // Somente no servidor HTTP: scripts (sync, avaliação) não pré-carregam o modelo.
   void app.get(OllamaService).warmup();
 }
 

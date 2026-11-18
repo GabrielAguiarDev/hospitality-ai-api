@@ -114,7 +114,6 @@ describe('ExperienceOperationsService', () => {
         summary,
       }),
       'experiences.booking.cancel': () => true,
-      // Estado persistido do card, lido após confirmar ou descartar.
       'experiences.booking.cards': ({ previewIds }) =>
         previewIds.map((previewId: string) => ({
           previewId,
@@ -207,7 +206,6 @@ describe('ExperienceOperationsService', () => {
       expect(card?.options[1].summary).toContain('3 vaga');
       expect(result.actions?.every(isValidChatAction)).toBe(true);
 
-      // Segunda consulta na mesma conversa: o aviso não se repete.
       const again = await service.handle(
         'e sábado?',
         decide('experience.list', { date: '2026-10-24' }),
@@ -238,7 +236,6 @@ describe('ExperienceOperationsService', () => {
 
       expect(result.reply).not.toContain('Não identifiquei');
       expect(result.intent).toBe('experience.search');
-      // A primeira chamada tenta resolver um nome; a última é a busca.
       expect(called('experiences.list').at(-1)?.[2]).toEqual({ date: '2026-10-25', bookable: true });
       expect(result.actions).toEqual([
         expect.objectContaining({ type: 'experience.options', date: '2026-10-25' }),
@@ -468,7 +465,6 @@ describe('ExperienceOperationsService', () => {
       });
       expect(result.actions?.[0]).toMatchObject({ notes: expect.arrayContaining([SIMULATION_NOTICE]) });
       expect(result.state?.experience?.pendingPreviewId).toBe(PREVIEW_ID);
-      // Valor, data e avisos ficam no card; o texto não os repete.
       expect(result.reply).not.toMatch(/R\$/);
       expect(result.reply).not.toContain('2026');
       expect(result.reply).toContain('confirmo');

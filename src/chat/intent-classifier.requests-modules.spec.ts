@@ -27,7 +27,6 @@ describe('IntentClassifierService routing for requests and modules', () => {
 
   beforeEach(() => {
     fetchMock = installFetchMock();
-    // Modelo indisponível: tudo abaixo precisa sair das regras determinísticas.
     fetchMock.mockRejectedValue(connectionError());
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     service = new IntentClassifierService(
@@ -203,7 +202,6 @@ describe('IntentClassifierService routing for requests and modules', () => {
       await expect(route('Para duas pessoas', asked)).resolves.toBe('experience.booking');
       await expect(route('2 adultos e 1 criança', asked)).resolves.toBe('experience.booking');
 
-      // Sem a pergunta pendente, o mesmo texto continua sendo uma consulta de vagas.
       const { awaiting: _asked, ...experience } = asked.experience!;
       await expect(route('Para duas pessoas', { ...asked, experience })).resolves.toBe('experience.availability');
     });

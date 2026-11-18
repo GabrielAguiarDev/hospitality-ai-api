@@ -31,7 +31,6 @@ export class ChatMessage {
   @Column({ type: 'text' })
   content!: string;
 
-  // Ações enviadas com a resposta (cards), para reconstruir o histórico.
   @Column({ type: 'json', nullable: true })
   actions!: ChatAction[] | null;
 
@@ -43,7 +42,6 @@ export class ChatMessage {
   createdAt!: Date;
 }
 
-// ID gerado na inserção (InsertResult.identifiers) de uma única mensagem.
 export function assistantId(identifiers: readonly Record<string, unknown>[] | undefined): number | undefined {
   const id = Number(identifiers?.[0]?.id);
   return Number.isSafeInteger(id) && id > 0 ? id : undefined;

@@ -13,9 +13,7 @@ export interface RequestDepartment {
   id: string;
   name: string;
   description: string | null;
-  // Itens ativos que o hóspede pode pedir (tb_itemdepartamento).
   items: RequestItem[];
-  // Avisos do departamento: horários, prazos, serviços (tb_infodepartamento).
   info: { title: string; description: string | null }[];
 }
 
@@ -40,13 +38,8 @@ interface InfoRow {
 
 const text = (value: string | null, max: number) => stripSymbols(compactText(value, max)) || null;
 
-// O catálogo muda raramente; a confirmação revalida itens de qualquer forma.
 const CACHE_MS = 60_000;
 
-/**
- * Catálogo de Solicitações do snapshot: departamentos que aceitam
- * solicitação, seus itens ativos e avisos. Somente leitura.
- */
 @Injectable()
 export class RequestsCatalogService {
   private cache: { at: number; value: Promise<RequestDepartment[]> } | null = null;
@@ -57,7 +50,6 @@ export class RequestsCatalogService {
     if (!this.cache || Date.now() - this.cache.at > CACHE_MS) {
       const value = this.load();
       this.cache = { at: Date.now(), value };
-      // Uma falha não fica guardada.
       value.catch(() => {
         if (this.cache?.value === value) this.cache = null;
       });
@@ -119,10 +111,8 @@ export class RequestsCatalogService {
           .filter((item) => String(item.departmentId) === id)
           .map((item) => ({
             id: String(item.id),
-            // Até 160 caracteres: o mesmo limite do card de solicitação.
             name: compactText([text(item.name, 120), text(item.sub, 60)].filter(Boolean).join(' - '), 160) || 'Item',
           }))
-          // O cadastro tem itens repetidos ("Travesseiro" duas vezes).
           .filter((item) => !seen.has(item.name.toLowerCase()) && seen.add(item.name.toLowerCase())),
         info: info
           .filter((item) => String(item.departmentId) === id && text(item.title, 160))

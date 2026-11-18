@@ -11,10 +11,6 @@ const decimal = {
   from: (value: string | null) => (value === null ? null : Number(value)),
 };
 
-/**
- * Reserva simulada confirmada. Existe somente no banco da IA;
- * não representa uma reserva no sistema oficial do resort.
- */
 @Entity('simulated_experience_bookings')
 @Index('uq_bookings_preview', ['previewId'], { unique: true })
 @Index('uq_bookings_confirmation', ['confirmationCode'], { unique: true })

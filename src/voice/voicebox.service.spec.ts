@@ -25,7 +25,6 @@ const ENV = {
   VOICEBOX_TIMEOUT_MS: '2000',
 };
 
-// As chamadas do serviço sempre usam uma URL em texto.
 const urlOf = (input: Parameters<typeof fetch>[0]) =>
   typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
 
@@ -40,7 +39,6 @@ const HEALTHY = { status: 'healthy', model_loaded: true, model_size: '1.7B' };
 interface Script {
   health?: () => Response | Promise<Response>;
   generate?: () => Response | Promise<Response>;
-  // Respostas sucessivas de GET /history/{id}.
   history?: (() => Response)[];
   audio?: () => Response;
 }
@@ -98,7 +96,6 @@ describe('VoiceboxService', () => {
         model_size: '1.7B',
         personality: false,
       });
-      // Somente o Voicebox configurado, sem barra dupla e sem redirecionamentos.
       for (const [url, init] of fetchMock.mock.calls) {
         expect(urlOf(url)).toMatch(/^http:\/\/127\.0\.0\.1:17493\/[a-z]/);
         expect(init?.redirect).toBe('error');

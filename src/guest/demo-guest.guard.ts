@@ -20,11 +20,6 @@ type GuestRequest = IncomingMessage & {
 
 const DEFAULT_ALLOWED_HOSTS = 'localhost,127.0.0.1,[::1],10.0.2.2';
 
-/**
- * Identidade de DEMONSTRAÇÃO. O header X-Demo-Guest-Id não é
- * autenticado: este guard deve ser substituído pela validação
- * do token do aplicativo antes de qualquer uso com dados reais.
- */
 @Injectable()
 export class DemoGuestGuard implements CanActivate {
   private readonly logger = new Logger(DemoGuestGuard.name);
@@ -41,7 +36,6 @@ export class DemoGuestGuard implements CanActivate {
     );
   }
 
-  // Resposta genérica: o motivo fica apenas no log do servidor.
   private deny(reason: string): never {
     this.logger.warn(`Acesso de demonstração negado: ${reason}`);
     throw new UnauthorizedException('Acesso de demonstração não autorizado.');
@@ -69,7 +63,6 @@ export class DemoGuestGuard implements CanActivate {
       this.deny('IP não autorizado');
     }
 
-    // Proteção contra DNS rebinding: somente hosts locais conhecidos.
     const host = (request.headers.host ?? '')
       .toLowerCase()
       .replace(/:\d+$/, '');
@@ -78,7 +71,6 @@ export class DemoGuestGuard implements CanActivate {
       this.deny('host não autorizado');
     }
 
-    // Não permite que o cliente escolha um resort.
     if (
       request.headers['x-resort-id'] !== undefined ||
       request.headers['x-guest-id'] !== undefined
@@ -86,7 +78,6 @@ export class DemoGuestGuard implements CanActivate {
       this.deny('identificadores não permitidos');
     }
 
-    // Segredo opcional por execução, comparado em tempo constante.
     const secret = this.configService.get<string>('DEMO_SHARED_SECRET')?.trim();
 
     if (secret) {
@@ -113,7 +104,6 @@ export class DemoGuestGuard implements CanActivate {
       this.deny('ID do hóspede ausente ou inválido');
     }
 
-    // Sem modo dinâmico, somente os IDs autorizados no servidor.
     const dynamicGuest =
       this.configService.get<string>('DEMO_DYNAMIC_GUEST_ENABLED') === 'true';
 

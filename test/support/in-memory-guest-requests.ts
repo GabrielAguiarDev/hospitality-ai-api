@@ -14,7 +14,6 @@ interface Operator {
 const isOperator = (value: unknown): value is Operator =>
   typeof value === 'object' && value !== null && 'type' in value && '_value' in value ? true : false;
 
-// FindOperator do TypeORM: MoreThanOrEqual e In são os usados pelo serviço.
 function matchesValue(actual: unknown, expected: unknown): boolean {
   if (isOperator(expected)) {
     const operator = expected as unknown as { type: string; _value: unknown };
@@ -29,11 +28,6 @@ function matchesValue(actual: unknown, expected: unknown): boolean {
 const matches = (row: Row, where: Where) =>
   Object.entries(where).every(([key, expected]) => matchesValue((row as unknown as Where)[key], expected));
 
-/**
- * DataSource falso para a tabela simulated_guest_requests: só o necessário
- * para GuestRequestService (count/find/findOne/insert/update/create e
- * transaction). A transação confirma as escritas apenas se o callback resolver.
- */
 export class InMemoryGuestRequests {
   readonly rows = new Map<string, Row>();
   private lock: Promise<void> = Promise.resolve();
@@ -79,7 +73,6 @@ export class InMemoryGuestRequests {
       if (entity !== SimulatedGuestRequest) throw new Error('Unexpected repository in InMemoryGuestRequests');
       return this.repository;
     }),
-    // Serializa as transações, como o SELECT ... FOR UPDATE do serviço faz no banco.
     transaction: vi.fn(async <T>(work: (manager: InMemoryGuestRequests['manager']) => Promise<T>) => {
       const run = this.lock.then(() => work(this.manager));
       this.lock = run.then(
@@ -90,7 +83,6 @@ export class InMemoryGuestRequests {
     }),
   } as unknown as DataSource;
 
-  /** Cópia da linha, para asserções. */
   get(id: string): Row | undefined {
     const row = this.rows.get(id);
     return row ? structuredClone(row) : undefined;

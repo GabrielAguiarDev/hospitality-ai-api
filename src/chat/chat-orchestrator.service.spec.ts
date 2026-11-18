@@ -46,9 +46,6 @@ describe('ChatOrchestratorService', () => {
   beforeEach(async () => {
     vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
 
-    // Only the collaborators are provided: if the orchestrator ever started
-    // depending on DataSource or EmbeddingsService, this would fail. The
-    // context service resolves references from the given state only.
     const moduleRef = await Test.createTestingModule({
       providers: [
         ChatOrchestratorService,
@@ -158,7 +155,6 @@ describe('ChatOrchestratorService', () => {
         today: '2026-10-23',
       });
 
-      // A pré-reserva continua aguardando confirmação.
       expect(result).toEqual({
         mode: 'conversation',
         intent: 'conversation.general',

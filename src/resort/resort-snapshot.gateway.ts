@@ -4,16 +4,9 @@ import { DataSource } from 'typeorm';
 
 export const RESORT_CONNECTION = 'resort';
 
-// Palavras que nunca podem aparecer em uma consulta ao snapshot.
 const FORBIDDEN_SQL =
   /\b(?:INSERT|UPDATE|DELETE|REPLACE|ALTER|DROP|TRUNCATE|CREATE|RENAME|GRANT|REVOKE|CALL|LOAD|HANDLER|LOCK|UNLOCK|SET|INTO\s+OUTFILE|INTO\s+DUMPFILE)\b/i;
 
-/**
- * Único ponto de acesso ao banco original do resort.
- *
- * O usuário do banco possui apenas SELECT; esta validação é
- * uma camada adicional e não substitui as permissões do MySQL.
- */
 @Injectable()
 export class ResortSnapshotGateway {
   constructor(
@@ -22,7 +15,6 @@ export class ResortSnapshotGateway {
   ) {}
 
   assertReadOnly(sql: string): void {
-    // Literais (ex.: SEPARATOR '; ') não contam como comandos.
     const statement = sql.trim().replace(/'(?:[^'\\]|\\.)*'/g, "''");
 
     if (

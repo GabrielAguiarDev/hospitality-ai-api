@@ -5,7 +5,6 @@ import { imageFile, RestaurantMenusService } from './restaurant-menus.service.js
 import type { ResortSnapshotGateway } from './resort-snapshot.gateway.js';
 
 const STAY: GuestStay = { resortId: 'demo', holderId: 'holder-1', lodgingId: 9001, checkIn: '2026-10-21', checkOut: '2026-10-25' };
-// Parâmetros da subconsulta da estadia: hospedagem, checkout, checkin.
 const PARTY = [9001, '2026-10-25', '2026-10-21'];
 
 describe('snapshot readers for menus, favorites and leisure enrollments', () => {
@@ -75,12 +74,10 @@ describe('snapshot readers for menus, favorites and leisure enrollments', () => 
       expect(menu).toEqual({
         restaurantId: 'rest-1',
         categories: [
-          // O preço do texto livre não é repetido (summarizeText).
           { id: 'c1', name: 'Principal', dishes: [{ id: 'd1', name: 'Risoto', description: 'Arroz arbóreo.', serves: null, image: 'abc.jpg' }] },
           { id: 'c2', name: 'Principal - Vegetariano', dishes: [{ id: 'd2', name: 'Hikari Vegano', description: null, serves: 1, image: null }] },
         ],
       });
-      // Mesmos filtros do app: ativo e ordem > 0, sempre pelo ID do restaurante.
       expect(select.mock.calls[0][0]).toMatch(/situation_catcardapio = 1\s+AND c\.ordem_catcardapio > 0/);
       expect(select.mock.calls[1][0]).toMatch(/situacao_cardapio = 1\s+AND m\.ordem_cardapio > 0/);
       expect(select.mock.calls.map(([, parameters]) => parameters)).toEqual([['rest-1'], ['rest-1']]);

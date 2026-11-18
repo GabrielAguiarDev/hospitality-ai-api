@@ -107,7 +107,6 @@ describe('ConversationContextService.resolve', () => {
     ).toBeUndefined();
     expect(service.afterConversation(state, decide('conversation.general', { declinesPending: true })).pendingQuestion)
       .toBeUndefined();
-    // "Obrigado!" também encerra a pergunta: um "sim" depois não responde a ela.
     expect(service.afterConversation(state, decide('conversation.general')).pendingQuestion).toBeUndefined();
     expect(
       service.afterConversation({ ...state, experience: { pendingPreviewId: 'p1' } }, decide('conversation.general'))

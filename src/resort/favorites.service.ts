@@ -5,11 +5,6 @@ import { compactText, normalizeTime, stripSymbols } from '../common/text.js';
 import { STAY_PARTY_SUBQUERY, stayPartyParameters, type GuestStay } from './guest-stay.service.js';
 import { ResortSnapshotGateway } from './resort-snapshot.gateway.js';
 
-/**
- * Evento favoritado (lembrete) por alguém da estadia. No app, favorito é
- * um registro tb_notificacao com tipo "evento" (R-FAV-01); só eventos
- * podem ser favoritados.
- */
 export interface FavoriteEvent {
   favoriteId: string;
   eventId: string;
@@ -28,10 +23,6 @@ interface FavoriteRow {
   location: string | null;
 }
 
-/**
- * Favoritos da estadia, lidos do snapshot (somente leitura). A janela é a
- * estadia inteira; o app mostra só os eventos do seu cache (R-FAV-03).
- */
 @Injectable()
 export class FavoritesService {
   constructor(private readonly snapshot: ResortSnapshotGateway) {}
@@ -62,7 +53,6 @@ export class FavoritesService {
       [...stayPartyParameters(stay), stay.checkIn, stay.checkOut],
     );
 
-    // Duas pessoas da estadia podem favoritar o mesmo evento: um card por evento.
     const seen = new Set<string>();
 
     return rows.flatMap((row) => {

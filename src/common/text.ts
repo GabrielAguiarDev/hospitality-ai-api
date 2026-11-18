@@ -1,4 +1,3 @@
-// Normaliza texto para comparações: sem acentos, emojis ou pontuação.
 export function normalizeText(value: string): string {
   return value
     .normalize('NFD')
@@ -13,7 +12,6 @@ export function textTokens(value: string): string[] {
   return normalized ? normalized.split(' ') : [];
 }
 
-// Remove espaços repetidos e quebras de linha de textos do snapshot.
 export function compactText(value: string | null | undefined, maxLength = 1200): string {
   const text = (value ?? '').replace(/\s+/g, ' ').trim();
   return text.length > maxLength ? `${text.slice(0, maxLength - 1).trimEnd()}…` : text;
@@ -58,11 +56,6 @@ export function significantTokens(name: string): string[] {
   );
 }
 
-/**
- * Localiza candidatos citados na mensagem pelo nome.
- * Retorna todos os empatados com a maior pontuação, para que
- * o chamador peça esclarecimento em vez de escolher arbitrariamente.
- */
 export function matchByName<T extends NamedCandidate>(
   message: string,
   candidates: readonly T[],
@@ -93,7 +86,6 @@ export function matchByName<T extends NamedCandidate>(
     .map((item) => item.candidate);
 }
 
-// Normaliza horários do snapshot ("19:00", "9h", "10h30") para HH:MM.
 export function normalizeTime(value: string | null | undefined): string | null {
   const match = value?.trim().match(/^(\d{1,2})\s*[:hH]\s*(\d{2})?/);
 
@@ -111,7 +103,6 @@ export function normalizeTime(value: string | null | undefined): string | null {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
 
-// Remove emojis e bandeiras de textos cadastrados ("Omakase🇯🇵").
 export function stripSymbols(value: string): string {
   return value
     .replace(/[\p{Extended_Pictographic}\p{Regional_Indicator}\u{FE0F}\u{200D}]/gu, '')
@@ -119,10 +110,6 @@ export function stripSymbols(value: string): string {
     .trim();
 }
 
-/**
- * Resumo de uma descrição cadastrada: frases inteiras até `maxLength`,
- * sem emojis nem listas de preços (os valores vêm de campos próprios).
- */
 export function summarizeText(value: string | null | undefined, maxLength = 220): string {
   const sentences = stripSymbols(compactText(value, 4000))
     .split(/(?<=[.!?])\s+/)
@@ -138,10 +125,6 @@ export function summarizeText(value: string | null | undefined, maxLength = 220)
   return summary.length > maxLength ? `${summary.slice(0, maxLength - 1).trimEnd()}…` : summary;
 }
 
-/**
- * Texto simples para o aplicativo, que não renderiza Markdown:
- * remove negrito, títulos, código e links gerados pelo modelo.
- */
 export function toPlainText(value: string): string {
   return value
     .replace(/```[a-z]*\n?/gi, '')
@@ -157,10 +140,6 @@ export function toPlainText(value: string): string {
     .trim();
 }
 
-/**
- * Citação breve de nomes no texto ("A, B e C", "A, B, C e mais 4"):
- * os detalhes ficam nos cards.
- */
 export function nameList(names: string[], max = 3): string {
   if (names.length <= max) {
     return names.length > 1 ? `${names.slice(0, -1).join(', ')} e ${names.at(-1)}` : (names[0] ?? '');

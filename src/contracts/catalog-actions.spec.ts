@@ -10,7 +10,6 @@ import {
   type RequestListAction,
 } from './chat-actions.js';
 
-// Exemplos no formato real enviado ao app (fixtures fictícias).
 const CATALOG: CatalogListAction = {
   type: 'catalog.list',
   label: 'SPA',
@@ -109,7 +108,6 @@ describe('new card actions (catalog.list, menu.view, booking.list, request.list)
     shifted.items[0].position = 2;
     expect(isValidChatAction(shifted)).toBe(false);
 
-    // O mesmo ID em tipos diferentes de reserva é permitido; no mesmo tipo, não.
     const bookings = clone(BOOKINGS);
     bookings.items[1].kind = 'restaurant';
     expect(isValidChatAction(bookings)).toBe(false);

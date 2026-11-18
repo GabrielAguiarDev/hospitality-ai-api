@@ -28,7 +28,6 @@ describe('OllamaService', () => {
   let service: OllamaService;
 
   beforeEach(() => {
-    // The service reads process.env when it is constructed.
     vi.stubEnv('OLLAMA_URL', 'http://ollama.test:11434');
     vi.stubEnv('OLLAMA_MODEL', 'qwen3:1.7b');
     vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);

@@ -7,7 +7,6 @@ import { ResortSnapshotGateway } from './resort-snapshot.gateway.js';
 
 export interface ResortEvent {
   id: string;
-  // "event": evento ou show daquela data; "leisure": atividade semanal de lazer.
   kind: 'event' | 'leisure';
   title: string;
   date: string;
@@ -33,10 +32,6 @@ interface LeisureRow {
   category: string | null;
 }
 
-/**
- * Programação de um dia no snapshot: eventos e shows da data
- * (tb_evento) e atividades semanais de lazer (tb_programacaolazer).
- */
 @Injectable()
 export class EventsCatalogService {
   constructor(private readonly snapshot: ResortSnapshotGateway) {}
@@ -86,7 +81,6 @@ export class EventsCatalogService {
     ]);
 
     const text = (value: string | null, max: number) => stripSymbols(compactText(value, max)) || null;
-    // Locais cadastrados em maiúsculas ("PARK LOUNGE") viram "Park Lounge".
     const place = (value: string | null) => {
       const name = text(value, 120);
       return name && name === name.toUpperCase()
@@ -106,7 +100,6 @@ export class EventsCatalogService {
           time: normalizeTime(row.time),
           location: place(row.location),
           category: null,
-          // "Show de Circo: Show de Circo" não acrescenta nada ao card.
           description: description && normalizeText(description) !== normalizeText(title) ? description : null,
         };
       }),

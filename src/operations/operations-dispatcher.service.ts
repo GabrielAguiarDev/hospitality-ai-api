@@ -37,7 +37,6 @@ export class OperationsDispatcherService {
     private readonly guestOperationsService: GuestOperationsService,
   ) {}
 
-  /** Produto da Boutique citado numa pergunta que o RAG não respondeu. */
   findProducts(message: string, guest: GuestContext, context?: DispatchContext): Promise<DispatchResult | null> {
     return this.moduleOperationsService.findProducts(message, guest, context);
   }
@@ -54,7 +53,6 @@ export class OperationsDispatcherService {
       );
     }
 
-    // Conversas nunca chegam ao Tool Registry.
     if (isConversationIntent(decision.intent)) {
       throw new BadRequestException(
         'Intenções de conversa não são operações.',
@@ -65,7 +63,6 @@ export class OperationsDispatcherService {
 
     this.logger.log(`Intenção: ${decision.intent} → Ferramenta: ${tool}`);
 
-    // Minhas Reservas (restaurantes e experiências) em uma lista só.
     if (decision.intent === 'reservation.list') {
       return this.guestOperationsService.bookings(message, decision, guest, context);
     }
@@ -79,7 +76,6 @@ export class OperationsDispatcherService {
     }
 
     if (isRestaurantIntent(decision.intent)) {
-      // Sem a conversa, a reserva só é encaminhada; o catálogo usa um estado vazio.
       if (!context && decision.intent === 'restaurant.booking') {
         return this.restaurantOperationsService.handleBooking(message, guest);
       }
@@ -93,7 +89,6 @@ export class OperationsDispatcherService {
     }
 
     if (isRequestIntent(decision.intent)) {
-      // A escrita simulada exige a conversa; o handler recusa sem ela.
       return this.requestsOperationsService.handle(message, { ...decision, intent: decision.intent }, guest, context);
     }
 
@@ -106,7 +101,6 @@ export class OperationsDispatcherService {
     }
 
     if (isExperienceIntent(decision.intent)) {
-      // Operações de experiência dependem da conversa e do seu estado.
       if (!context) {
         throw new BadRequestException(
           'Operações de experiência exigem o contexto da conversa.',

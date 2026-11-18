@@ -57,7 +57,6 @@ export class ChatController {
     return this.chatActionsService.execute(dto, guest);
   }
 
-  // Narração (WAV) de uma resposta já persistida do assistente.
   @Post('voice')
   @HttpCode(200)
   @Header('Cache-Control', 'no-store')

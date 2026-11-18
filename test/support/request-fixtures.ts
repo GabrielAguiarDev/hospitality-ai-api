@@ -13,7 +13,6 @@ import { RequestsCatalogService, type RequestDepartment } from '../../src/resort
 
 import { InMemoryGuestRequests } from './in-memory-guest-requests.js';
 
-/** Departamentos fictícios, no formato do RequestsCatalogService. */
 export const REQUEST_DEPARTMENTS: RequestDepartment[] = [
   {
     id: '3',
@@ -50,7 +49,6 @@ export const REQUEST_DEPARTMENTS: RequestDepartment[] = [
     ],
     info: [],
   },
-  // Sem itens nem avisos: não é oferecido ao hóspede.
   { id: '9', name: 'Equipe interna', description: null, items: [], info: [] },
 ];
 
@@ -71,12 +69,6 @@ export interface RequestFakes {
   rows: InMemoryGuestRequests;
 }
 
-/**
- * Providers dos módulos Solicitações, Boutique, SPA, Dicas, Quiz, ESG,
- * Minhas Reservas, Favoritos, Cardápio e inscrições de lazer
- * para os testes de integração: catálogos falsos (snapshot) e o
- * GuestRequestService REAL sobre um banco interno em memória.
- */
 export function requestProviders(options: { departments?: RequestDepartment[] } = {}): { providers: Provider[]; fakes: RequestFakes } {
   const rows = new InMemoryGuestRequests();
   const departments = vi.fn(async () => structuredClone(options.departments ?? REQUEST_DEPARTMENTS));
@@ -86,7 +78,6 @@ export function requestProviders(options: { departments?: RequestDepartment[] } 
     providers: [
       ModuleOperationsService,
       GuestOperationsService,
-      // Leituras reais sobre a conexão "resort" falsa de cada teste.
       RestaurantMenusService,
       FavoritesService,
       LeisureEnrollmentsService,

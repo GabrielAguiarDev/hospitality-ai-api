@@ -17,7 +17,6 @@ const NEXT_STAY: GuestStay = { ...STAY, checkIn: '2026-11-02', checkOut: '2026-1
 const OTHER_LODGING: GuestStay = { ...STAY, lodgingId: 99 };
 const CONVERSATION = '0b5c2a5e-8c1d-4b7a-9e2f-3a4b5c6d7e8f';
 const OTHER_CONVERSATION = '9b5c2a5e-8c1d-4b7a-9e2f-3a4b5c6d7e8f';
-// Limite de pré-visualizações abertas por hóspede e estadia (MAX_OPEN_PREVIEWS do serviço).
 const OPEN_LIMIT = 5;
 const NOW = new Date('2026-10-23T15:00:00Z');
 
@@ -222,11 +221,9 @@ describe('GuestRequestService', () => {
 
       const fourth = await service.preview(GUEST, STAY, draft());
       expect(fourth).toMatchObject({ status: 'rejected', message: expect.stringContaining('aguardando confirmação') });
-      // Uma conversa nova não renova a cota.
       await expect(service.preview(GUEST, STAY, draft({ conversationId: '8b5c2a5e-8c1d-4b7a-9e2f-3a4b5c6d7e8f' }))).resolves.toMatchObject({ status: 'rejected' });
       expect(rows.all()).toHaveLength(OPEN_LIMIT);
 
-      // Outro hóspede e outra estadia têm a própria cota.
       await expect(service.preview(OTHER, STAY, draft({ conversationId: OTHER_CONVERSATION }))).resolves.toMatchObject({ status: 'created' });
       await expect(service.preview(GUEST, NEXT_STAY, draft())).resolves.toMatchObject({ status: 'created' });
     });
@@ -261,11 +258,9 @@ describe('GuestRequestService', () => {
         status: 'rejected',
         message: expect.stringContaining('24 horas'),
       });
-      // Outra estadia do mesmo alojamento (novo check-in) e outro hóspede não são afetados.
       await expect(service.preview(GUEST, NEXT_STAY, draft())).resolves.toMatchObject({ status: 'created' });
       await expect(service.preview(OTHER, STAY, draft({ conversationId: OTHER_CONVERSATION }))).resolves.toMatchObject({ status: 'created' });
 
-      // Depois de 24 horas, a cota volta.
       vi.setSystemTime(new Date(NOW.getTime() + 25 * 3_600_000));
       await expect(service.preview(GUEST, STAY, draft())).resolves.toMatchObject({ status: 'created' });
     });

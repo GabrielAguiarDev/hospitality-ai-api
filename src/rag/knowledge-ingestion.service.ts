@@ -12,7 +12,6 @@ export interface SyncResult {
   createdOrUpdated: number;
   unchanged: number;
   removed: number;
-  // Resultado por fonte gerenciada.
   sources?: Record<string, Omit<SyncResult, 'sources'>>;
 }
 
@@ -39,25 +38,17 @@ export class KnowledgeIngestionService {
     return this.sources.filter((source) => enabled.has(source.name));
   }
 
-  /**
-   * Sincronização incremental de uma fonte: atualiza documentos com
-   * hash diferente e remove os que deixaram de existir na fonte.
-   */
   async syncSource(
     resortId: string,
     source: KnowledgeSource,
   ): Promise<Omit<SyncResult, 'sources'>> {
-    // Consulta a fonte oficial deste resort.
     const documents = await source.load(resortId);
 
-    // Recupera somente os documentos já gerenciados
-    // por esta fonte e por este resort.
     const indexed = await this.knowledgeService.listIndexedHashes(
       resortId,
       source.name,
     );
 
-    // Identifica documentos novos ou alterados.
     const changed = documents.filter((document) => {
       const currentHash = this.knowledgeService.fingerprint(document);
 
@@ -70,7 +61,6 @@ export class KnowledgeIngestionService {
       source.name,
     );
 
-    // Identifica documentos desativados ou removidos.
     const activeIds = new Set(documents.map((document) => document.id));
 
     const removedIds = [...indexed.keys()].filter((id) => !activeIds.has(id));
@@ -114,8 +104,6 @@ export class KnowledgeIngestionService {
     return result;
   }
 
-  // Preserva o contrato utilizado pelo script
-  // e pelo agendador já implementados.
   async syncDemo(): Promise<SyncResult> {
     const resortId = requireConfiguredResortId(
       this.configService.get<string>('RESORT_ID'),

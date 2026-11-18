@@ -15,8 +15,6 @@ import {
   selectCapabilities,
 } from './capabilities.js';
 
-// Toda intenção do tipo ChatIntent. O Record força a lista a acompanhar o tipo:
-// uma intenção nova sem entrada aqui quebra a compilação.
 const ALL_INTENTS: Record<ChatIntent, true> = {
   'reservation.list': true,
   'reservation.details': true,
@@ -102,8 +100,6 @@ describe('capability catalog', () => {
       expect(NAVIGATION_SCREENS, module).toContain(screen);
       expect(SCREEN_PARAMS, module).toHaveProperty(screen);
     }
-    // Toda tela de módulo tem um dono no catálogo; as demais são telas de
-    // detalhe (Restaurant, Experience) e pessoais (Minhas Reservas…).
     const owned = new Set<string>(CAPABILITIES.map(({ screen }) => screen));
     expect(NAVIGATION_SCREENS.filter((screen) => !owned.has(screen)).sort()).toEqual(
       ['Experience', 'MyFavorites', 'MyRequests', 'MyReservation', 'Restaurant'],

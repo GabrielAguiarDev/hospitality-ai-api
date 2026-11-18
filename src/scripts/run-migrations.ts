@@ -3,7 +3,6 @@ import { DataSource } from 'typeorm';
 
 import { AI_MIGRATIONS, AI_MIGRATIONS_TABLE } from '../database/ai-migrations.js';
 
-// Executa as migrations somente no banco interno da IA.
 async function run(): Promise<void> {
   if (existsSync('.env')) {
     process.loadEnvFile('.env');
@@ -21,7 +20,6 @@ async function run(): Promise<void> {
 
   const database = required('DB_NAME');
 
-  // Aborta se o destino for o mesmo servidor e schema do snapshot.
   const sameTarget =
     required('DB_HOST') === process.env.RESORT_DB_HOST?.trim() &&
     required('DB_PORT') === process.env.RESORT_DB_PORT?.trim() &&

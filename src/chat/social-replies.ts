@@ -3,13 +3,6 @@ import { normalizeText } from '../common/text.js';
 
 import type { ConversationIntent, HistoryEntry } from './chat-intent.types.js';
 
-/**
- * Respostas a interações sociais (saudação, agradecimento, elogio,
- * despedida, perguntas sobre o Yago). São determinísticas: não chamam
- * o modelo, o RAG nem ferramentas, e nunca citam dados do resort.
- *
- * Uma ou duas frases curtas, sem tratamento de gênero do hóspede.
- */
 export type SocialKind =
   | 'thanks'
   | 'farewell'
@@ -23,11 +16,8 @@ export type SocialKind =
 
 export interface SocialContext {
   history: HistoryEntry[];
-  // Pré-reserva aguardando confirmação nesta conversa.
   pendingBooking: boolean;
-  // Tipo da pendência: o lembrete fala de reserva ou de solicitação.
   pendingKind?: 'experience' | 'request';
-  // "Não" a uma pergunta do Yago.
   declinesPending?: boolean;
 }
 
@@ -43,7 +33,6 @@ const SALUTATION = /\b(bom dia|boa tarde|boa noite)\b/;
 const NEGATIVE = /\b(?:nao|agora nao|depois|talvez)\b/;
 
 export function socialKind(message: string, intent: ConversationIntent, declinesPending = false): SocialKind {
-  // "Oiii" e "Obrigadooo" viram "oi" e "obrigado".
   const text = normalizeText(message).replace(/([a-z])\1{2,}/g, '$1');
 
   if (intent === 'conversation.external') return 'external';
@@ -79,7 +68,6 @@ const IDENTITY_REPLY = `Sou o Yago, concierge digital do resort. Posso ajudar co
 const PENDING_BOOKING = 'A pré-reserva continua aguardando: confirme pelo card ou responda "confirmo".';
 const PENDING_REQUEST = 'A solicitação continua aguardando: confirme pelo card ou responda "confirmo".';
 
-// Alterna as variações sem repetir a última resposta do Yago.
 function pick(options: string[], history: HistoryEntry[]): string {
   const last = [...history].reverse().find(({ role }) => role === 'assistant')?.content;
   const turn = history.filter(({ role }) => role === 'assistant').length;
@@ -93,7 +81,6 @@ function greeting(message: string, history: HistoryEntry[]): string {
   const opening = salutation ? `${salutation.charAt(0).toUpperCase()}${salutation.slice(1)}` : 'Olá';
   const howAreYou = HOW_ARE_YOU.test(text);
 
-  // A apresentação acontece uma vez, no primeiro contato.
   if (!history.some(({ role }) => role === 'assistant')) {
     return howAreYou
       ? 'Tudo ótimo por aqui, sou o Yago, concierge digital do resort. Como posso ajudar?'
@@ -109,7 +96,6 @@ export function socialReply(message: string, intent: ConversationIntent, context
   if (kind === 'external') return EXTERNAL_REPLY;
   if (kind === 'identity') return IDENTITY_REPLY;
 
-  // Com uma pré-reserva pendente, o lembrete substitui a oferta de ajuda.
   if (context.pendingBooking && kind !== 'help') {
     const opening = {
       thanks: 'Por nada!',

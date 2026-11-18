@@ -1,12 +1,6 @@
 import { normalizeText } from '../common/text.js';
 import type { RequestDepartment, RequestItem } from '../resort/requests-catalog.service.js';
 
-/**
- * Correspondência determinística entre a mensagem e o catálogo de
- * Solicitações do snapshot. Só devolve itens e departamentos que existem
- * e estão ativos; nunca cria nomes a partir do texto.
- */
-
 const STOPWORDS = new Set([
   'de', 'da', 'do', 'das', 'dos', 'para', 'pra', 'com', 'a', 'o', 'as', 'os', 'e', 'em', 'no', 'na', 'nos', 'nas',
   'um', 'uma', 'uns', 'umas', 'mais', 'meu', 'minha', 'meus', 'minhas', 'quarto', 'por', 'favor', 'outros', 'outro',
@@ -17,12 +11,10 @@ const NUMBER_WORDS: Record<string, number> = {
   um: 1, uma: 1, dois: 2, duas: 2, tres: 3, quatro: 4, cinco: 5, seis: 6, sete: 7, oito: 8, nove: 9, dez: 10,
 };
 
-// Sintomas de defeito sem item citado: o pedido é da Manutenção.
 const MAINTENANCE_CUE =
   /\b(?:nao (?:funciona|liga|esquenta|gela|abre|fecha|tranca|acende)|nao (?:esta |ta )?(?:funcionando|ligando|esquentando|gelando|abrindo|fechando|trancando|acendendo)|quebrad[oa]s?|estragad[oa]s?|vazando|pingando|entupid[oa]s?|queimad[oa]s?|sem agua quente|com defeito|defeito|conserto|consertar|parou|travad[oa]s?)\b/;
 const IT_CUE = /\b(?:internet|wifi|sem sinal|conexao)\b/;
 
-// Singular aproximado: "toalhas" → "toalha", "lençóis" → "lencol".
 export function stem(word: string): string {
   if (word.length <= 3) return word;
   if (word.endsWith('oes') || word.endsWith('aes')) return `${word.slice(0, -3)}ao`;
@@ -43,7 +35,6 @@ export function requestTokens(value: string): string[] {
     .map(stem);
 }
 
-/** Departamento citado pelo nome ("governança", "manutenção", "TI"). */
 export function mentionedDepartment(message: string, departments: RequestDepartment[]): RequestDepartment | undefined {
   const text = ` ${normalizeText(message)} `;
 
@@ -66,21 +57,15 @@ export interface MatchedItem {
   department: RequestDepartment;
   item: RequestItem;
   quantity: number;
-  // Empatado com outro item pelas mesmas palavras: o handler pergunta qual.
   tied: boolean;
 }
 
-/**
- * Quantidade junto do item: em "2 toalhas de banho e 1 toalha de rosto",
- * vale o número cuja sequência cobre mais palavras do nome do item.
- */
 function quantityFor(message: string, itemTokens: string[]): number {
   const words = normalizeText(message).split(' ');
   let best = { coverage: 0, value: 1 };
 
   for (let index = 1; index < words.length; index += 1) {
     if (!itemTokens.includes(stem(words[index]))) continue;
-    // "2 toalhas", "duas toalhas", "mais 2 toalhas de banho".
     const previous = words[index - 1];
     const value = /^\d{1,2}$/.test(previous) ? Number(previous) : NUMBER_WORDS[previous];
     if (value === undefined) continue;
@@ -93,12 +78,6 @@ function quantityFor(message: string, itemTokens: string[]): number {
   return best.value;
 }
 
-/**
- * Itens do catálogo citados na mensagem. Para cada palavra, o item de
- * melhor cobertura vence ("TV" sozinha → item "TV", não "Canais de TV").
- * Itens empatados de departamentos diferentes voltam todos, para o
- * handler perguntar qual.
- */
 export function matchItems(message: string, departments: RequestDepartment[]): MatchedItem[] {
   const words = new Set(requestTokens(message));
   const scored = departments.flatMap((department) =>
@@ -114,7 +93,6 @@ export function matchItems(message: string, departments: RequestDepartment[]): M
 
   for (const candidate of [...scored].sort((a, b) => b.score - a.score)) {
     if (candidate.hits.every((token) => covered.has(token))) {
-      // Empate exato com um item já escolhido (mesmas palavras): também é candidato.
       const tie = chosen.find((item) => item.score === candidate.score && item.hits.join() === candidate.hits.join());
       if (!tie) continue;
       tie.tied = true;

@@ -47,16 +47,6 @@ import { EXTERNAL_REPLY } from './social-replies.js';
 import { ChatService } from './chat.service.js';
 import { IntentClassifierService } from './intent-classifier.service.js';
 
-/**
- * Wires the real chat pipeline together and fakes only the external edges:
- * Ollama HTTP, the read-only resort snapshot connection, the internal MySQL
- * (in-memory store), ChromaDB (KnowledgeService), the embedding model and the
- * experience catalog/booking persistence. Every flow runs with the classifier
- * model available and with it unavailable, so the deterministic fallback is
- * exercised too.
- */
-
-// Identidade de teste (UUID fictício, nunca um hóspede real).
 const GUEST: GuestContext = {
   resortId: 'demo',
   guestId: '0a0b0c0d-1111-4222-8333-444455556666',
@@ -69,7 +59,6 @@ const STAY_ROW = {
   checkOut: '2026-10-25',
 };
 
-// Linha do snapshot (tb_reservarestaurante + joins).
 const RESERVATION_ROW = {
   id: 'res-1',
   restaurantId: 'rest-trattoria',
@@ -172,7 +161,6 @@ describe.each([
   let store: InMemoryChatStore;
   let chat: ChatService;
   let registry: OperationsToolRegistryService;
-  // Conexão "resort": somente leitura, roteada pelo SQL recebido.
   const resortQuery = vi.fn<DataSource['query']>();
   const catalog = {
     listActive: vi.fn(async () => [JAQUEIRA]),
@@ -188,7 +176,6 @@ describe.each([
     preview: vi.fn<ExperienceBookingService['preview']>(),
     confirm: confirmBooking,
     cancelPreview: vi.fn(async () => true),
-    // Estado persistido do card: confirmado depois de booking.confirm.
     cards: vi.fn<ExperienceBookingService['cards']>(async (_guest, _conversationId, previewIds) =>
       previewIds.map((previewId) => {
         const confirmed = confirmBooking.mock.calls.some((call) => call[3] === previewId);
@@ -358,7 +345,6 @@ describe.each([
     expect(result.reply).toContain('Pessoas: 4');
     expect(result.reply).toContain('Status: confirmada');
     expect(result.retrievedSources).toEqual([]);
-    // O texto continua completo; o card de Minhas Reservas vem junto.
     expect(result.actions).toEqual([
       {
         type: 'booking.list',
@@ -375,14 +361,11 @@ describe.each([
     ]);
     expect(result.actions.every(isValidChatAction)).toBe(true);
 
-    // Titular resolvido no snapshot (uma vez por ferramenta: restaurantes e
-    // experiências) e reservas filtradas pela hospedagem.
     expect(resortQuery).toHaveBeenCalledTimes(3);
     const stays = resortQuery.mock.calls.filter(([sql]) => /FROM tb_hospede h/.test(sql));
     expect(stays.map(([, parameters]) => parameters)).toEqual([[GUEST.guestId], [GUEST.guestId]]);
     const bookings = resortQuery.mock.calls.find(([sql]) => /FROM tb_reservarestaurante/.test(sql));
     expect(bookings?.[1]).toEqual([9001, '2026-10-21', '2026-10-25', 9001, '2026-10-25', '2026-10-21']);
-    // O banco interno não recebe consultas operacionais.
     expect(store.dataSource.query).not.toHaveBeenCalled();
     expect(embeddings.embed).not.toHaveBeenCalled();
     expect(requests('generation')).toHaveLength(0);
@@ -415,7 +398,6 @@ describe.each([
     expect(second.conversationId).toBe(first.conversationId);
     expect(second.reply).toBe('Sua reserva na Trattoria Aurora é para 4 pessoas.');
 
-    // The classifier received the first turn as history.
     const secondClassification = requests('classifier')[1] as {
       messages: { content: string }[];
     };
@@ -445,7 +427,6 @@ describe.each([
     expect(embeddings.embed).toHaveBeenCalledExactlyOnceWith([
       'task: search result | query: Qual é o horário de funcionamento da Trattoria Aurora?',
     ]);
-    // The knowledge search is scoped to the guest's resort.
     expect(knowledge.searchByVector).toHaveBeenCalledExactlyOnceWith(
       [0.1, 0.2, 0.3],
       GUEST.resortId,
@@ -511,7 +492,6 @@ describe.each([
   });
 
   describe('conversation', () => {
-    // Nenhuma chamada externa: modelo, classificador, embeddings, busca vetorial ou ferramentas.
     const expectNoLookups = (execute: { mock: { calls: unknown[] } }) => {
       expect(fetchMock).not.toHaveBeenCalled();
       expect(embeddings.embed).not.toHaveBeenCalled();
@@ -539,7 +519,6 @@ describe.each([
           actions: [],
         });
         expect(sentences(result.reply).length).toBeLessThanOrEqual(2);
-        // A identidade cita os módulos do app (capabilitiesOverview), então tem um teto maior.
         expect(result.reply.length).toBeLessThanOrEqual(message === 'Quem é você?' ? 160 : 120);
         expect(result.reply).not.toMatch(/senhor|senhora|bem-vind|querid/i);
         expectNoLookups(execute);
@@ -709,7 +688,6 @@ describe.each([
       expect(sentences(replies[3]).length).toBeLessThanOrEqual(2);
       expect(replies[3]).not.toBe(replies[0]);
       expect(embeddings.embed).not.toHaveBeenCalled();
-      // Nenhum turno desta conversa precisou do modelo generativo.
       expect(requests('generation')).toHaveLength(0);
       expect(store.messages).toHaveLength(turns.length * 2);
     });
@@ -771,7 +749,6 @@ describe.each([
           party: { adults: 2, children: 0 },
         },
       );
-      // O texto orienta; data, valor e avisos ficam no card.
       expect(preview.reply).toContain('pré-reserva');
       expect(preview.reply).not.toMatch(/R\$/);
       expect(preview.actions).toEqual([
@@ -786,7 +763,6 @@ describe.each([
           },
         }),
       ]);
-      // Nada é confirmado sem confirmação explícita.
       expect(booking.confirm).not.toHaveBeenCalled();
       expect(store.states.get(id)?.state.experience?.pendingPreviewId).toBe(PREVIEW_ID);
 
@@ -798,7 +774,6 @@ describe.each([
         PREVIEW_ID,
       );
       expect(confirmed.reply).toContain('confirmada');
-      // O mesmo card (mesmo cardId) passa a "confirmed", com o código.
       expect(confirmed.actions).toEqual([
         expect.objectContaining({
           type: 'experience.booking.card',
@@ -809,14 +784,11 @@ describe.each([
       ]);
       expect(store.states.get(id)?.state.experience?.pendingPreviewId).toBeUndefined();
 
-      // Uma nova confirmação por texto não reutiliza a pré-reserva.
       const again = await turn('confirmo', id);
       expect(booking.confirm).toHaveBeenCalledOnce();
       expect(again.actions).toEqual([]);
 
-      // Nenhuma resposta operacional usou o modelo generativo.
       expect(requests('generation')).toHaveLength(0);
-      // O snapshot recebeu apenas leituras.
       for (const [sql] of resortQuery.mock.calls) {
         expect(sql).toMatch(/^\s*SELECT\b/);
       }

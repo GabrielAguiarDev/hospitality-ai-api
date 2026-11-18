@@ -68,7 +68,6 @@ describe('matchItems', () => {
   });
 
   it('picks the exact item "TV" over "Canais de TV" when both exist', () => {
-    // "TV" tem melhor cobertura que "Canais de TV" e está só na Manutenção.
     const matches = matchItems('a TV não liga', DEPARTMENTS);
 
     expect(matches.map(({ item, department }) => [item.name, department.name])).toEqual([['TV', 'Manutenção']]);

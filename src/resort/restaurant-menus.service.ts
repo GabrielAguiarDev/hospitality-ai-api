@@ -8,15 +8,12 @@ export interface MenuDishInfo {
   id: string;
   name: string;
   description: string | null;
-  // Porção compartilhada: serve N pessoas (R-GAS-10). null quando não cadastrado.
   serves: number | null;
-  // Arquivo da imagem no bucket do app (pasta "menu"), sem URL.
   image: string | null;
 }
 
 export interface MenuCategoryInfo {
   id: string;
-  // "Principal - Vegetariano" para subcategorias (id_referencia).
   name: string;
   dishes: MenuDishInfo[];
 }
@@ -43,16 +40,11 @@ interface DishRow {
 
 const text = (value: string | null, max: number) => stripSymbols(compactText(value, max)) || null;
 
-// Somente nomes de arquivo simples: nada de caminhos ou URLs do cadastro.
 export function imageFile(value: string | null | undefined): string | null {
   const file = value?.trim();
   return file && file.length <= 200 && /^[^/\\]+\.(?:jpe?g|png|webp|gif|svg)$/i.test(file) ? file : null;
 }
 
-/**
- * Cardápio publicado de um restaurante no snapshot (tb_catcardapio +
- * tb_cardapio). Mesmos filtros do app: ativo e ordem > 0. Somente leitura.
- */
 @Injectable()
 export class RestaurantMenusService {
   constructor(private readonly snapshot: ResortSnapshotGateway) {}
@@ -120,7 +112,6 @@ export class RestaurantMenusService {
               })),
           };
         })
-        // Categoria sem pratos publicados não aparece no cardápio.
         .filter((category) => category.dishes.length > 0),
     };
   }

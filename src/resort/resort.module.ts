@@ -11,10 +11,6 @@ import { ResortSnapshotGateway } from './resort-snapshot.gateway.js';
 import { RestaurantMenusService } from './restaurant-menus.service.js';
 import { RestaurantsCatalogService } from './restaurants-catalog.service.js';
 
-/**
- * Acesso somente leitura ao snapshot do resort.
- * A conexão "resort" é registrada pelo ResortDatabaseModule no AppModule.
- */
 @Module({
   providers: [
     ResortSnapshotGateway,

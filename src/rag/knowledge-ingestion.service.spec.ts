@@ -28,7 +28,6 @@ describe('enabledKnowledgeSources', () => {
 
 describe('KnowledgeIngestionService', () => {
   const knowledge = {
-    // hash is deterministic and content-based
     fingerprint: vi.fn((d: KnowledgeDocument) => `h:${d.content}`),
     listIndexedHashes: vi.fn(),
     upsertDocuments: vi.fn(),

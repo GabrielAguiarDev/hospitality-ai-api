@@ -21,21 +21,14 @@ import type { RestaurantInfo } from '../resort/restaurants-catalog.service.js';
 import type { RestaurantReservation } from './reservations.service.js';
 import type { GuestRequest } from './requests.service.js';
 
-/**
- * Montagem dos cards a partir do resultado das ferramentas. Nenhum campo
- * vem do texto do modelo: títulos, datas, status e IDs são do cadastro.
- */
-
 const MAX_LIST_ITEMS = 20;
 const MAX_DISHES_PER_CATEGORY = 5;
 
-// "24/10/2026" ou "24/10/2026 20:00" → { date: "2026-10-24", time: "20:00" }.
 export function fromBrazilianDate(value: string | null | undefined): { date: string | null; time: string | null } {
   const match = value?.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}:\d{2}))?/);
   return match ? { date: `${match[3]}-${match[2]}-${match[1]}`, time: match[4] ?? null } : { date: null, time: null };
 }
 
-// Pasta confirmada no app (`${EXPO_PUBLIC_BUCKET}/<pasta>/<arquivo>`); sem arquivo, sem imagem.
 export function imagePath(folder: 'restaurant' | 'menu' | 'experience/logos' | 'spa' | 'tip', file: string | null | undefined): string | null {
   return file ? `${folder}/${file}` : null;
 }
@@ -45,7 +38,6 @@ export function catalogList(kind: CatalogKind, label: string, items: Omit<Catalo
   return [{ type: 'catalog.list', label, kind, items: items.slice(0, MAX_LIST_ITEMS).map((item, index) => ({ ...item, position: index + 1 })) }];
 }
 
-/** Botão "Opção N": o app envia a mensagem e o servidor resolve a posição. */
 export function optionButton(position: number, label = 'Ver detalhes') {
   return messageButton(label, `Opção ${position}`);
 }
@@ -85,7 +77,6 @@ const RESTAURANT_STATUS: Record<string, [BookingStatus, string]> = {
   cancelada: ['cancelled', 'Cancelada'],
 };
 
-// R-EXP-15: "pago" é exibido como confirmada.
 const EXPERIENCE_STATUS: Record<string, [BookingStatus, string]> = {
   pago: ['confirmed', 'Confirmada'],
   pendente: ['pending', 'Pendente'],
@@ -102,7 +93,6 @@ export interface BookingSources {
   simulated: SimulatedExperienceBooking[];
 }
 
-/** Reservas da estadia em ordem cronológica, cada uma com identidade estável. */
 export function bookingItems({ restaurants, experiences, simulated }: BookingSources): BookingItem[] {
   const items: BookingItem[] = [
     ...restaurants.flatMap((reservation): BookingItem[] => {
@@ -141,7 +131,6 @@ export function bookingItems({ restaurants, experiences, simulated }: BookingSou
         buttons: [navigateButton('MyReservation', 'Ver em Minhas Reservas', { tab: 'Experience' })],
       };
     }),
-    // Simuladas: não existem no app oficial, então não há tela para abrir.
     ...simulated.map((booking): BookingItem => ({
       bookingId: booking.id,
       kind: 'experience',
@@ -172,14 +161,12 @@ const DEPARTMENT_STATUS: Record<string, [RequestStatus, string]> = {
   simulada: ['simulated', 'Simulada (não enviada)'],
 };
 
-// R-LAZ-06: "negado" é tanto a recusa do resort quanto o cancelamento do hóspede.
 const LEISURE_STATUS: Record<string, [RequestStatus, string]> = {
   pendente: ['pending', 'Pendente'],
   aprovado: ['approved', 'Aprovada'],
   negado: ['denied', 'Negada ou cancelada'],
 };
 
-/** Minhas Solicitações: departamentos (oficiais e simuladas) e inscrições de lazer. */
 export function requestItems(requests: GuestRequest[], enrollments: LeisureEnrollment[]): RequestListItem[] {
   return [
     ...requests.map((request): RequestListItem => {
@@ -189,7 +176,6 @@ export function requestItems(requests: GuestRequest[], enrollments: LeisureEnrol
         requestId: String(request.id),
         kind: 'department',
         title: request.category,
-        // "Itens não informados" é o texto do serviço quando o cadastro não traz itens.
         items: (request.description === 'Itens não informados' ? '' : request.description)
           .split(';')
           .map((item) => item.trim())

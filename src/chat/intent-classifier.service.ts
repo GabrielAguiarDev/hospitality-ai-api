@@ -33,7 +33,6 @@ const DETAILS: ReservationDetail[] = [
   'none',
 ];
 
-// Vocabulário fechado das respostas a um resumo de pré-reserva.
 const CONFIRM_TRIGGERS = new Set([
   'sim', 'confirmo', 'confirmar', 'confirma', 'confirmado', 'fechado', 'ok', 'isso', 'perfeito', 'claro', 'reservar',
 ]);
@@ -42,11 +41,9 @@ const CONFIRM_WORDS = new Set([
   'a', 'reserva', 'pfv', 'pf',
 ]);
 const CANCEL_TRIGGERS = new Set(['nao', 'cancela', 'cancelar', 'cancele', 'desisto']);
-// Respostas a uma pergunta do Yago ("Quer que eu verifique os horários?").
 const ANSWER_TRIGGERS = new Set([
   ...CONFIRM_TRIGGERS, 'pode', 'quero', 'gostaria', 'verifica', 'verifique', 'veja', 'mostra', 'mostre', 'abre', 'abra', 'bora',
 ]);
-// Elogio antes da resposta ("Legal, mostra todas") não a invalida.
 const ANSWER_WORDS = new Set([
   ...CONFIRM_WORDS, ...ANSWER_TRIGGERS, 'ser', 'com', 'certeza', 'ai', 'sim', 'claro', 'ver', 'abrir', 'favor',
   'todas', 'todos', 'legal', 'otimo', 'otima', 'perfeito', 'beleza', 'ok', 'manda', 'mande',
@@ -55,16 +52,11 @@ const DECLINE_WORDS = new Set([
   ...CANCEL_TRIGGERS, 'obrigado', 'obrigada', 'yago', 'agora', 'precisa', 'por', 'enquanto', 'depois', 'talvez', 'valeu', 'tudo', 'bem',
 ]);
 const GRATITUDE = new Set(['obrigado', 'obrigada', 'valeu', 'agradeco', 'brigado', 'brigada']);
-// "sim", "não", "claro" sem nada a que responder.
 const BARE_ANSWERS = new Set(['sim', 'nao', 'claro', 'isso', 'pode', 'ser', 'com', 'certeza', 'yago', 'por', 'favor', 'obrigado', 'obrigada']);
 const CANCEL_WORDS = new Set([
   ...CANCEL_TRIGGERS, 'obrigado', 'obrigada', 'yago', 'quero', 'mais', 'por', 'favor', 'a', 'reserva', 'deixa', 'pra', 'la', 'melhor',
 ]);
 
-// Expressões sociais (texto normalizado). Uma mensagem só é conversa
-// quando, removidas estas expressões, não sobra nenhuma solicitação:
-// "Olá, quais restaurantes existem?" continua sendo conhecimento.
-// "show" e "legal" ficam de fora: "E o show?" e "É legal?" são perguntas.
 const GREETING_PHRASES = [
   'bom dia', 'boa tarde', 'boa noite', 'tudo bem', 'tudo bom', 'tudo certo', 'tudo joia', 'tudo otimo', 'td bem', 'td bom',
   'como vai', 'como voce esta', 'como vc esta', 'como esta', 'e ai', 'eai', 'muito prazer', 'prazer',
@@ -80,7 +72,6 @@ const GENERAL_PHRASES = [
   'tchau', 'ate logo', 'ate mais', 'ate breve', 'ate amanha', 'adeus', 'bom descanso',
   'entendi', 'otimo', 'perfeito', 'certo', 'ok',
 ];
-// Palavras que podem acompanhar uma expressão social sem formar um pedido.
 const SOCIAL_FILLERS = new Set([
   'yago', 'a', 'o', 'e', 'voce', 'vc', 'pra', 'para', 'por', 'favor', 'tambem', 'muito', 'muita', 'demais',
   'entao', 'ai', 'gente', 'ne', 'sim', 'pela', 'pelo', 'pelas', 'pelos', 'ajuda', 'atencao', 'com', 'contigo',
@@ -88,23 +79,14 @@ const SOCIAL_FILLERS = new Set([
 ]);
 const GENERAL_SET = new Set(GENERAL_PHRASES);
 
-// Agradecimentos, elogios e despedidas em frases livres
-// ("Muito legal! Me ajudou muito, obrigado.").
 const CLOSING =
   /\b(?:obrigad[oa]s?|brigad[oa]|valeu|agradeco|grat[oa]|tchau|ate (?:logo|mais|breve|amanha)|adeus|legal|muito bom|que bom|otimo|otima|excelente|maravilh[a-z]*|incrivel|sensacional|perfeito|adorei|amei|top|ajudou|ajudaram|show de bola|bom trabalho)\b/;
-// Exclamações que começam com "que" não são perguntas.
 const EXCLAMATION = /\bque (?:legal|bom|otimo|maravilha|incrivel|demais|show)\b/g;
-// Indícios de que a mensagem também pede algo.
 const REQUEST_CUE =
   /\b(?:que|qual|quais|quando|onde|como|quanto|quanta|quantos|quantas|tem|ha|existe|existem|pode|poderia|podemos|consegue|quero|queria|gostaria|preciso|reserv[a-z]*|horarios?|vagas?|e o|e a|e os|e as|mas|porem|fala|fale|conta|conte|mostra|mostre|manda|mande|ver|veja|lista|liste|explica|explique|ela|ele|elas|eles|essa|esse|nessa|nesse|dela|dele|delas|deles|mais sobre|bora|vamos|traga|traz|tragam|envia|envie|lembra|lembre|chama|chame|leva|leve|providencia|providencie|separa|separe)\b/;
 const RESORT_PLACES = /\b(?:piscinas?|spa|academia|sauna|ofuro|hidromassagem|quartos?|apartamentos?|restaurantes?|bar|agua)\b/;
-// Fatos externos sem fonte integrada: clima, tempo real, notícias.
-// Somente expressões inequívocas: "O passeio acontece com chuva?" e
-// "previsão de chegada do transfer" são perguntas sobre o resort.
 const EXTERNAL_FACTS =
   /\b(?:vai (?:chover|fazer sol|fazer frio|fazer calor|esfriar|esquentar)|esta chovendo|chovendo agora|previsao do tempo|como (?:esta|vai estar|fica|vai ficar) o (?:tempo|clima)|tempo (?:amanha|hoje|la fora)|temperatura (?:hoje|amanha|agora|la fora|da cidade)|cotacao|(?:dolar|euro) (?:hoje|agora)|como esta o (?:dolar|euro)|noticias?|placar|resultado do jogo|jogo de hoje|transito|engarrafamento)\b/;
-// Um único padrão, da expressão mais longa para a mais curta:
-// "tudo certo" é saudação, não "tudo" + "certo".
 const SOCIAL_PATTERN = new RegExp(
   `\\b(?:${[...GREETING_PHRASES, ...GENERAL_PHRASES].sort((a, b) => b.length - a.length).join('|')})\\b`,
   'g',
@@ -115,7 +97,6 @@ const KNOWLEDGE: IntentDecision = {
   detail: 'none',
 };
 
-// Catálogo de gastronomia; horários, cardápio e preços seguem no RAG.
 const RESTAURANT_CATALOG =
   /\b(?:restaurantes?|bares|bar|lanchonetes?|gastronomia|onde (?:posso |podemos |da pra |da para )?(?:comer|jantar|almocar|lanchar)|opcoes de (?:comida|refeicao|lanche))\b/;
 const FOOD_KNOWLEDGE =
@@ -123,17 +104,12 @@ const FOOD_KNOWLEDGE =
 const RESTAURANT_LIST_CUE =
   /\b(?:quais|lista|liste|indicar|indica|indique|recomenda|recomendar|recomende|sugere|sugerir|sugestao|sugestoes|opcoes|algum|alguns|alguma|existem|os restaurantes|os bares|sobre os|onde (?:posso |podemos |da pra |da para )?(?:comer|jantar|almocar|lanchar))\b/;
 
-// "Tem restaurante japonês?", "Existe algum bar na praia?".
 const RESTAURANT_EXISTS = /\b(?:tem|ha|existe|existem) (?:algum |alguma |um |uma )?(?:restaurantes?|bares|bar|lanchonetes?|opcao|opcoes)\b/;
-// "Quais bares estão abertos agora?", "Algum restaurante funcionando à noite?".
 const OPEN_CUE = /\b(?:abert[oa]s?|funcionando|em funcionamento|abre|abrem)\b/;
 const NOW_CUE = /\b(?:agora|neste momento|nesse momento)\b/;
 
-// Eventos, shows e programação do dia (tb_evento e tb_programacaolazer).
 const EVENT_NOUN =
   /\b(?:eventos?|shows?|apresentac(?:ao|oes)|musica ao vivo|festas?|atrac(?:ao|oes)|programacao|recreac(?:ao|oes)|atividades de lazer|atividades? (?:para|pra) (?:as |os )?(?:criancas|adultos|teens|adolescentes|jovens))\b/;
-// O substantivo só vira programação com um pedido de lista ou uma data:
-// "O resort faz festa de casamento?" e "Onde fica o espaço de eventos?" vão ao RAG.
 const EVENT_LIST_CUE = /\b(?:quais|qual|que horas|o que|tem|ha|vai ter|rola|programacao|mostra|mostre|lista|agenda)\b/;
 const EVENT_ATTRIBUTE =
   /\b(?:onde fica|fica onde|dress code|traje|pago|paga|preco|valor|custa|cobrad[oa]|aceita|faz|fazem|sala|salao|espaco|monitor(?:es|a)?|casamento|reuniao|corporativ[oa]|idade|permitid[oa]|pode levar)\b/;
@@ -150,23 +126,15 @@ const BOOKING_VERB =
 const PRICE_WORDS = /\b(?:quanto custa|quanto e|qual (?:o )?(?:valor|preco)|valor|preco|custa)\b/;
 const AVAILABILITY_WORDS =
   /\b(?:vagas?|disponive(?:l|is)|disponibilidade|horarios?|tem para|tem pra|da para|da pra|cabe)\b/;
-// Pergunta que pede opções entre várias experiências: "quais...",
-// "qual tem reserva...", "tem alguma...". A palavra "reserva" sozinha
-// não decide a ferramenta.
 const SELECTION_QUESTION =
   /\b(?:quais|qual (?:experiencia|passeio|delas|deles|tem|ainda|aceita|da pra|da para|posso|podemos)|que (?:experiencias?|passeios?)|(?:tem|existe|existem|ha) (?:alguma|algum)|alguma (?:opcao|experiencia))\b/;
-// "Quais os horários?" com uma experiência escolhida pergunta sobre ela.
 const ATTRIBUTE_QUESTION =
   /\b(?:quais|qual) (?:e |sao )?(?:o |os |a |as )?(?:horarios?|valor(?:es)?|precos?|regras?|idades?|datas?)\b/;
-// Perguntas sobre outros serviços encerram o contexto da experiência.
 const OTHER_SERVICES =
   /\b(?:spa|piscina|academia|restaurantes?|bar|recepcao|wi ?fi|praia|show|eventos?|cafe|toalhas?|check ?(?:in|out)|solicitac(?:ao|oes)|chamados?|jantar|almoco|cardapio|pratos?|programacao|servicos?|diaria|chegar|chegada|chover|chuva|massagem|estacionamento|salao)\b/;
 const FOLLOW_UP_START = /^(?:e|entao|mas|e se)\b/;
-// Mensagens longas fora das regras não são ambíguas o bastante para o modelo.
 const MODEL_FALLBACK_MAX_WORDS = 10;
 
-// Somente intenções de leitura: o modelo nunca inicia uma reserva.
-// Exportado para a avaliação entre modelos.
 export const EXPERIENCE_MODEL_INTENTS: ChatIntent[] = [
   'experience.search',
   'experience.list',
@@ -315,7 +283,6 @@ export class IntentClassifierService {
   private explicitReservation(message: string): IntentDecision | null {
     const text = this.normalize(message);
 
-    // Horário de funcionamento não é horário de reserva.
     if (
       /funcionamento|que horas abre|que horas fecha/.test(text) &&
       !/\bminha reserva\b/.test(text)
@@ -367,7 +334,6 @@ export class IntentClassifierService {
       /\bstatus\b/,
       /que horas/,
       /qual horario/,
-      // Somente a pergunta isolada: "qual o horário do spa?" é conhecimento.
       /^(?:e )?qual (?:e )?o horario(?: dela| da reserva| dessa reserva)?\??$/,
       /que dia/,
       /qual dia/,
@@ -409,8 +375,6 @@ export class IntentClassifierService {
   ): IntentDecision | null {
     const text = this.normalize(message);
 
-    // Perguntas sobre como abrir uma nova solicitação
-    // pertencem ao conhecimento, não à consulta operacional.
     if (
       /\bcomo (?:faco|abrir|solicito|solicitar)\b/.test(text) ||
       /\b(?:quero|posso) (?:abrir|fazer|solicitar)\b/.test(text)
@@ -455,21 +419,14 @@ export class IntentClassifierService {
     };
   }
 
-  /**
-   * Saudações, agradecimentos e perguntas sobre o assistente.
-   * Mensagens mistas ("Olá, quero reservar...") seguem o roteamento normal.
-   */
   private detectConversation(
     message: string,
     state?: ConversationState,
   ): IntentDecision | null {
-    // "Oiii" e "Bom diaaa" viram "oi" e "bom dia".
     const text = normalizeText(message).replace(/([a-z])\1{2,}/g, '$1');
     let general = false;
     let social = false;
 
-    // Com uma pré-reserva pendente, "sim"/"não" nunca vão ao modelo livre,
-    // que poderia afirmar uma confirmação que não aconteceu.
     if (
       pendingConfirmation(state) &&
       text.split(' ').some((word) => CONFIRM_TRIGGERS.has(word) || CANCEL_TRIGGERS.has(word))
@@ -496,17 +453,11 @@ export class IntentClassifierService {
     return this.detectClosing(message, text, state) ?? this.detectExternal(message, text, state);
   }
 
-  /**
-   * Agradecimento, elogio ou despedida sem outro pedido. A intenção
-   * atual prevalece: "Me ajudou muito, obrigado" depois de uma reserva
-   * não reabre a operação anterior.
-   */
   private detectClosing(message: string, text: string, state?: ConversationState): IntentDecision | null {
     if (!CLOSING.test(text) || message.includes('?')) {
       return null;
     }
 
-    // Com uma pergunta pendente, "Perfeito, pode ser" ainda a responde.
     if (state?.pendingQuestion && text.split(' ').some((word) => ANSWER_TRIGGERS.has(word))) {
       return null;
     }
@@ -514,7 +465,6 @@ export class IntentClassifierService {
     const entities = extractEntities(message, this.clock.today());
     const listed = state?.experience?.listed?.map(({ id, title }) => ({ id, name: title })) ?? [];
 
-    // "Obrigado, não preciso de mais toalhas" recusa, não pede.
     const declined = text.replace(/\bnao (?:preciso|precisa|precisamos|quero)\b(?: (?:de|mais|nada|disso|mais nada))*(?: [a-z]+)?/g, ' ');
 
     if (
@@ -532,9 +482,6 @@ export class IntentClassifierService {
     return { intent: 'conversation.general', detail: 'none' };
   }
 
-  // Clima e fatos em tempo real: não há fonte integrada para afirmá-los.
-  // Qualquer menção ao resort (passeio, serviço, local, reserva) segue
-  // o roteamento normal: "Vai chover no passeio?" é sobre a experiência.
   private detectExternal(message: string, text: string, state?: ConversationState): IntentDecision | null {
     const listed = state?.experience?.listed?.map(({ id, title }) => ({ id, name: title })) ?? [];
 
@@ -544,7 +491,6 @@ export class IntentClassifierService {
       EXPERIENCE_NOUN.test(text) ||
       RESTAURANT_CATALOG.test(text) ||
       BOOKING_VERB.test(text) ||
-      // "Alguma notícia da minha reserva?", "o transfer atrasa com o trânsito?".
       /\b(?:minhas?|meus?|transfer|traslado|check ?(?:in|out))\b/.test(text) ||
       matchByName(message, listed).length > 0
     ) {
@@ -565,11 +511,6 @@ export class IntentClassifierService {
     };
   }
 
-  /**
-   * Resposta curta a uma pergunta de sim/não feita pelo Yago. Nunca
-   * confirma uma reserva: no máximo leva à pré-reserva, que exige
-   * a confirmação explícita separada (pendingPreviewId).
-   */
   private pendingQuestionDecision(
     message: string,
     state?: ConversationState,
@@ -583,7 +524,6 @@ export class IntentClassifierService {
       return null;
     }
 
-    // "Ok, obrigado!" encerra a conversa; não autoriza a ação perguntada.
     const thanks = words.some((word) => GRATITUDE.has(word));
     const yes = !thanks && only(ANSWER_WORDS) && words.some((word) => ANSWER_TRIGGERS.has(word));
     const no = only(DECLINE_WORDS) && words.some((word) => CANCEL_TRIGGERS.has(word));
@@ -594,7 +534,6 @@ export class IntentClassifierService {
         return { intent: 'conversation.general', detail: 'none', declinesPending: true };
       }
 
-      // "Sim, pode reservar" para uma pergunta sobre horários segue o fluxo normal.
       if (yes && !(BOOKING_VERB.test(text) && !pending.intent.endsWith('booking'))) {
         return { ...this.decision(pending.intent, message), answersPending: true };
       }
@@ -602,7 +541,6 @@ export class IntentClassifierService {
       return null;
     }
 
-    // Sem pergunta pendente, "sim" sozinho não aciona ferramentas nem o modelo.
     if ((yes || no) && words.every((word) => BARE_ANSWERS.has(word))) {
       this.logger.debug('Resposta curta sem pergunta pendente: tratada como conversa.');
       return { intent: 'conversation.general', detail: 'none' };
@@ -611,10 +549,6 @@ export class IntentClassifierService {
     return null;
   }
 
-  /**
-   * Confirmação ou desistência de uma pré-reserva pendente.
-   * Só existe quando o servidor apresentou um resumo nesta conversa.
-   */
   private pendingBookingDecision(
     message: string,
     state?: ConversationState,
@@ -622,8 +556,6 @@ export class IntentClassifierService {
     const text = normalizeText(message);
     const words = text.split(' ').filter(Boolean);
 
-    // Somente respostas curtas e inequívocas: "sim, mas para 3 adultos"
-    // ou "ok, e às 15h?" seguem o roteamento normal e não confirmam.
     const only = (allowed: Set<string>) =>
       words.length > 0 && words.length <= 6 && words.every((word) => allowed.has(word));
 
@@ -633,15 +565,11 @@ export class IntentClassifierService {
     const pending = pendingConfirmation(state);
 
     if (!pending) {
-      // Confirmação sem pendência: responde que não há nada a confirmar
-      // em vez de tratar a mensagem como pergunta de conhecimento.
-      // Também depois de outro assunto: a confirmação por texto expirou, mas o card não.
       if (!confirmation || !/\bconfirm/.test(text)) return null;
       if (state?.topic === 'request' || (state?.request && state.topic !== 'experience')) return this.decision('request.confirm', message);
       return state?.topic === 'experience' || state?.experience ? this.decision('experience.booking.confirm', message) : null;
     }
 
-    // "confirmo" vai para a única pendência da conversa.
     if (cancellation) {
       return this.decision(pending.kind === 'request' ? 'request.cancel' : 'experience.booking.cancel', message);
     }
@@ -653,10 +581,6 @@ export class IntentClassifierService {
     return null;
   }
 
-  /**
-   * Conversa em andamento sobre experiências: uma lista apresentada,
-   * uma experiência escolhida ou uma busca anterior, mesmo sem resultados.
-   */
   private hasExperienceContext(state?: ConversationState): boolean {
     const context = state?.topic === 'experience' ? state.experience : undefined;
 
@@ -669,11 +593,6 @@ export class IntentClassifierService {
     );
   }
 
-  /**
-   * Programação do dia: eventos, shows e lazer. Continuações curtas
-   * ("E amanhã?", "e à noite?") depois de uma programação a repetem
-   * com a nova data ou período.
-   */
   private detectEvent(message: string, state?: ConversationState): IntentDecision | null {
     const text = normalizeText(message);
 
@@ -719,7 +638,6 @@ export class IntentClassifierService {
       (value) => value !== undefined,
     );
     const catalogFilter = Boolean(entities.free || entities.forChildren);
-    // Data, período, vagas ou "aceita reserva": busca de vagas; senão, catálogo.
     const searchCue = temporal || Boolean(entities.bookable) || AVAILABILITY_WORDS.test(text);
     const selection =
       SELECTION_QUESTION.test(text) &&
@@ -730,7 +648,6 @@ export class IntentClassifierService {
       ...(refine ? { refine } : {}),
     });
 
-    // Reservas de experiências já feitas pela hospedagem.
     if (
       /\b(?:minhas?|tenho|nossas?)\b.{0,40}\breservas?\b.{0,30}\b(?:experiencias?|passeios?|tours?)\b/.test(text) ||
       /\breservas? (?:simuladas?|de experiencias?|de passeios?)\b/.test(text)
@@ -745,8 +662,6 @@ export class IntentClassifierService {
     const personalReservation =
       /\b(?:minhas?|meus?) (?:reservas?|agendamentos?)\b/.test(text) || Boolean(this.explicitReservation(message));
 
-    // Restaurantes em funcionamento num horário: lista filtrada pelo cadastro.
-    // "Que horas abre o spa?" (sem restaurante) continua no RAG.
     if (
       !EXPERIENCE_NOUN.test(text) &&
       RESTAURANT_CATALOG.test(text) &&
@@ -757,14 +672,11 @@ export class IntentClassifierService {
       return this.decision('restaurant.list', message);
     }
 
-    // Restaurantes mudam o assunto, qualquer que seja o anterior. Reservas
-    // pessoais ("Em qual restaurante é a minha reserva?") não são catálogo.
     if (!EXPERIENCE_NOUN.test(text) && !FOOD_KNOWLEDGE.test(text) && !personalReservation) {
       if (RESTAURANT_CATALOG.test(text) && (RESTAURANT_LIST_CUE.test(text) || RESTAURANT_EXISTS.test(text))) {
         return this.decision('restaurant.list', message);
       }
       if (RESTAURANT_CATALOG.test(text) && RESTAURANT_DETAIL_CUE.test(text)) return this.decision('restaurant.details', message);
-      // "Onde tem sushi?", "Tem comida japonesa?".
       if (CUISINE_CUE.test(text) && /\b(?:onde|tem|ha|quais|qual|algum|alguma|opcoes?|comer|comida|restaurantes?)\b/.test(text)) {
         return this.decision('restaurant.list', message);
       }
@@ -772,7 +684,6 @@ export class IntentClassifierService {
 
     const restaurantContext = state?.topic === 'restaurant' ? state.restaurant : undefined;
 
-    // Continuação de uma lista, mesmo vazia: "E à noite?", "E com reserva?", "E os bares?".
     if (
       restaurantContext &&
       state?.lastIntent === 'restaurant.list' &&
@@ -788,13 +699,11 @@ export class IntentClassifierService {
       return { ...this.decision('restaurant.list', message), refine: true };
     }
 
-    // Continuação sobre restaurantes: "a segunda", "como é esse?", "quero reservar".
     if (restaurantContext && (restaurantContext.listed?.length || restaurantContext.selectedId) && !EXPERIENCE_NOUN.test(text)) {
       if (BOOKING_VERB.test(text)) return this.decision('restaurant.booking', message);
 
       const namesListed =
         matchByName(message, restaurantContext.listed?.map(({ id, name }) => ({ id, name })) ?? []).length > 0;
-      // "Como é a piscina?" ou "Esse tem opção vegana?" não são sobre o catálogo.
       const otherSubject = OTHER_SERVICES.test(text.replace(/\b(?:restaurantes?|bar|jantar|almoco)\b/g, ' ')) || FOOD_KNOWLEDGE.test(text);
 
       if (
@@ -822,7 +731,6 @@ export class IntentClassifierService {
       return this.decision('experience.details', message);
     }
 
-    // Perguntas explícitas sobre reservas de restaurante têm prioridade.
     if (context && this.explicitReservation(message)) {
       return null;
     }
@@ -832,12 +740,10 @@ export class IntentClassifierService {
         return null;
       }
 
-      // "Quais posso reservar amanhã?" pede opções, não uma reserva.
       if (selection && BOOKING_VERB.test(text)) {
         return searchOrList(false);
       }
 
-      // Verbo de reserva sem contexto: pode citar uma experiência pelo nome.
       return BOOKING_VERB.test(text) ? this.decision('experience.booking', message) : null;
     }
 
@@ -848,12 +754,9 @@ export class IntentClassifierService {
     const mentionsListed =
       context.listed?.length && matchByName(message, context.listed.map(({ id, title }) => ({ id, title, name: title }))).length > 0;
 
-    // Continuação de uma busca: "E de manhã?", "Quais são gratuitas?",
-    // "Qual tem reserva pra amanhã?". Sem ordinal, nome ou preço.
     if (entities.ordinal === undefined && !mentionsListed && !PRICE_WORDS.test(text)) {
       const words = text.split(' ').length;
       const followUp = FOLLOW_UP_START.test(text) || words <= 4;
-      // Só um período ("à noite") exige um sinal mais forte de continuação.
       const bareFollowUp = FOLLOW_UP_START.test(text) || words <= 3;
       const lastSearch =
         state?.lastIntent === 'experience.search' ||
@@ -873,8 +776,6 @@ export class IntentClassifierService {
       return this.decision('experience.booking', message);
     }
 
-    // Resposta aos dados pedidos pela reserva ("Para duas pessoas", "amanhã às 9h"):
-    // continua a reserva da experiência escolhida, sem outra experiência citada.
     const bookingData = [entities.people, entities.adults, entities.children, entities.date, entities.time].some((value) => value !== undefined);
 
     if (context.awaiting === 'booking' && context.selectedId && bookingData && entities.ordinal === undefined && !mentionsListed) {
@@ -909,11 +810,6 @@ export class IntentClassifierService {
     return null;
   }
 
-  /**
-   * Dentro de uma conversa sobre experiências, uma mensagem que as
-   * regras não decidem vai ao modelo com um vocabulário fechado de
-   * intenções de leitura. Fora desse contexto não há chamada.
-   */
   private async experienceFallback(
     message: string,
     history: HistoryEntry[],
@@ -921,9 +817,6 @@ export class IntentClassifierService {
   ): Promise<IntentDecision | null> {
     const context = state?.topic === 'experience' ? state.experience : undefined;
 
-    // Depois de uma operação concluída, uma mensagem fora das regras não
-    // reabre a experiência pelo modelo. Conversa ou dúvida intercalada
-    // ("Legal!", "o wi-fi pega na praia?") mantém a lista em contexto.
     if (
       !context ||
       state?.phase === 'completed' ||
@@ -937,7 +830,6 @@ export class IntentClassifierService {
     }
 
     try {
-      // Chamada opcional: tempo curto para não atrasar a resposta pelo RAG.
       const parsed = await this.askModel(EXPERIENCE_SCHEMA, EXPERIENCE_PROMPT, message, history, 10_000);
       const intent = (parsed as { intent?: unknown } | null)?.intent;
 
@@ -953,7 +845,6 @@ export class IntentClassifierService {
     }
   }
 
-  // Chamada estruturada ao Ollama: o formato é imposto por JSON Schema.
   private async askModel(
     schema: object,
     system: string,
@@ -1005,8 +896,6 @@ export class IntentClassifierService {
     history: HistoryEntry[] = [],
     state?: ConversationState,
   ): Promise<IntentDecision> {
-    // Pergunta pendente e pré-reserva pendente nunca coexistem; com uma
-    // pré-reserva, só a confirmação explícita dela é considerada.
     const answer = this.pendingQuestionDecision(message, state);
 
     if (answer) {
@@ -1019,7 +908,6 @@ export class IntentClassifierService {
       return pending;
     }
 
-    // "O segundo" logo depois de uma lista do SPA, da Boutique, de Dicas…
     const catalogFollowUp = detectCatalogFollowUp(
       normalizeText(message),
       extractEntities(message, this.clock.today()).ordinal,
@@ -1036,7 +924,6 @@ export class IntentClassifierService {
       return requestIntent;
     }
 
-    // Catálogo e novas solicitações ("Preciso de toalhas", "Solicitações.").
     const requestModule = detectRequestCatalogOrCreate(normalizeText(message), state);
 
     if (requestModule) {
@@ -1055,7 +942,6 @@ export class IntentClassifierService {
       return this.decision(itemAnswer, message);
     }
 
-    // Cardápio, Meus Favoritos e inscrição de lazer.
     const personal =
       detectFavorites(normalizeText(message)) ??
       detectLeisureEnrollment(normalizeText(message), state) ??
@@ -1087,8 +973,6 @@ export class IntentClassifierService {
     const followUp = this.reservationFollowUp(message, history);
 
     if (!explicit && !followUp) {
-      // Sem indício operacional, o modelo só é consultado dentro de
-      // uma conversa sobre experiências; fora dela, vai direto ao RAG.
       return (await this.experienceFallback(message, history, state)) ?? KNOWLEDGE;
     }
 
@@ -1099,8 +983,6 @@ export class IntentClassifierService {
 
       const decision = this.validate(parsed);
 
-      // Proteção contra uma classificação incorreta
-      // em perguntas operacionais explícitas.
       if (
         decision.intent === 'knowledge.search' ||
         (decision.intent === 'reservation.list' &&

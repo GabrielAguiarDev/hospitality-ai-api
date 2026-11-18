@@ -120,29 +120,17 @@ export type ToolDomain =
   | 'tips'
   | 'quiz';
 
-/**
- * Contrato de uma ferramenta. O modelo nunca escolhe a ferramenta nem
- * os argumentos: o servidor a executa a partir da intenção classificada,
- * com identificadores do cadastro ou da própria conversa.
- */
 export interface OperationToolDefinition {
   name: OperationToolName;
   description: string;
   readOnly: boolean;
   domain: ToolDomain;
-  // catalog: dados públicos do resort; guest: dados da estadia do titular,
-  // sempre resolvida pelo servidor (GuestStayService), nunca pelo cliente.
   access: 'catalog' | 'guest';
-  // snapshot: banco do resort (somente leitura); ai_db: banco interno da IA.
   source: 'snapshot' | 'ai_db' | 'snapshot+ai_db';
-  // read: consulta. simulated_write: grava somente no banco da IA.
   mode: 'read' | 'simulated_write';
-  // explicit: pré-visualização + confirmação por botão ou texto inequívoco.
   confirmation: 'none' | 'explicit';
-  // Campo → tipo e regra. Campos fora desta lista são recusados.
   input: Readonly<Record<string, string>>;
   output: string;
-  // Ações que os handlers montam a partir do resultado.
   cards: readonly ChatAction['type'][];
 }
 
@@ -220,11 +208,6 @@ export type OperationToolResult =
       data: BookingCardState[];
     };
 
-/**
- * Ponto único de execução das ferramentas operacionais.
- * Cada ferramenta valida as próprias entradas; nenhuma
- * aceita SQL, e identificadores são revalidados no banco.
- */
 @Injectable()
 export class OperationsToolRegistryService {
   private readonly logger = new Logger(
@@ -578,7 +561,6 @@ export class OperationsToolRegistryService {
     private readonly leisureEnrollments: LeisureEnrollmentsService,
   ) {}
 
-  // Vagas do snapshot filtradas pelo relógio atual do resort.
   private async upcoming(date: string, experienceId?: string): Promise<ExperienceSlot[]> {
     const slots = experienceId
       ? await this.experienceAvailability.findSlots(date, experienceId)
@@ -595,7 +577,6 @@ export class OperationsToolRegistryService {
     guest: GuestContext,
     input: unknown = {},
   ): Promise<OperationToolResult> {
-    // Falha fechada: ferramentas de demonstração somente em desenvolvimento.
     if (
       this.configService.get<string>('NODE_ENV') !==
       'development'
@@ -648,7 +629,6 @@ export class OperationsToolRegistryService {
 
         return {
           tool: name,
-          // Simuladas primeiro (mais recentes) e sempre identificadas.
           data: [
             ...simulated.map((request): GuestRequest => ({
               id: request.id,
@@ -719,14 +699,12 @@ export class OperationsToolRegistryService {
 
         return {
           tool: name,
-          // Pesquisa por nome sobre o cadastro, nunca por SQL livre.
           data: query ? matchByName(query, ofType) : ofType,
         };
       }
 
       case 'restaurants.menu': {
         const { restaurantId } = parseRestaurantIdInput(input);
-        // O ID precisa existir no cadastro ativo: nunca um ID livre.
         const active = await this.restaurantsCatalog.listActive();
         if (!active.some(({ id }) => String(id) === restaurantId)) {
           throw new BadRequestException('Restaurante não encontrado.');
@@ -759,7 +737,6 @@ export class OperationsToolRegistryService {
           : await this.experiencesCatalog.listActive();
         const experiences = all.filter((experience) => matchesCatalogFilters(experience, filters));
         const ids = new Set(experiences.map(({ id }) => id));
-        // Somente vagas com saldo, das experiências filtradas e na faixa pedida.
         const slots = date
           ? slotsMatching(
               (await this.upcoming(date)).filter((slot) => ids.has(slot.experienceId)),

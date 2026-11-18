@@ -4,7 +4,6 @@ export interface GuestContext {
   guestId: string;
 }
 
-// Identidade fictícia, exclusivamente para desenvolvimento.
 export const DEMO_GUEST_CONTEXT: Readonly<GuestContext> =
   Object.freeze({
     resortId: 'demo',

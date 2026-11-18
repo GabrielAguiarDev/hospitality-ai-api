@@ -97,7 +97,6 @@ describe('ExperienceBookingService', () => {
   const clock = { today: vi.fn(), time: vi.fn() };
   let config: Record<string, string | undefined>;
 
-  // QueryRunner dedicado da confirmação; registra a ordem das chamadas.
   const calls: string[] = [];
   const runner = {
     manager,
@@ -118,7 +117,6 @@ describe('ExperienceBookingService', () => {
     release: vi.fn(async () => {
       calls.push('release');
     }),
-    // Mesma conexão: RELEASE_LOCK aparece nas chamadas do manager.
     query: (sql: string, parameters?: unknown[]) => {
       calls.push(sql.includes('RELEASE_LOCK') ? 'release_lock' : 'query');
       return manager.query(sql, parameters);
@@ -216,7 +214,6 @@ describe('ExperienceBookingService', () => {
 
       const result = await service.preview(guest, stay, {
         ...request,
-        // the client cannot choose price or slot: only these inputs exist
       });
 
       expect(result.status).toBe('created');
@@ -378,7 +375,6 @@ describe('ExperienceBookingService', () => {
 
       expect(await confirm()).toMatchObject({ status: 'unavailable' });
       expect(manager.insert).not.toHaveBeenCalled();
-      // no lock held, so nothing to release
       expect(manager.query.mock.calls.some(([sql]) => String(sql).includes('RELEASE_LOCK'))).toBe(false);
     });
 
@@ -388,7 +384,6 @@ describe('ExperienceBookingService', () => {
 
       expect(await confirm()).toMatchObject({ status: 'unavailable' });
       expect(manager.update).toHaveBeenCalledWith(ExperienceBookingPreview, { id: PREVIEW_ID }, {
-        // A falha fica registrada com o motivo, para o card reaberto.
         status: 'failed',
         failureReason: expect.stringContaining('Não foi possível confirmar'),
       });
@@ -397,7 +392,6 @@ describe('ExperienceBookingService', () => {
     });
 
     it('does not confirm a preview whose time already passed (resort clock)', async () => {
-      // Pré-reserva para hoje às 10:00; a confirmação chega às 10:30.
       clock.today.mockReturnValue('2026-10-25');
       clock.time.mockReturnValue('10:30');
       manager.findOne.mockResolvedValue(storedPreview());
@@ -412,7 +406,6 @@ describe('ExperienceBookingService', () => {
 
     it('revalidates pinned to the stored slot and passes the manager', async () => {
       manager.findOne.mockResolvedValue(storedPreview());
-      // another slot with more room must not be used: only the pinned one counts
       availability.findSlots.mockResolvedValue([
         { ...slot, availabilityId: 'other', slotId: 's9', remaining: 10 },
         { ...slot, remaining: 0 },
@@ -427,7 +420,6 @@ describe('ExperienceBookingService', () => {
 
       expect(await confirm()).toMatchObject({ status: 'changed' });
       expect(manager.update).toHaveBeenCalledWith(ExperienceBookingPreview, { id: PREVIEW_ID }, {
-        // A falha fica registrada com o motivo, para o card reaberto.
         status: 'failed',
         failureReason: expect.stringContaining('valor cadastrado mudou'),
       });
@@ -465,7 +457,6 @@ describe('ExperienceBookingService', () => {
       const sqls = manager.query.mock.calls.map(([sql]) => String(sql));
       expect(sqls[0]).toContain('GET_LOCK');
       expect(sqls.at(-1)).toContain('RELEASE_LOCK');
-      // same lock name for acquire and release
       expect(manager.query.mock.calls[0][1]).toEqual(manager.query.mock.calls.at(-1)![1]);
     });
 

@@ -2,26 +2,16 @@ import { normalizeText } from '../common/text.js';
 import type { DayPeriod } from '../contracts/conversation-state.js';
 import { ResortClock } from '../resort/resort-clock.service.js';
 
-/**
- * Extração determinística de entidades da mensagem do hóspede.
- * Datas relativas ("amanhã", "sábado") são convertidas para datas
- * absolutas no fuso do resort a partir de `today`.
- */
 export interface MessageEntities {
   date?: string;
   time?: string;
   adults?: number;
   children?: number;
-  // Total informado sem divisão entre adultos e crianças.
   people?: number;
-  // Posição em uma lista apresentada (1 = primeira).
   ordinal?: number;
-  // Período do dia, sem horário específico ("de manhã").
   period?: DayPeriod;
-  // Faixa de horário (HH:MM): "depois das 15h", "antes das 10h".
   after?: string;
   before?: string;
-  // Filtros de catálogo citados na pergunta.
   free?: true;
   forChildren?: true;
   bookable?: true;
@@ -94,7 +84,6 @@ export function extractDate(text: string, today: string): string | undefined {
 
     let candidate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 
-    // Sem ano informado, uma data já passada refere-se ao próximo ano.
     if (!full[3] && ResortClock.isIsoDate(candidate) && candidate < today) {
       candidate = `${year + 1}-${candidate.slice(5)}`;
     }
@@ -116,8 +105,6 @@ export function extractDate(text: string, today: string): string | undefined {
     return ResortClock.isIsoDate(candidate) ? candidate : undefined;
   }
 
-  // "segunda" sozinha pode ser ordinal ("gostei da segunda"):
-  // dias da semana exigem "-feira" ou uma preposição de tempo.
   const weekday = t.match(
     /\b(?:(?:no|na|neste|nesta|este|esta|proximo|proxima|pro|pra)\s+)?(domingo|segunda|terca|quarta|quinta|sexta|sabado)(\s+feira)?\b/,
   );
@@ -134,7 +121,6 @@ export function extractDate(text: string, today: string): string | undefined {
       const target = WEEKDAYS[name];
       const current = ResortClock.weekdayIndex(today);
       const days = (target - current + 7) % 7;
-      // "Próximo sábado" dito num sábado é o da semana seguinte.
       return ResortClock.addDays(today, days === 0 && /^(?:proximo|proxima)\s/.test(weekday[0]) ? 7 : days);
     }
   }
@@ -146,7 +132,6 @@ export function extractTime(text: string): string | undefined {
   const t = normalizeText(text.replace(/(\d)\s*:\s*(\d)/g, '$1h$2'));
 
   const match =
-    // "pra 2 pessoas" e "quero a 2" não são horários.
     t.match(/\b(?:as|pras|por volta das)\s+(\d{1,2})(?:\s*h\s*(\d{2})?|\s+horas?)?\b(?!\s+(?:pessoas?|adultos?|criancas?))/) ??
     t.match(/\b(\d{1,2})\s*h\s*(\d{2})?\b/) ??
     t.match(/\b(\d{1,2})\s+horas?\b/);
@@ -165,15 +150,12 @@ export function extractTime(text: string): string | undefined {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
 
-// Expressões que contêm "manhã", "tarde" ou "noite" sem indicar período.
 const NOT_A_PERIOD = /\b(?:bom dia|boa tarde|boa noite|boas noites|cafe da manha|mais tarde|ate mais tarde)\b/g;
 
 export function extractPeriod(text: string): DayPeriod | undefined {
   const t = normalizeText(text).replace(NOT_A_PERIOD, ' ');
 
-  // "amanhã" não contém a palavra "manhã" isolada.
   if (/\bmanha\b/.test(t)) return 'morning';
-  // "tarde" sozinha também é advérbio ("vou chegar tarde").
   if (/\b(?:a|de|da|na|pela|esta|essa|nesta|hoje|amanha|durante a) tarde\b/.test(t)) return 'afternoon';
   if (/\bnoite\b/.test(t)) return 'evening';
 
@@ -183,14 +165,12 @@ export function extractPeriod(text: string): DayPeriod | undefined {
 const HOUR =
   '(\\d{1,2})(?:\\s*h\\s*(\\d{2})?|\\s+horas?)?\\b(?!\\s+(?:pessoas?|adultos?|criancas?|anos?|meses))(?:\\s+d[ae]\\s+(tarde|noite))?';
 
-// "8 da noite" = 20:00; "4 da tarde" = 16:00.
 function clock(hours: string, minutes?: string, afternoon?: string): string | undefined {
   const h = Number(hours) + (afternoon && Number(hours) < 12 ? 12 : 0);
   const m = Number(minutes ?? '0');
   return h <= 23 && m <= 59 ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}` : undefined;
 }
 
-/** "depois das 15h", "a partir das 14h", "antes das 10h". */
 export function extractTimeRange(text: string): Pick<MessageEntities, 'after' | 'before'> {
   const t = normalizeText(text.replace(/(\d)\s*:\s*(\d)/g, '$1h$2'));
   const result: Pick<MessageEntities, 'after' | 'before'> = {};
@@ -207,10 +187,6 @@ export function extractTimeRange(text: string): Pick<MessageEntities, 'after' | 
   return result;
 }
 
-/**
- * Filtros de catálogo: "gratuitas", "para crianças", "que aceitam reserva".
- * Um número de crianças ("para 2 crianças") é composição do grupo, não filtro.
- */
 export function extractSearchCues(text: string): Pick<MessageEntities, 'free' | 'forChildren' | 'bookable'> {
   const t = normalizeText(text);
   const result: Pick<MessageEntities, 'free' | 'forChildren' | 'bookable'> = {};
@@ -226,7 +202,6 @@ export function extractSearchCues(text: string): Pick<MessageEntities, 'free' | 
     result.forChildren = true;
   }
 
-  // "não precisam de reserva" / "sem reserva" pedem o contrário.
   const negated = /\b(?:nao (?:precisa|precisam|exige|exigem|tem|aceita|aceitam|requer|requerem)(?: de)? reservas?|sem (?:necessidade de )?reservas?)\b/.test(t);
 
   if (
@@ -291,27 +266,23 @@ export function extractEntities(text: string, today: string): MessageEntities {
   const entities: MessageEntities = { ...extractParty(text) };
 
   const normalized = normalizeText(text);
-  // "na segunda" / "segunda-feira" é dia da semana, não posição na lista.
   const weekdayPhrase =
     /\b(?:no|na|neste|nesta|proximo|proxima)\s+(?:domingo|segunda|terca|quarta|quinta|sexta|sabado)\b|\bfeira\b/.test(normalized);
 
   const ordinal = weekdayPhrase ? undefined : extractOrdinal(text);
   if (ordinal !== undefined) entities.ordinal = ordinal;
 
-  // Um ordinal ("a segunda") não deve virar dia da semana.
   const date = extractDate(text, today);
   if (date !== undefined && ordinal === undefined) {
     entities.date = date;
   }
 
-  // Uma faixa ("depois das 15h") ou um período não é um horário exato.
   const range = extractTimeRange(text);
   Object.assign(entities, range);
 
   const time = range.after || range.before ? undefined : extractTime(text);
   if (time !== undefined) entities.time = time;
 
-  // "depois das 8 da noite" já é uma faixa; o período não a alarga.
   const period = range.after || range.before ? undefined : extractPeriod(text);
   if (period !== undefined) entities.period = period;
 

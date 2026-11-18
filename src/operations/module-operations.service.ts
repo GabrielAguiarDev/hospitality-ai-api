@@ -16,7 +16,6 @@ import { requestTokens } from './request-matching.js';
 
 type ToolData<N extends OperationToolName> = Extract<OperationToolResult, { tool: N }>['data'];
 
-// Palavras que só dizem o módulo ou a pergunta, nunca o item procurado.
 const GENERIC = new Set(
   [
     'boutique', 'loja', 'lojinha', 'produto', 'vende', 'vendem', 'comprar', 'compra', 'tem', 'quai', 'qual', 'quanto',
@@ -25,7 +24,6 @@ const GENERIC = new Set(
   ],
 );
 
-/** Itens cujo nome cobre as palavras significativas da mensagem. */
 function matchNamed<T extends { name: string }>(message: string, items: readonly T[]): T[] {
   const words = new Set(requestTokens(message).filter((word) => !GENERIC.has(word) && word.length >= 3));
   if (words.size === 0) return [];
@@ -44,16 +42,11 @@ function matchNamed<T extends { name: string }>(message: string, items: readonly
   return scored.filter(({ hits, ratio }) => hits === best.hits && ratio === best.ratio).map(({ item }) => item);
 }
 
-// O preço do SPA às vezes está só no texto ("50 min R$ 250,00"): nunca "R$ 0".
 function spaPrice(service: SpaService): string {
   const parts = [service.price ? formatCurrency(service.price) : '', service.details ?? ''].filter(Boolean);
   return parts.join(', ') || 'valor não cadastrado';
 }
 
-/**
- * Boutique, SPA, Dicas, Quiz e ESG: respostas curtas a partir do
- * cadastro e um botão para a tela do módulo. Somente leitura.
- */
 @Injectable()
 export class ModuleOperationsService {
   constructor(private readonly registry: OperationsToolRegistryService) {}
@@ -78,10 +71,8 @@ export class ModuleOperationsService {
   ): DispatchResult {
     const capability = capabilityOf(module);
     const screen = navigateAction(capability.screen, `Abrir ${capability.label}`);
-    // Uma lista nova substitui a anterior; um item isolado ou nenhum card a encerra.
     const { catalog: _previous, ...rest } = conversation;
     const listed = cards?.listed && cards.items.length > 1;
-    // Um item escolhido da lista mantém a lista na tela ("e a terceira?").
     const keepsList = !listed && cards?.items.length === 1 && _previous?.kind === cards.kind && _previous.listed.some(({ id }) => id === cards.items[0].id);
     const catalog: CatalogConversationState | undefined = listed
       ? { kind: cards.kind, listed: cards.items.slice(0, 20).map(({ id, title }) => ({ id, title })) }
@@ -97,22 +88,15 @@ export class ModuleOperationsService {
     };
   }
 
-  /** Item escolhido pela posição ("o segundo", "Opção 2") na última lista do módulo. */
   private chosen<T extends { id: string }>(decision: IntentDecision, conversation: ConversationState, kind: CatalogKind, items: readonly T[]): T | null {
     const ordinal = decision.entities?.ordinal;
-    // Só logo depois da própria lista: uma lista antiga não responde "a segunda".
     const listed = conversation.catalog?.kind === kind && conversation.lastIntent === decision.intent ? conversation.catalog.listed : undefined;
     if (ordinal === undefined || !listed?.length) return null;
     const reference = listed[ordinal === -1 ? listed.length - 1 : ordinal - 1];
     return items.find(({ id }) => id === reference?.id) ?? null;
   }
 
-  /**
-   * Produto citado pelo nome ("Tem protetor solar?") quando as fontes do
-   * RAG não responderam. Sem produto no cadastro, nada é afirmado.
-   */
   async findProducts(message: string, guest: GuestContext, context?: DispatchContext): Promise<DispatchResult | null> {
-    // Exige o nome do produto, não uma palavra solta ("piscina" ≠ "Boia de piscina").
     const words = new Set(requestTokens(message));
     const named = matchNamed(message, await this.execute('boutique.list', guest))
       .filter(({ name }) => {
@@ -140,7 +124,6 @@ export class ModuleOperationsService {
         return this.tips(message, decision, guest, conversation);
       case 'quiz.info': {
         const quizzes = await this.execute('quiz.list', guest);
-        // Nunca perguntas nem respostas (R-QZ-05): só título, tema e modo.
         return this.result('quiz', 'quiz.list', quizzes.length
           ? `Quiz ativo: ${nameList(quizzes.map(({ title, theme }) => (theme ? `${title} (${theme})` : title)))}. A participação é pela tela de Quiz.`
           : 'Não há quiz ativo no momento. Quando houver, ele aparece na tela de Quiz.', conversation, quizzes.length,
@@ -177,10 +160,8 @@ export class ModuleOperationsService {
       return this.result('boutique', 'boutique.list', `${category} tem ${items.length} produtos, como ${nameList(items.map(({ name }) => name), 3)}.`, conversation, items.length, cards(items));
     }
 
-    // Procurou algo que não está no cadastro: diz isso, sem sugerir que existe.
     const searched = requestTokens(message).some((word) => !GENERIC.has(word) && word.length >= 4);
 
-    // Catálogo inteiro: os cards só aparecem quando cabem numa lista curta.
     return this.result('boutique', 'boutique.list',
       `${searched ? 'Não encontrei esse produto no cadastro da Boutique. ' : ''}A Boutique tem ${products.length} produtos em ${nameList(categories)}.`,
       conversation, products.length, products.length <= 10 ? cards(products) : undefined);
@@ -198,11 +179,9 @@ export class ModuleOperationsService {
         `${chosen.name}: ${spaPrice(chosen)}.${chosen.description ? ` ${chosen.description}` : ''} ${limitation}`, conversation, 1, cards([chosen], false));
     }
 
-    // "Quais massagens?" → serviços da categoria citada.
     const category = categories.find((name) => requestTokens(name).some((token) => requestTokens(message).includes(token) && token !== 'spa'));
     const listing = /\b(?:quais|que|lista|opcoes|tipos)\b/.test(normalizeText(message));
     const named = listing && category ? [] : matchNamed(message, services);
-    // Mesmo serviço em dois lugares ("Massagem Relaxante" no SPA e no stand): cita o local.
     const repeated = (service: SpaService) => named.filter(({ name }) => name === service.name).length > 1;
 
     if (named.length && named.length <= 3) {
@@ -236,10 +215,6 @@ export class ModuleOperationsService {
   }
 }
 
-/*
- * Cards dos módulos informativos. Imagens só com pasta confirmada no app;
- * nenhum botão de compra, agendamento ou resposta de quiz.
- */
 function productCard(product: BoutiqueProduct): Omit<CatalogItem, 'position'> {
   return {
     id: product.id,

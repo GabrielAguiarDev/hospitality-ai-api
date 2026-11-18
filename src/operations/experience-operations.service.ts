@@ -99,7 +99,6 @@ function describePrices(experience: ExperienceInfo): string {
     .join('; ');
 }
 
-// O aviso sobre o snapshot aparece uma vez por conversa, não a cada resposta.
 function snapshotNotice(state: ExperienceConversationState): string {
   return state.snapshotNoticeShown ? '' : SNAPSHOT_NOTICE;
 }
@@ -111,11 +110,6 @@ function compact<T extends object>(value: T): T {
   return value;
 }
 
-/**
- * Filtros da busca. Uma nova busca começa do zero; uma continuação
- * ("E à tarde?") ou uma pergunta sobre a experiência escolhida mantém
- * os filtros anteriores, e o período novo substitui o antigo.
- */
 function filtersFor(
   decision: IntentDecision,
   previous: ExperienceSearchFilters | undefined,
@@ -125,7 +119,6 @@ function filtersFor(
     !decision.refine && (decision.intent === 'experience.list' || decision.intent === 'experience.search');
   const next: ExperienceSearchFilters = fresh ? {} : { ...previous };
 
-  // Uma nova data para a experiência escolhida não herda o período da busca.
   if (!fresh && !decision.refine && entities.date && !entities.period && !entities.after && !entities.before) {
     next.period = undefined;
     next.after = undefined;
@@ -149,7 +142,6 @@ function filtersFor(
   return compact(next);
 }
 
-// Com data, todo resultado já aceita reserva: o filtro não é repetido.
 function describeFilters(filters: ExperienceSearchFilters, dated: boolean): string {
   return [
     filters.free ? 'sem cobrança cadastrada (all inclusive)' : '',
@@ -197,13 +189,6 @@ function optionsAction(
   return [action];
 }
 
-/**
- * Consultas e reservas simuladas de experiências pelo chat.
- *
- * A interpretação (classificador + entidades) é separada da execução:
- * aqui somente identificadores vindos do banco ou do estado do
- * servidor são enviados às ferramentas do Registry.
- */
 @Injectable()
 export class ExperienceOperationsService {
   constructor(
@@ -256,7 +241,6 @@ export class ExperienceOperationsService {
     };
     const target = decision.target?.kind === 'experience' ? decision.target : undefined;
 
-    // "Sim" à pergunta pendente: a pergunta já define a experiência.
     if (target?.via === 'pending_question') {
       return byTarget();
     }
@@ -267,7 +251,6 @@ export class ExperienceOperationsService {
 
     const candidates = experiences.map((experience) => ({ ...experience, name: experience.title }));
 
-    // Experiências ativas têm prioridade sobre homônimas inativas.
     const activeMatches = matchByName(message, candidates.filter(({ active }) => active));
     const matches = activeMatches.length ? activeMatches : matchByName(message, candidates);
 
@@ -276,14 +259,12 @@ export class ExperienceOperationsService {
     }
 
     if (matches.length > 1) {
-      // Mantém a experiência já selecionada quando ela está entre os empatados.
       const selected = matches.find(({ id }) => id === state.selectedId);
       return selected
         ? { kind: 'found', experience: selected }
         : { kind: 'ambiguous', candidates: matches };
     }
 
-    // "essa experiência" / item único da lista, resolvidos pelo contexto.
     if (target) {
       return byTarget();
     }
@@ -312,7 +293,6 @@ export class ExperienceOperationsService {
       };
     }
 
-    // "2 pessoas" sem divisão: considera adultos e avisa o hóspede.
     if (entities.people !== undefined) {
       return { party: { adults: entities.people, children: 0 }, assumed: true };
     }
@@ -334,9 +314,6 @@ export class ExperienceOperationsService {
     context: DispatchContext,
   ): Promise<DispatchResult> {
     const previous = context.state.experience ?? {};
-    // Qualquer nova interação invalida a confirmação por texto
-    // de uma pré-reserva anterior, exceto a própria confirmação.
-    // A coleta de dados da reserva também vale só para a mensagem seguinte.
     const state: ExperienceConversationState = { ...previous, pendingPreviewId: undefined, awaiting: undefined };
 
     switch (decision.intent) {
@@ -348,7 +325,6 @@ export class ExperienceOperationsService {
         return this.reservations(guest, context.state, state);
       case 'experience.list':
       case 'experience.search': {
-        // "Quais horários posso reservar na Trattoria?" é um pedido de restaurante.
         if (/\breservar\b/.test(normalizeText(message))) {
           const restaurants = await this.restaurants.findMentioned(message, guest);
 
@@ -374,8 +350,6 @@ export class ExperienceOperationsService {
       optionsAction(listed, state.date ?? null));
     }
 
-    // "Tem vaga amanhã?" sem uma experiência definida é uma busca
-    // em todas as experiências, não um pedido incompleto.
     if (resolution.kind === 'none' && decision.intent === 'experience.availability') {
       return this.search({ ...decision, intent: 'experience.search' }, guest, context.state, state);
     }
@@ -392,7 +366,6 @@ export class ExperienceOperationsService {
 
       const listed = state.listed ?? [];
 
-      // Ambiguidade real: "essa" com várias opções na tela.
       if (listed.length > 1 && decision.entities?.ordinal === undefined) {
         return this.result('experiences.list', 'Você se refere a qual delas? Escolha uma opção ou diga o nome.', context.state, state,
           optionsAction(listed, state.listedDate ?? null));
@@ -459,10 +432,6 @@ export class ExperienceOperationsService {
     };
   }
 
-  /**
-   * Listagem do catálogo (sem data) ou busca de vagas em várias
-   * experiências (com data), sempre com filtros opcionais.
-   */
   private async search(
     decision: IntentDecision,
     guest: GuestContext,
@@ -473,7 +442,6 @@ export class ExperienceOperationsService {
     const filters = filtersFor(decision, state.filters);
     const window = timeWindowOf(filters);
     const intent = decision.intent;
-    // A busca de vagas e as continuações reaproveitam a data da conversa.
     const date =
       entities.date ??
       (intent === 'experience.search' || decision.refine ? state.date ?? state.listedDate ?? null : null);
@@ -502,7 +470,6 @@ export class ExperienceOperationsService {
       filters,
       selectedId: undefined,
       selectedTitle: undefined,
-      // O grupo informado na busca vale para a pré-reserva seguinte.
       ...(party
         ? { adults: party.adults, children: party.children, partyAssumed: entities.people !== undefined && entities.adults === undefined }
         : {}),
@@ -523,7 +490,6 @@ export class ExperienceOperationsService {
           `${isFree(experience) ? ', sem cobrança' : ''}${ageNote(experience)}`,
       ]));
 
-      // Texto breve: a lista completa vai nos cards (experience.options).
       return this.result('experiences.list', [
         `Separei ${shown.length} ${experiencesWord(shown.length)}${criteria ? ` ${criteria}` : ''}: ${nameList(shown.map(({ title }) => title))}.`,
         shown.some(({ bookable }) => bookable)
@@ -535,7 +501,6 @@ export class ExperienceOperationsService {
     const available = experiences.filter(
       (experience) => experience.bookable && slots.some((slot) => slot.experienceId === experience.id),
     );
-    // Sem horários cadastrados, experiências sem reserva só são citadas sem faixa de horário.
     const withoutBooking = filters.bookable || window
       ? []
       : experiences.filter((experience) => !experience.bookable);
@@ -563,7 +528,6 @@ export class ExperienceOperationsService {
       `${slots.filter((slot) => slot.experienceId === experience.id).map(describeSlot).join('; ')}${filters.forChildren ? ageNote(experience) : ''}`,
     ]));
 
-    // Texto breve: horários e vagas de cada experiência vão nos cards.
     return this.result('experiences.list', [
       `Para ${label}, há vagas registradas${criteria ? ` (${criteria})` : ''}${party ? ` para ${describeParty(party)}` : ''} em ` +
         `${shown.length} ${experiencesWord(shown.length)}: ${nameList(shown.map(({ title }) => title))}.`,
@@ -586,10 +550,7 @@ export class ExperienceOperationsService {
       experience.requiresGuardian ? 'exige um adulto responsável' : '',
       experience.bookingCutoff ? `horário-limite de marcação: ${experience.bookingCutoff}` : '',
     ].filter(Boolean);
-    // A descrição só é apresentada uma vez por experiência na conversa.
     const described = state.describedId === experience.id;
-    // Texto só com preços: o resumo vazio não deve virar "não cadastrada".
-    // Resumo inicial curto; o restante da descrição só se o hóspede pedir.
     const summary = described ? '' : summarizeText(experience.description, 160) || compactText(experience.description, 160);
     const canCheck = experience.bookable && experience.active;
     const question = canCheck
@@ -600,7 +561,6 @@ export class ExperienceOperationsService {
 
     const result = this.result('experiences.details', [
       `${experience.title}${experience.active ? '' : ' (inativa no cadastro)'}${described ? '' : `: ${summary || 'descrição não cadastrada.'}`}`,
-      // Com reserva, a pergunta final já indica o próximo passo.
       experience.bookable ? '' : 'Não precisa de reserva.',
       `Valores: ${describePrices(experience)}`,
       rules.length ? `Regras: ${rules.join('; ')}.` : '',
@@ -608,7 +568,6 @@ export class ExperienceOperationsService {
       question,
     ].filter(Boolean).join('\n'), conversation, { ...state, describedId: experience.id });
 
-    // Toda pergunta de sim/não fica registrada para o "sim" seguinte.
     return canCheck
       ? { ...result, pendingQuestion: { intent: 'experience.availability', targetId: experience.id } }
       : result;
@@ -657,7 +616,6 @@ export class ExperienceOperationsService {
       experienceId: experience.id,
       date: state.date,
     });
-    // Vagas para o dia (sem horário) não são descartadas pelo período.
     const slots = window
       ? registered.filter((slot) => slot.time === null || inWindow(slot.time, window))
       : registered;
@@ -722,10 +680,6 @@ export class ExperienceOperationsService {
       : result;
   }
 
-  /**
-   * Horário de uma pré-reserva quando o hóspede citou só um período.
-   * Nunca escolhe entre horários: com mais de um, pergunta.
-   */
   private async timeWithin(
     experience: ExperienceInfo,
     date: string,
@@ -740,7 +694,6 @@ export class ExperienceOperationsService {
 
     if (within.length === 1) return { kind: 'time', time: within[0] };
     if (within.length > 1) return { kind: 'choose', options: within };
-    // Vaga para o dia: o horário não é presumido e a regra de reserva decide.
     if (slots.some((slot) => slot.time === null)) return { kind: 'time', time: null };
 
     return { kind: 'none', options: all };
@@ -754,7 +707,6 @@ export class ExperienceOperationsService {
     context: DispatchContext,
     state: ExperienceConversationState,
   ): Promise<DispatchResult> {
-    // Regras verificáveis antes de qualquer gravação.
     if (!experience.active || !experience.bookable) {
       return this.result('experiences.details', [
         experience.active
@@ -796,7 +748,6 @@ export class ExperienceOperationsService {
         context.state, state);
       }
 
-      // Único horário registrado no período: aparece no resumo para confirmação.
       state = { ...state, time: choice.time };
     }
 
@@ -820,7 +771,6 @@ export class ExperienceOperationsService {
     const assumedNote = assumed ? 'Considerei todos os participantes como adultos; se houver crianças, me avise antes de confirmar.' : '';
     const priceNote = summary.totalPrice === null && result.quote.note ? result.quote.note : '';
 
-    // Data, valor e regras ficam no card; o texto só orienta o próximo passo.
     return this.result(
       'experiences.booking.preview',
       [
@@ -842,10 +792,6 @@ export class ExperienceOperationsService {
     );
   }
 
-  /**
-   * Estado atual dos cards da conversa, como ações prontas para o app.
-   * Usado ao atualizar um card e ao reconstruir o histórico.
-   */
   async bookingCards(
     guest: GuestContext,
     conversationId: string,
@@ -855,7 +801,6 @@ export class ExperienceOperationsService {
       return [];
     }
 
-    // A ferramenta aceita até 50 IDs por consulta; conversas longas são lidas em partes.
     const chunks = Array.from({ length: Math.ceil(previewIds.length / 50) }, (_, index) =>
       previewIds.slice(index * 50, index * 50 + 50),
     );
@@ -877,7 +822,6 @@ export class ExperienceOperationsService {
     );
   }
 
-  /** Usado pelo chat ("confirmo") e por POST /chat/actions. */
   async confirmPreview(
     guest: GuestContext,
     conversationId: string,
@@ -888,7 +832,6 @@ export class ExperienceOperationsService {
       previewId,
     });
 
-    // O mesmo card (mesmo cardId) é devolvido com o novo estado.
     const card = result.status === 'not_found' ? [] : await this.bookingCards(guest, conversationId, [previewId]);
 
     if ('message' in result) {
@@ -916,7 +859,6 @@ export class ExperienceOperationsService {
 
     const { reply, actions } = await this.confirmPreview(guest, context.conversationId, state.pendingPreviewId);
 
-    // Confirmada ou não, a pré-reserva deixa de aguardar confirmação.
     return {
       ...this.result('experiences.booking.confirm', reply, context.state, { ...state, pendingPreviewId: undefined }, actions),
       completed: true,

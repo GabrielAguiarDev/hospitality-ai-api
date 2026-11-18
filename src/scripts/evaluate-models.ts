@@ -14,28 +14,11 @@ import { toPlainText } from '../common/text.js';
 import { chatRequest, llmSettings } from '../llm/llm-config.js';
 import { RESERVATIONS_TOOL, TOOL_SYSTEM_PROMPT } from '../operations/operations-ai.service.js';
 
-/**
- * Avaliação comparável entre modelos locais (Ollama), com os mesmos
- * prompts e schemas de produção. Mede, por modelo:
- * - acerto de intenção na classificação estruturada (JSON Schema);
- * - uso correto de function calling;
- * - qualidade das respostas do RAG (tamanho, Markdown, fórmulas de
- *   abertura, tratamento de gênero, dados ausentes das fontes);
- * - latência de cada chamada e tempo de carregamento do modelo.
- *
- * Interações sociais não usam o modelo (chat/social-replies.ts).
- *
- * Uso: pnpm models:evaluate
- *   OLLAMA_EVAL_MODELS=qwen3.5:2b-q4_K_M,qwen3.5:4b,qwen3:1.7b (padrão)
- *   OLLAMA_EVAL_OUTPUT=caminho.json para salvar o relatório.
- */
-
 const MODELS = (process.env.OLLAMA_EVAL_MODELS ?? 'qwen3.5:2b-q4_K_M,qwen3.5:4b,qwen3:1.7b')
   .split(',')
   .map((model) => model.trim())
   .filter(Boolean);
 
-// Data no fuso do resort, como no ResortClock.
 const TODAY = new Intl.DateTimeFormat('en-CA', { timeZone: process.env.RESORT_TIMEZONE ?? 'America/Bahia' }).format(new Date());
 
 interface Turn {
@@ -51,7 +34,6 @@ const LISTED_HISTORY: Turn[] = [
   },
 ];
 
-// Mensagens que chegam ao modelo em produção (as regras não decidem).
 const CLASSIFICATION_CASES: { message: string; history: Turn[]; schema: 'experience' | 'reservation'; expected: string }[] = [
   { message: 'e qual delas ainda sobra lugar pra gente?', history: LISTED_HISTORY, schema: 'experience', expected: 'experience.search' },
   { message: 'me conta mais sobre a do índio', history: LISTED_HISTORY, schema: 'experience', expected: 'experience.details' },
@@ -68,7 +50,6 @@ const TOOL_CASES = [
   { message: 'Qual o horário da piscina?', expectTool: false },
 ];
 
-// Respostas do RAG com documentos fixos: concisão, neutralidade e fidelidade às fontes.
 const DOCUMENTS = [
   {
     id: 'spa:funcionamento',
@@ -88,7 +69,6 @@ const KNOWLEDGE_CASES: { message: string; history: Turn[]; mustMention: RegExp; 
   { message: 'Que horas abre o spa?', history: [], mustMention: /\b9\s*h|09:00/i },
   { message: 'A piscina aquecida fica aberta à noite?', history: [], mustMention: /22/ },
   { message: 'Preciso agendar a massagem?', history: [], mustMention: /agend/i },
-  // A fonte não informa preço: o modelo não pode inventar.
   { message: 'Quanto custa a massagem?', history: [], mustMention: /n[ãa]o (?:consta|encontrei|tenho|temos|possuo|há|est[áa])/i, mustNotMention: /R\$|\breais\b/i },
   { message: 'E a piscina central?', history: [{ role: 'user', content: 'A piscina aquecida fica aberta à noite?' }, { role: 'assistant', content: 'Sim, a piscina aquecida funciona até as 22h.' }], mustMention: /18/ },
 ];
@@ -103,7 +83,6 @@ async function chat(
 ): Promise<{ content: string; toolCalls: string[]; ms: number; loadMs: number }> {
   const settings = llmSettings();
   const started = performance.now();
-  // Mesmo corpo de produção (num_ctx, keep_alive, think): sem recargas entre chamadas.
   const response = await fetch(`${settings.baseUrl}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -201,7 +180,6 @@ async function evaluate(model: string) {
       chars: reply.length,
       sentences,
       markdown: result.content !== raw,
-      // Medidos antes do pós-processamento: mostram o quanto o modelo segue o prompt.
       filler: FILLER.test(raw),
       gendered: GENDERED.test(raw),
       grounded,
@@ -226,7 +204,6 @@ async function evaluate(model: string) {
       avgReplyChars: Math.round(knowledge.reduce((sum, item) => sum + item.chars, 0) / knowledge.length),
       fillerReplies: knowledge.filter((item) => item.filler).length,
       medianLatencyMs: median(all.map((item) => item.ms)),
-      // Carregamentos depois da primeira chamada indicam recarga do modelo.
       reloadMs: all.slice(1).reduce((sum, item) => sum + item.loadMs, 0),
     },
     classification,
@@ -251,7 +228,6 @@ async function main() {
     try {
       report = await evaluate(model);
     } catch (error: unknown) {
-      // Um modelo que falha (ex.: memória insuficiente) não interrompe os demais.
       const reason = error instanceof Error ? `${error.message}${error.cause ? ` (${String((error.cause as Error).message ?? error.cause)})` : ''}` : String(error);
       console.warn(`${model}: falhou durante a avaliação: ${reason}`);
       failures.push({ model, error: reason });
@@ -260,7 +236,6 @@ async function main() {
 
     reports.push(report);
 
-    // Descarrega o modelo avaliado: os três juntos podem esgotar a memória.
     await fetch(`${llmSettings().baseUrl}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

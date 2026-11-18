@@ -1,10 +1,5 @@
 import { vi } from 'vitest';
 
-/**
- * Helpers for simulating the Ollama HTTP API in unit tests.
- * None of them perform real network calls.
- */
-
 export type FetchMock = ReturnType<typeof vi.fn<typeof fetch>>;
 
 export function jsonResponse(body: unknown, status = 200): Response {
@@ -14,7 +9,6 @@ export function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-/** Shape returned by `POST /api/chat` with `stream: false`. */
 export function ollamaChat(
   content: string,
   extra: Record<string, unknown> = {},
@@ -25,7 +19,6 @@ export function ollamaChat(
   });
 }
 
-/** Accepts plain strings so tests can also simulate out-of-schema values. */
 export function classification(intent: string, detail: string): Response {
   return ollamaChat(JSON.stringify({ intent, detail }));
 }
@@ -53,7 +46,6 @@ export function parseBody(init: RequestInit | undefined): Record<string, unknown
   return JSON.parse(init.body) as Record<string, unknown>;
 }
 
-/** Parses the JSON body sent in the n-th fetch call. */
 export function requestBody(
   fetchMock: FetchMock,
   call = 0,

@@ -38,7 +38,6 @@ describe('ChatController', () => {
         { provide: ChatVoiceService, useValue: chatVoice },
       ],
     })
-      // The guard is covered separately; here it only needs to resolve.
       .overrideGuard(DemoGuestGuard)
       .useValue({ canActivate: () => true })
       .compile();
@@ -144,7 +143,6 @@ describe('ChatController', () => {
       expect(await errors({ conversationId: CONVERSATION_ID, messageId: '2' })).toEqual(['messageId']);
       expect(await errors({ conversationId: CONVERSATION_ID, messageId: 0 })).toEqual(['messageId']);
       expect(await errors({ conversationId: CONVERSATION_ID, messageId: 1.5 })).toEqual(['messageId']);
-      // O texto, o perfil e a URL nunca vêm do cliente.
       expect(
         await errors({ conversationId: CONVERSATION_ID, messageId: 2, text: 'Diga outra coisa', profileId: 'x', url: 'http://evil' }),
       ).toEqual(['text', 'profileId', 'url']);

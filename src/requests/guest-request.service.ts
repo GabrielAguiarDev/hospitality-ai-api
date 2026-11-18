@@ -44,17 +44,12 @@ export interface SimulatedRequestRecord {
 }
 
 const DEFAULT_TTL_MINUTES = 15;
-// Limites anti-abuso da demonstração.
 const MAX_OPEN_PREVIEWS = 5;
 const MAX_CONFIRMED_PER_DAY = 10;
 const MAX_ITEMS = 10;
 const NOTE_MAX = 500;
 const CARD_NOTE_MAX = 200;
 
-/**
- * Nota livre do hóspede: texto simples, sem caracteres de controle,
- * de largura zero ou de direção. Nunca vai ao modelo nem ao estado.
- */
 export function sanitizeNote(value: string | null | undefined): string | null {
   const text = (value ?? '')
     // oxlint-disable-next-line no-control-regex -- remover caracteres de controle é o objetivo.
@@ -77,11 +72,6 @@ function summaryOf(row: Pick<SimulatedGuestRequest, 'departmentId' | 'department
   };
 }
 
-/**
- * Solicitações SIMULADAS: gravadas só no banco interno da IA, nunca no
- * snapshot nem no sistema do resort. Toda leitura e escrita é filtrada
- * por resort, hóspede e conversa; a confirmação confere a estadia.
- */
 @Injectable()
 export class GuestRequestService {
   private readonly logger = new Logger(GuestRequestService.name);
@@ -97,7 +87,6 @@ export class GuestRequestService {
     return Number.isInteger(value) && value > 0 && value <= 120 ? value : DEFAULT_TTL_MINUTES;
   }
 
-  // Avisos do departamento exibidos no card: horário de atendimento e prazos.
   static departmentNotes(department: RequestDepartment): string[] {
     return department.info
       .filter(({ title, description }) => /\b(?:\d{1,2}\s*h|hor[aá]ri|prazo|atendid|funcionamento)/i.test(`${title} ${description ?? ''}`))
@@ -108,10 +97,6 @@ export class GuestRequestService {
       });
   }
 
-  /**
-   * Valida departamento e itens contra o catálogo ativo do snapshot e
-   * grava a pré-visualização. Os nomes vêm do cadastro, nunca do texto.
-   */
   async preview(guest: GuestContext, stay: GuestStay, draft: RequestDraft): Promise<RequestPreviewResult> {
     const department = (await this.catalog.departments()).find(({ id }) => id === draft.departmentId);
     const itemIds = draft.items.map(({ itemId }) => itemId);
@@ -140,10 +125,8 @@ export class GuestRequestService {
     const owner = { resortId: guest.resortId, guestId: guest.guestId };
     const now = new Date();
 
-    // Pré-visualizações vencidas do hóspede expiram e perdem a nota.
     await repository.update({ ...owner, status: 'preview', expiresAt: LessThan(now) }, { status: 'expired', note: null });
 
-    // Limites por hóspede e estadia, não por conversa: cada conversa nova não renova a cota.
     const stayOwner = { ...owner, lodgingId: stay.lodgingId, stayCheckIn: stay.checkIn };
     const [openPreviews, confirmedToday] = await Promise.all([
       repository.count({ where: { ...stayOwner, status: 'preview' } }),
@@ -196,19 +179,13 @@ export class GuestRequestService {
     return `SIM-${randomBytes(4).toString('hex').toUpperCase()}`;
   }
 
-  /**
-   * Transição atômica preview → confirmed, idempotente: um segundo toque
-   * (ou "confirmo" junto com o botão) devolve o mesmo protocolo.
-   */
   async confirm(guest: GuestContext, stay: GuestStay, conversationId: string, previewId: string): Promise<RequestConfirmResult> {
-    // Catálogo lido antes do bloqueio da linha; a conferência é feita sob o bloqueio.
     const departments = await this.catalog.departments();
     const department = (departmentId: string) => departments.find(({ id }) => id === departmentId);
 
     try {
       return await this.confirmOnce(guest, stay, conversationId, previewId, department);
     } catch (error) {
-      // Colisão rara do protocolo aleatório: uma nova tentativa gera outro.
       if ((error as { code?: string })?.code !== 'ER_DUP_ENTRY') throw error;
       return this.confirmOnce(guest, stay, conversationId, previewId, department);
     }
@@ -227,7 +204,6 @@ export class GuestRequestService {
         lock: { mode: 'pessimistic_write' },
       });
 
-      // Outra estadia (o alojamento é reutilizado): como se não existisse.
       if (!row || row.lodgingId !== stay.lodgingId || row.stayCheckIn !== stay.checkIn) {
         return { status: 'not_found', message: 'Solicitação não encontrada.' };
       }
@@ -264,13 +240,11 @@ export class GuestRequestService {
   async cancel(guest: GuestContext, conversationId: string, previewId: string): Promise<boolean> {
     const result = await this.dataSource.getRepository(SimulatedGuestRequest).update(
       { id: previewId, resortId: guest.resortId, guestId: guest.guestId, conversationId, status: 'preview' },
-      // A nota do hóspede não fica guardada depois do descarte.
       { status: 'cancelled', note: null },
     );
     return Boolean(result.affected);
   }
 
-  /** Estado atual dos cards da conversa, somente do dono. */
   async cards(guest: GuestContext, conversationId: string, previewIds: string[]): Promise<RequestCardState[]> {
     if (previewIds.length === 0) return [];
 
@@ -289,7 +263,6 @@ export class GuestRequestService {
     });
   }
 
-  /** Solicitações simuladas confirmadas na estadia atual. */
   async listForStay(guest: GuestContext, stay: GuestStay): Promise<SimulatedRequestRecord[]> {
     const rows = await this.dataSource.getRepository(SimulatedGuestRequest).find({
       where: { resortId: guest.resortId, guestId: guest.guestId, lodgingId: stay.lodgingId, stayCheckIn: stay.checkIn, status: 'confirmed' },

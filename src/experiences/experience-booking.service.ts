@@ -93,10 +93,6 @@ function summaryOf(
   };
 }
 
-/**
- * Pré-reservas e reservas simuladas de experiências.
- * Grava somente no banco interno da IA.
- */
 @Injectable()
 export class ExperienceBookingService {
   private readonly logger = new Logger(ExperienceBookingService.name);
@@ -116,10 +112,6 @@ export class ExperienceBookingService {
       : DEFAULT_TTL_MINUTES;
   }
 
-  /**
-   * Valida as regras do snapshot e calcula o valor no servidor.
-   * Usado tanto na pré-reserva quanto na revalidação da confirmação.
-   */
   private async validate(
     stay: GuestStay,
     request: Omit<BookingRequest, 'conversationId'>,
@@ -227,8 +219,6 @@ export class ExperienceBookingService {
     };
   }
 
-  // Bloqueio nomeado por vaga, para evitar exceder a capacidade
-  // em confirmações simultâneas de pré-reservas diferentes.
   private slotLockName(preview: ExperienceBookingPreview): string {
     const digest = createHash('sha256')
       .update(`${preview.availabilityId}:${preview.slotId ?? ''}`)
@@ -244,18 +234,12 @@ export class ExperienceBookingService {
     return `SIM-${[...bytes].map((byte) => alphabet[byte % alphabet.length]).join('')}`;
   }
 
-  /**
-   * Confirma uma pré-reserva persistida. Idempotente: confirmar
-   * novamente a mesma pré-reserva retorna a reserva existente.
-   */
   async confirm(
     guest: GuestContext,
     stay: GuestStay,
     conversationId: string,
     previewId: string,
   ): Promise<ConfirmResult> {
-    // Conexão dedicada: o bloqueio da vaga só é liberado depois do
-    // commit, para que outra confirmação enxergue esta reserva.
     const runner = this.dataSource.createQueryRunner();
     let lockName: string | null = null;
 
@@ -346,7 +330,6 @@ export class ExperienceBookingService {
       };
     }
 
-    // Nova tentativa sobre um card que falhou: o motivo registrado é mantido.
     if (preview.status === 'failed') {
       return {
         status: 'unavailable' as const,
@@ -379,7 +362,6 @@ export class ExperienceBookingService {
 
     onLocked(lockName);
 
-    // Revalida as condições no momento da confirmação.
     const check = await this.validate(
       stay,
       {
@@ -392,8 +374,6 @@ export class ExperienceBookingService {
       { availabilityId: preview.availabilityId, slotId: preview.slotId },
     );
 
-    // Falhas de revalidação ficam registradas: o card reaberto
-    // continua mostrando "não foi possível confirmar" e o motivo.
     if (!check.ok) {
       const reason = `Não foi possível confirmar: ${check.message}`;
       await manager.update(ExperienceBookingPreview, { id: preview.id }, { status: 'failed', failureReason: reason.slice(0, 255) });
@@ -435,7 +415,6 @@ export class ExperienceBookingService {
       status: 'confirmed',
     };
 
-    // A chave única em preview_id impede uma segunda reserva.
     await manager.insert(SimulatedExperienceBooking, booking);
     await manager.update(ExperienceBookingPreview, { id: preview.id }, { status: 'confirmed' });
 
@@ -449,10 +428,6 @@ export class ExperienceBookingService {
     };
   }
 
-  /**
-   * Estado atual dos cards de reserva de uma conversa, lido do banco
-   * interno. É a fonte para atualizar um card e reconstruir o histórico.
-   */
   async cards(guest: GuestContext, conversationId: string, previewIds: string[]): Promise<BookingCardState[]> {
     if (previewIds.length === 0) {
       return [];

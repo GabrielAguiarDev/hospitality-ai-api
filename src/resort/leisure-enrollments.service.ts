@@ -5,16 +5,10 @@ import { compactText, stripSymbols } from '../common/text.js';
 import { STAY_PARTY_SUBQUERY, stayPartyParameters, type GuestStay } from './guest-stay.service.js';
 import { ResortSnapshotGateway } from './resort-snapshot.gateway.js';
 
-/**
- * Inscrição de lazer da estadia. No app ela aparece em Minhas
- * Solicitações, não em Minhas Reservas (R-LAZ-07).
- */
 export interface LeisureEnrollment {
   id: string;
-  // Atividade ou, sem ela, a categoria de lazer.
   title: string;
   category: string | null;
-  // Valores do snapshot: pendente | aprovado | negado (R-LAZ-06).
   status: string;
   date: string | null;
 }
@@ -29,11 +23,9 @@ interface EnrollmentRow {
 }
 
 const text = (value: string | null, max: number) => stripSymbols(compactText(value, max)) || null;
-// Títulos cadastrados em maiúsculas ("TERMO DE AVENTURA") viram "Termo de aventura".
 const readable = (value: string | null) =>
   value && value === value.toUpperCase() ? value.charAt(0) + value.slice(1).toLowerCase() : value;
 
-/** Inscrições de lazer dos hóspedes da estadia (snapshot, somente leitura). */
 @Injectable()
 export class LeisureEnrollmentsService {
   constructor(private readonly snapshot: ResortSnapshotGateway) {}
@@ -66,7 +58,6 @@ export class LeisureEnrollmentsService {
       [...stayPartyParameters(stay), stay.checkIn, stay.checkOut],
     );
 
-    // Parte das inscrições só tem o formulário (sem atividade nem categoria).
     return rows.map((row) => {
       const form = readable(text(row.form, 120));
       return {

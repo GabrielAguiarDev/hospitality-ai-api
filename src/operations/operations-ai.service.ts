@@ -41,12 +41,10 @@ export interface OperationsResponse {
 
 const TOOL_NAME = 'list_my_restaurant_reservations';
 
-// A quantidade vem dos pedidos de pratos (um por pessoa).
 function formatPartySize(partySize: number | null): string {
   return partySize === null ? 'não informado' : String(partySize);
 }
 
-// Exportados para a avaliação de function calling entre modelos.
 export const TOOL_SYSTEM_PROMPT = [
   'Você é um concierge de resort.',
   'Para consultar reservas pessoais,',
@@ -82,7 +80,6 @@ export class OperationsAiService {
     messages: OllamaMessage[],
     tools?: (typeof RESERVATIONS_TOOL)[],
   ): Promise<OllamaResponse> {
-    // Function calling usa o modelo de classificação/ferramentas.
     const settings = llmSettings((key) => this.configService.get<string>(key));
 
     let response: Response;
@@ -144,8 +141,6 @@ export class OperationsAiService {
 
     let toolRequestedByModel = false;
 
-    // Somente o endpoint independente precisa
-    // testar o Function Calling nativo.
     if (!decision) {
       const messages: OllamaMessage[] = [
         {
@@ -172,8 +167,6 @@ export class OperationsAiService {
       this.logger.debug(`Intenção recebida: ${resolvedDecision.intent}`);
     }
 
-    // A partir daqui, toda consulta operacional
-    // passa pelo Registry.
     const result = await this.registry.execute('reservations.list', guest);
 
     if (result.tool !== 'reservations.list') {
@@ -203,7 +196,6 @@ export class OperationsAiService {
   }
 }
 
-/** Texto das reservas de restaurante (também usado em Minhas Reservas). */
 export function formatRestaurantReservations(
   reservations: RestaurantReservation[],
   decision: IntentDecision,
@@ -264,7 +256,6 @@ export function formatRestaurantReservations(
   const candidates =
     matchingReservations.length > 0 ? matchingReservations : reservations;
 
-  // Não escolhe uma reserva arbitrariamente.
   if (candidates.length !== 1) {
     return [
       `Encontrei ${candidates.length} reservas relacionadas à sua consulta.`,

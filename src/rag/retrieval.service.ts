@@ -15,7 +15,6 @@ import { ResortClock } from '../resort/resort-clock.service.js';
 import { RESORT_SNAPSHOT_SOURCE } from './sources/knowledge-source.js';
 
 export interface RetrievalOptions {
-  // Data absoluta (YYYY-MM-DD) citada na pergunta ("hoje", "sábado").
   date?: string;
 }
 
@@ -57,8 +56,6 @@ export class RetrievalService {
         resortId,
       );
 
-    // Valor vazio usa o padrão; Number('') seria 0
-    // e descartaria todos os documentos.
     const rawDistance = this.configService
       .get<string>('RAG_MAX_DISTANCE')
       ?.trim();
@@ -83,8 +80,6 @@ export class RetrievalService {
       return relevant;
     }
 
-    // Perguntas datadas: inclui a programação e os eventos daquele dia,
-    // que a busca semântica sozinha não distingue de outros dias.
     const dated = await this.knowledgeService.getDocuments(
       [
         `eventos:${options.date}`,
@@ -96,7 +91,6 @@ export class RetrievalService {
 
     const datedIds = new Set(dated.map(({ id }) => id));
 
-    // Remove documentos de outras datas para não misturar dias.
     const otherDays = (id: string) =>
       /^(?:eventos:\d{4}-\d{2}-\d{2}|lazer:programacao:)/.test(id) && !datedIds.has(id);
 

@@ -1,4 +1,3 @@
-// WAV PCM mínimo e válido: cabeçalho RIFF/WAVE + alguns bytes de áudio.
 export function fakeWav(samples = 8): Buffer {
   const header = Buffer.alloc(44);
   header.write('RIFF', 0, 'ascii');

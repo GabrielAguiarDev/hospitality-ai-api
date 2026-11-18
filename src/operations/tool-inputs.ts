@@ -91,7 +91,6 @@ function clockTime(value: unknown, field: string): string | undefined {
   return value;
 }
 
-/** Listagem e busca de experiências: todos os filtros são opcionais. */
 export function parseExperienceListInput(input: unknown): ExperienceListInput {
   const data = asObject(input, [
     'date',
@@ -144,7 +143,6 @@ export const RESTAURANT_TYPES = ['restaurante', 'bar', 'alimentacao'] as const;
 
 export type RestaurantType = (typeof RESTAURANT_TYPES)[number];
 
-/** Catálogo de restaurantes: sem argumentos, por tipo ou por nome. */
 export function parseRestaurantListInput(
   input: unknown,
 ): { type: RestaurantType | null; name: string | null } {
@@ -232,7 +230,6 @@ export function parsePreviewReferenceInput(
   };
 }
 
-/** Estado atual de cards de reserva de uma conversa. */
 export function parseBookingCardsInput(input: unknown): { conversationId: string; previewIds: string[] } {
   const data = asObject(input, ['conversationId', 'previewIds']);
 
@@ -253,7 +250,6 @@ export interface RequestPreviewInput {
   note: string | null;
 }
 
-/** Nova solicitação simulada: IDs do catálogo, nunca nomes livres. */
 export function parseRequestPreviewInput(input: unknown): RequestPreviewInput {
   const data = asObject(input, ['conversationId', 'departmentId', 'items', 'note']);
 

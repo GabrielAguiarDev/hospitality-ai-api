@@ -29,7 +29,6 @@ import { AI_MIGRATIONS, AI_MIGRATIONS_TABLE } from './database/ai-migrations.js'
         autoLoadEntities: true,
         synchronize: false,
 
-        // Executadas explicitamente: pnpm migration:run
         migrations: AI_MIGRATIONS,
         migrationsTableName: AI_MIGRATIONS_TABLE,
         migrationsRun: false,

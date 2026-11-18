@@ -3,12 +3,6 @@ import { ResortClock } from '../resort/resort-clock.service.js';
 
 import type { HistoryEntry } from './chat-intent.types.js';
 
-/**
- * Prompts do Yago. Ficam fora do ChatService para que a avaliação
- * entre modelos (scripts/evaluate-models.ts) use exatamente os mesmos.
- * Interações sociais não usam o modelo (social-replies.ts).
- */
-
 export const SYSTEM_PROMPT = `
     Você é Yago, o concierge digital do resort.
 
@@ -30,7 +24,6 @@ export const SYSTEM_PROMPT = `
     - Não prometa ações que não pode executar.
 `;
 
-// Histórico enviado ao modelo: as últimas trocas, sem listas longas.
 const KNOWLEDGE_HISTORY_TURNS = 6;
 const KNOWLEDGE_HISTORY_CHARS = 500;
 
@@ -46,15 +39,9 @@ const OPENING_FILLER =
 const CLOSING_FILLER =
   /\s*(?:espero ter ajudado|fico (?:feliz em ajudar|[àa] disposi[çc][ãa]o)|estou [àa] disposi[çc][ãa]o|se precisar de (?:mais )?(?:alguma coisa|algo)[^.!?]*|posso ajudar (?:em|com) (?:algo|mais alguma coisa)[^.!?]*)[.!?]*\s*$/i;
 
-// Pergunta final que só oferece mais ajuda ("Quer saber sobre as aulas?").
 const OFFER_QUESTION =
   /(?<=[.!])\s+(?:quer|gostaria|deseja|precisa|posso|tem interesse|prefere|qual tipo|que tipo)\b[^.!?]*\?\s*$/i;
 
-/**
- * Ajustes finais da resposta do modelo: tira fórmulas de abertura e
- * de encerramento, a pergunta final que só oferece ajuda e troca
- * tratamentos de gênero por formas neutras.
- */
 export function polishReply(reply: string): string {
   let text = reply.trim();
 

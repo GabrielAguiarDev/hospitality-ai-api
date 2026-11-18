@@ -15,13 +15,6 @@ interface LocalBookedRow {
 const minusOrNull = (value: number | null, used: number): number | null =>
   value === null ? null : Math.max(0, value - used);
 
-/**
- * Disponibilidade = vagas do snapshot − reservas ativas do snapshot
- * − reservas simuladas confirmadas no banco da IA.
- *
- * Os dados do snapshot são históricos e não representam
- * necessariamente a disponibilidade em tempo real.
- */
 @Injectable()
 export class ExperienceAvailabilityService {
   constructor(

@@ -13,7 +13,6 @@ export interface RestaurantInfo {
   location: string | null;
   acceptsReservations: boolean;
   minimumAge: number | null;
-  // Turnos ativos de reserva (HH:MM).
   reservationTimes: string[];
 }
 
@@ -29,9 +28,6 @@ interface RestaurantRow {
   times: string | null;
 }
 
-/**
- * Catálogo público de restaurantes e bares ativos do snapshot.
- */
 @Injectable()
 export class RestaurantsCatalogService {
   constructor(private readonly snapshot: ResortSnapshotGateway) {}

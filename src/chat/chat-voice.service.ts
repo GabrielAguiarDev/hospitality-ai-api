@@ -14,17 +14,10 @@ export interface NarratedMessage {
   cached: boolean;
 }
 
-/**
- * Narração de uma resposta já persistida do assistente. O texto vem
- * sempre do banco (nunca do cliente), e a conversa é conferida pelo
- * dono antes de qualquer consulta ao cache.
- */
 @Injectable()
 export class ChatVoiceService {
-  // LRU em memória: Map mantém a ordem de inserção.
   private readonly cache = new Map<string, Buffer>();
   private cacheBytes = 0;
-  // Pedidos simultâneos da mesma mensagem aguardam a mesma síntese.
   private readonly inFlight = new Map<string, Promise<Buffer>>();
 
   constructor(
@@ -38,7 +31,6 @@ export class ChatVoiceService {
   ) {}
 
   async narrate(conversationId: string, messageId: number, guest: GuestContext): Promise<NarratedMessage> {
-    // Desligada: mesmo erro para qualquer mensagem, sem consultar o banco.
     if (!this.voicebox.settings.enabled) {
       throw new ServiceUnavailableException('A narração por voz está desativada.');
     }
@@ -63,7 +55,6 @@ export class ChatVoiceService {
       throw new NotFoundException('Mensagem não encontrada');
     }
 
-    // IDs do banco, e não do request: "ABC…" e "abc…" são a mesma conversa no MySQL.
     const key = `${this.voicebox.voiceKey}:${conversation.id}:${message.id}`;
     const cached = this.cache.get(key);
 

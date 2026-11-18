@@ -18,8 +18,6 @@ async function bootstrap(): Promise<void> {
   const testDocumentId = 'demo-pool';
 
   try {
-    // Mesmo ID original utilizado pela piscina
-    // do Resort Demonstração.
     await knowledge.upsertDocuments(
       [
         {
@@ -105,7 +103,6 @@ async function bootstrap(): Promise<void> {
       '\nTeste de isolamento multi-resort aprovado!',
     );
   } finally {
-    // Remove somente o documento criado para o teste.
     try {
       await knowledge.deleteDocuments(
         [testDocumentId],

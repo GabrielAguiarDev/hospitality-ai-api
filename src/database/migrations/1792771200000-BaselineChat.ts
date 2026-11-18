@@ -1,10 +1,5 @@
 import type { MigrationInterface, QueryRunner } from 'typeorm';
 
-/**
- * Linha de base das tabelas de chat. Idempotente: bancos criados
- * por database/init/001-chat.sql ou já em uso não são alterados
- * além das colunas de propriedade ausentes.
- */
 export class BaselineChat1792771200000 implements MigrationInterface {
   name = 'BaselineChat1792771200000';
 
@@ -75,7 +70,6 @@ export class BaselineChat1792771200000 implements MigrationInterface {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
 
-    // Bancos antigos foram criados sem as colunas de propriedade.
     for (const column of ['resort_id', 'guest_id']) {
       if (!(await this.hasColumn(queryRunner, 'chat_conversations', column))) {
         await queryRunner.query(
@@ -97,6 +91,5 @@ export class BaselineChat1792771200000 implements MigrationInterface {
     }
   }
 
-  // A linha de base não remove tabelas com histórico de conversas.
   async down(): Promise<void> {}
 }

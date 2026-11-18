@@ -36,7 +36,6 @@ describe('ChatService', () => {
   let store: InMemoryChatStore;
   const ollama = { generate: vi.fn<OllamaService['generate']>() };
   const orchestrator = { resolve: vi.fn<ChatOrchestratorService['resolve']>() };
-  // Estado atual dos cards, usado ao reconstruir o histórico.
   const experienceOperations = { bookingCards: vi.fn(async () => [] as ExperienceBookingCardAction[]) };
   const requestOperations = { cards: vi.fn(async () => [] as ChatAction[]) };
   let service: ChatService;
@@ -428,7 +427,6 @@ describe('ChatService', () => {
       expect(result.retrievedSources).toHaveLength(1);
     });
 
-    // Sem evidências, o modelo não é chamado: evita respostas inventadas.
     it('answers with a fixed reply and does not call the model when no document was found', async () => {
       orchestrator.resolve.mockResolvedValue({ mode: 'knowledge', documents: [] });
 
@@ -555,7 +553,6 @@ describe('ChatService', () => {
 
       expect(store.states.get(result.conversationId)).toEqual({
         conversationId: result.conversationId,
-        // O estado pertence ao resort e ao hóspede da conversa.
         resortId: GUEST.resortId,
         guestId: GUEST.guestId,
         state: { topic: 'experience', experience: { listed: [{ id: 'e1', title: 'Trilha' }] } },
@@ -615,7 +612,6 @@ describe('ChatService', () => {
       store.seedConversation(EXISTING_ID);
       store.seedState(EXISTING_ID, { topic: 'experience' }, 1);
       orchestrator.resolve.mockImplementation(async () => {
-        // Outra requisição grava o estado durante este turno.
         store.seedState(EXISTING_ID, { topic: 'knowledge' }, 2);
         return { mode: 'operations', reply: 'ok', documents: [], state: { topic: 'request' } };
       });

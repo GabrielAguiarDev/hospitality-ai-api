@@ -16,9 +16,7 @@ export interface SpaService {
   id: string;
   name: string;
   category: string | null;
-  // Preço cadastrado; null quando o valor está só no texto de duração/preço.
   price: number | null;
-  // Texto livre do cadastro: "50 min" ou "50 min R$ 250,00 | 30 min R$ 180,00".
   details: string | null;
   description?: string | null;
 }
@@ -49,15 +47,10 @@ const money = (value: string | number | null) => {
   return value !== null && Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 };
 
-/**
- * Catálogos somente leitura do snapshot para Boutique, SPA, Dicas e Quiz.
- * Nenhuma consulta lê dados de hóspedes (participações, pedidos).
- */
 const CACHE_MS = 60_000;
 
 @Injectable()
 export class ModulesCatalogService {
-  // A Boutique também é consultada em perguntas sem evidência no RAG.
   private boutiqueCache: { at: number; value: Promise<BoutiqueProduct[]> } | null = null;
 
   constructor(private readonly snapshot: ResortSnapshotGateway) {}
@@ -138,19 +131,16 @@ export class ModulesCatalogService {
 
     return rows
       .map((row) => {
-        // "50 min R$ 250,00 30 min R$ 180,00" → "50 min R$ 250,00; 30 min R$ 180,00".
         const details = text(row.details, 160)?.replace(/(R\$\s*[\d.,]+)\s+(?=\d)/g, '$1; ') ?? null;
         return {
           id: String(row.id),
           name: text(row.name, 120) ?? 'Serviço',
           category: text(row.category, 80),
           price: money(row.price),
-          // "25" sem unidade é a duração em minutos.
           details: details && /^\d+$/.test(details) ? `${details} min` : details,
           description: summarizeText(row.description, 300) || null,
         };
       })
-      // O cadastro repete serviços ("Máscara Tensora Dourada" duas vezes).
       .filter((service) => {
         const key = `${service.category}|${service.name}`.toLowerCase();
         return !seen.has(key) && Boolean(seen.add(key));
@@ -174,13 +164,11 @@ export class ModulesCatalogService {
     return rows.map((row) => ({
       id: String(row.id),
       title: text(row.title, 120) ?? 'Dica',
-      // Marcadores ">" do cadastro viram uma lista corrida.
       description:
         summarizeText((row.description ?? '').replace(/\s*>\s*/g, '; ').replace(/:\s*;\s*/g, ': ').replace(/([.!?])\s*;/g, '$1').replace(/^;\s*/, ''), 400) || null,
     }));
   }
 
-  // Somente quizzes ativos; PIN, anfitrião e participações nunca são lidos.
   async activeQuizzes(): Promise<QuizInfo[]> {
     const rows = await this.snapshot.select<{
       id: string;
@@ -214,7 +202,6 @@ export class ModulesCatalogService {
     }));
   }
 
-  // Somente textos publicados: títulos e parceiros sem conteúdo são ignorados.
   async esg(): Promise<EsgInfo[]> {
     const rows = await this.snapshot.select<{ id: string; title: string | null; description: string | null }>(
       `

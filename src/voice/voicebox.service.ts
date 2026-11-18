@@ -18,22 +18,16 @@ interface VoiceboxHealth {
   model_size?: string | null;
 }
 
-// Subconjunto de GenerationResponse/HistoryResponse usado aqui.
-// audio_path (caminho interno do Voicebox) nunca é lido nem repassado.
 interface VoiceboxGeneration {
   id?: unknown;
   status?: unknown;
   error?: unknown;
 }
 
-// Limite do GenerationRequest.text no Voicebox.
 const VOICEBOX_MAX_TEXT = 50_000;
-// O ID da geração compõe caminhos: somente caracteres seguros.
 const GENERATION_ID = /^[A-Za-z0-9-]{1,64}$/;
 const FAILED_STATUSES = new Set(['failed', 'error', 'cancelled', 'canceled']);
-// Cabeçalho mínimo de um WAV (RIFF + fmt + data).
 const WAV_HEADER_BYTES = 44;
-// Menor síntese medida no M3 (frase curta): ~30 s.
 const MIN_SYNTHESIS_MS = 30_000;
 
 export function isWav(audio: Buffer): boolean {
@@ -44,14 +38,6 @@ export function isWav(audio: Buffer): boolean {
   );
 }
 
-/**
- * Cliente do Voicebox local. O fluxo real (v0.5) é assíncrono:
- * POST /generate devolve status "generating"; GET /history/{id}
- * informa a conclusão; GET /audio/{id} entrega o WAV.
- *
- * Uma síntese por vez: o Qwen3-TTS 1.7B divide os 8 GB do M3 com o
- * Ollama, e gerações em paralelo só disputariam a mesma memória.
- */
 @Injectable()
 export class VoiceboxService implements OnModuleInit {
   private readonly logger = new Logger(VoiceboxService.name);
@@ -72,7 +58,6 @@ export class VoiceboxService implements OnModuleInit {
     else if (enabled) this.logger.log(`Narração: perfil ${profileId}, ${engine} ${modelSize}, idioma ${language}.`);
   }
 
-  // Identifica a voz no cache: trocar perfil ou modelo não reaproveita áudio antigo.
   get voiceKey(): string {
     const { profileId, engine, modelSize, language } = this.settings;
     return `${profileId}:${engine}:${modelSize}:${language}`;
@@ -91,7 +76,6 @@ export class VoiceboxService implements OnModuleInit {
       throw new ServiceUnavailableException('A narração está ocupada. Tente novamente em instantes.');
     }
 
-    // O prazo conta desde a entrada na fila: o aplicativo nunca espera mais que isso.
     const deadline = Date.now() + this.settings.timeoutMs;
 
     this.waiting += 1;
@@ -108,12 +92,10 @@ export class VoiceboxService implements OnModuleInit {
   private async generate(text: string, deadline: number): Promise<Buffer> {
     const { profileId, engine, modelSize, language, pollIntervalMs } = this.settings;
 
-    // Pouco tempo restante depois da fila: nem começa uma síntese que seria cancelada.
     if (deadline - Date.now() < Math.min(MIN_SYNTHESIS_MS, this.settings.timeoutMs / 2)) {
       throw new GatewayTimeoutException('A narração demorou para ficar pronta.');
     }
 
-    // Falha rápida (alguns segundos) quando o Voicebox está fora do ar.
     await this.checkHealth(deadline);
 
     const started = Date.now();
@@ -127,7 +109,6 @@ export class VoiceboxService implements OnModuleInit {
         language,
         engine,
         model_size: modelSize,
-        // O texto já revisado nunca é reescrito pelo Voicebox.
         personality: false,
       }),
     });
@@ -155,8 +136,6 @@ export class VoiceboxService implements OnModuleInit {
         generation = await this.json<VoiceboxGeneration>(`/history/${id}`, deadline);
       }
     } catch (error) {
-      // Qualquer falha com a geração em andamento: a fila só libera a vez
-      // depois do cancelamento, para não haver duas sínteses ao mesmo tempo.
       await this.cancel(id);
       throw error;
     }
@@ -167,7 +146,6 @@ export class VoiceboxService implements OnModuleInit {
   }
 
   private async checkHealth(deadline: number): Promise<void> {
-    // Falha aqui é indisponibilidade (503), salvo quando o prazo da fila acabou (504).
     const health = await this.json<VoiceboxHealth>('/health', Math.min(deadline, Date.now() + this.settings.healthTimeoutMs)).catch(
       () => null,
     );
@@ -180,7 +158,6 @@ export class VoiceboxService implements OnModuleInit {
       throw new ServiceUnavailableException('O Voicebox não está disponível.');
     }
 
-    // Outro tamanho carregado: o Voicebox troca o modelo nesta geração.
     if (health.model_loaded && health.model_size && health.model_size !== this.settings.modelSize) {
       this.logger.warn(`Voicebox com o modelo ${health.model_size} carregado; a narração usa ${this.settings.modelSize}.`);
     }
@@ -205,7 +182,6 @@ export class VoiceboxService implements OnModuleInit {
     return audio;
   }
 
-  // Lê o corpo até maxAudioBytes, mesmo sem Content-Length; null se passar disso.
   private async readLimited(response: Response): Promise<Buffer | null> {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -222,7 +198,6 @@ export class VoiceboxService implements OnModuleInit {
     return Buffer.concat(chunks);
   }
 
-  // Libera o Voicebox de uma geração que ninguém vai mais usar.
   private async cancel(id: string): Promise<void> {
     try {
       await this.request(`/generate/${id}/cancel`, Date.now() + this.settings.healthTimeoutMs, { method: 'POST' });
@@ -247,7 +222,6 @@ export class VoiceboxService implements OnModuleInit {
     try {
       response = await fetch(`${this.settings.baseUrl}${path}`, {
         ...init,
-        // Somente o Voicebox configurado: nada de seguir redirecionamentos.
         redirect: 'error',
         signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
       });

@@ -1,17 +1,6 @@
 import type { ChatIntent } from '../chat/chat-intent.types.js';
 import { normalizeText } from '../common/text.js';
 
-/**
- * Mapa das capacidades do Yago por módulo do aplicativo.
- *
- * - Fonte única de módulo, tela do React Native, parâmetros de navegação,
- *   tipo de operação, limitações e pistas de roteamento por módulo.
- * - A relação intenção → ferramenta continua em operations/intent-tool-map.ts;
- *   a descrição e o readOnly de cada ferramenta, no OperationsToolRegistry.
- * - Nunca é enviado inteiro ao modelo: selectCapabilities escolhe só os
- *   módulos citados na mensagem.
- */
-
 export const APP_MODULES = [
   'requests',
   'gastronomy',
@@ -27,20 +16,12 @@ export const APP_MODULES = [
 
 export type AppModule = (typeof APP_MODULES)[number];
 
-/**
- * Telas que o aplicativo pode abrir e os parâmetros aceitos em cada uma.
- * Os nomes são provisórios: o app os mapeia para as rotas reais.
- */
 export const SCREEN_PARAMS = {
-  // Com restaurantId: tela de reserva (somente restaurantes com reserva).
   Gastronomy: ['restaurantId'],
-  // Página informativa e cardápio de um restaurante.
   Restaurant: ['restaurantId'],
   Requests: ['departmentId'],
   Experiences: ['experienceId'],
-  // Uma experiência: o app escolhe reserva ou página informativa (R-EXP-02).
   Experience: ['experienceId'],
-  // date (AAAA-MM-DD) escolhe a aba do dia.
   Events: ['date'],
   Leisure: [],
   Boutique: [],
@@ -53,7 +34,6 @@ export const SCREEN_PARAMS = {
   MyFavorites: [],
 } as const satisfies Record<string, readonly string[]>;
 
-// Abas de Minhas Reservas aceitas em MyReservation.tab.
 export const RESERVATION_TABS = ['Gastronomy', 'Experience'] as const;
 
 export type NavigationScreen = keyof typeof SCREEN_PARAMS;
@@ -62,16 +42,13 @@ export type OperationKind = 'read' | 'write' | 'navigation';
 
 export interface Capability {
   module: AppModule;
-  // Nome do módulo como aparece no app.
   label: string;
   description: string;
   intents: readonly ChatIntent[];
-  // Parâmetros que o hóspede pode informar na mensagem.
   params: readonly string[];
   kinds: readonly OperationKind[];
   limitations: readonly string[];
   screen: NavigationScreen;
-  // Pistas do módulo no texto normalizado (sem acentos, minúsculo).
   cue: RegExp;
 }
 
@@ -210,21 +187,15 @@ export function capabilityOf(module: AppModule): Capability {
   return BY_MODULE.get(module) as Capability;
 }
 
-/** Módulo dono de uma intenção (o primeiro, para intenções compartilhadas). */
 export function capabilityForIntent(intent: ChatIntent): Capability | undefined {
   return CAPABILITIES.find((capability) => capability.intents.includes(intent));
 }
 
-/**
- * Somente as capacidades citadas na mensagem (no máximo `limit`),
- * na ordem do catálogo. Nenhuma pista: lista vazia.
- */
 export function selectCapabilities(message: string, limit = 2): Capability[] {
   const text = normalizeText(message);
   return CAPABILITIES.filter((capability) => capability.cue.test(text)).slice(0, limit);
 }
 
-/** "Posso ajudar com Solicitações, Gastronomia, … e Quiz." */
 export function capabilitiesOverview(): string {
   const labels = CAPABILITIES.map(({ label }) => label);
   return `${labels.slice(0, -1).join(', ')} e ${labels.at(-1)}`;

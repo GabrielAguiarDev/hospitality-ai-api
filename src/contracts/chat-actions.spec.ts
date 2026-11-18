@@ -27,7 +27,6 @@ const summary = (over: Partial<ExperienceBookingSummary> = {}): ExperienceBookin
   ...over,
 });
 
-// O card de reserva: um único cardId durante todo o ciclo.
 const card = (status: 'preview' | 'confirmed' | 'expired' | 'failed' | 'cancelled' = 'preview') =>
   bookingCard({
     conversationId: CONV,

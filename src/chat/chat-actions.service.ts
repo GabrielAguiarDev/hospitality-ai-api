@@ -27,10 +27,6 @@ export interface ChatActionResponse extends ChatResponse {
   status: ChatActionStatus;
 }
 
-/**
- * Executa ações estruturadas (botões) a partir de pré-reservas
- * persistidas. A propriedade da conversa é sempre verificada.
- */
 @Injectable()
 export class ChatActionsService {
   constructor(
@@ -62,7 +58,6 @@ export class ChatActionsService {
     let response: ChatResponse['actions'] = [];
     const type: ChatActionDto['type'] = dto.type;
 
-    // Um handler por tipo: um tipo novo nunca cai no ramo de outro.
     switch (type) {
       case 'experience.booking.confirm': {
         const outcome = await this.experienceOperations.confirmPreview(guest, dto.conversationId, dto.previewId);
@@ -89,7 +84,6 @@ export class ChatActionsService {
 
         reply = 'Tudo bem, descartei a pré-reserva. Nada foi registrado.';
         status = 'cancelled';
-        // O mesmo card passa para "cancelled".
         response = sanitizeActions(
           await this.experienceOperations.bookingCards(guest, dto.conversationId, [dto.previewId]),
         );
@@ -144,15 +138,11 @@ export class ChatActionsService {
 
       await manager.update(ChatConversation, { id: dto.conversationId }, { updatedAt: new Date() });
 
-      // A pré-reserva tratada deixa de aguardar confirmação por texto.
-      // Versão conferida: se o estado mudou em paralelo, a pendência
-      // já foi substituída e não há o que limpar.
       if (stored && pendingConfirmation(stored.state)?.id === dto.previewId) {
         await manager.update(
           ChatConversationState,
           { ...owner, version: stored.version },
           {
-            // Operação concluída: nada mais aguarda confirmação nem resposta.
             state: {
               ...withoutPendingConfirmation(stored.state),
               phase: 'completed',

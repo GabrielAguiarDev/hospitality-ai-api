@@ -107,7 +107,6 @@ describe('OperationsAiService', () => {
         toolRequestedByModel: false,
         reservationsFound: 1,
       });
-      // The model's hallucinated "no reservations" text never reaches the guest.
       expect(result.reply).not.toContain('não possui');
       expect(result.reply).toContain('Encontrei 1 reserva');
     });
@@ -142,8 +141,6 @@ describe('OperationsAiService', () => {
 
       const result = await createService().ask('Tenho alguma reserva?', GUEST);
 
-      // The registry is called with the tool name and the authenticated
-      // guest only; model-supplied arguments never reach it.
       expect(registry.execute).toHaveBeenCalledExactlyOnceWith('reservations.list', GUEST);
       expect(result.toolRequestedByModel).toBe(_case === 'SQL passed as tool arguments');
       expect(result.reply).toContain('Trattoria Aurora');
@@ -195,10 +192,6 @@ describe('OperationsAiService', () => {
     });
   });
 
-  // KNOWN LIMITATION, not a desired behaviour: without an orchestrator
-  // decision the reply is still built only from the database, yet a failed
-  // function-calling round trip blocks it. These tests document the current
-  // contract; flip them if the dependency on Ollama is made optional.
   describe('Ollama failures (no orchestrator decision)', () => {
     it.each<[string, () => void]>([
       ['connection refused', () => fetchMock.mockRejectedValue(connectionError())],

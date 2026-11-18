@@ -31,7 +31,6 @@ const STATUS_PLURALS: Record<string, string> = {
   'simulada pelo chat': 'simuladas pelo chat',
 };
 
-// Palavras do próprio pedido ("quero fazer uma solicitação"): sem item.
 const REQUEST_WORDS = new Set([
   'quero', 'queria', 'gostaria', 'fazer', 'abrir', 'nova', 'novo', 'solicitacao', 'solicitar', 'chamado', 'pedido', 'pedir',
   'preciso', 'registrar', 'mandar', 'eu', 'voce', 'pode', 'podem', 'ajuda', 'algo', 'alguma', 'coisa',
@@ -39,11 +38,9 @@ const REQUEST_WORDS = new Set([
 
 const NO_PENDING =
   'Não há uma solicitação aguardando confirmação por texto. Se ela ainda aparece no card, confirme pelo botão.';
-// A conversa também tem uma experiência escolhida: "confirmo" pode ser dela.
 const NO_PENDING_ANY =
   'Não há nada aguardando confirmação por texto. Se a solicitação ou a pré-reserva ainda aparece no card, confirme pelo botão.';
 
-// "a anterior", "a última", "a mais recente": a solicitação mais nova.
 const LATEST = /\b(?:anterior|ultima|ultimo|mais recente|recente|ela|essa|dela)\b/;
 
 const requestsScreen = (departmentId?: string) =>
@@ -55,10 +52,6 @@ const LEISURE_STATUS: Record<string, string> = { pendente: 'pendente', aprovado:
 const describeItems = (items: { name: string; quantity: number }[]) =>
   nameList(items.map(({ name, quantity }) => (quantity > 1 ? `${quantity}x ${name}` : name)), 4);
 
-/**
- * Solicitações pelo chat: catálogo real dos departamentos, solicitações
- * da estadia e novas solicitações SIMULADAS (preview → confirmação).
- */
 @Injectable()
 export class RequestsOperationsService {
   constructor(private readonly registry: OperationsToolRegistryService) {}
@@ -86,8 +79,6 @@ export class RequestsOperationsService {
   ): Promise<DispatchResult> {
     const conversation = context?.state ?? {};
     const previous = conversation.request ?? {};
-    // Qualquer outra interação descarta a confirmação por texto pendente e
-    // a pergunta "O que você precisa?" (vale só para a mensagem seguinte).
     const base: RequestConversationState = { ...previous, pendingPreviewId: undefined, departmentId: undefined };
 
     switch (decision.intent) {
@@ -97,7 +88,6 @@ export class RequestsOperationsService {
       case 'request.confirm':
       case 'request.cancel':
       case 'request.create':
-        // Escrita simulada: só dentro de uma conversa do próprio hóspede.
         if (!context?.conversationId) {
           throw new BadRequestException('Solicitações simuladas exigem o contexto da conversa.');
         }
@@ -123,7 +113,6 @@ export class RequestsOperationsService {
       return this.askItem(department, conversation, state, 'requests.catalog');
     }
 
-    // Departamentos sem itens nem avisos (ex.: equipes internas) não são oferecidos.
     const offered = departments.filter(({ items, info }) => items.length > 0 || info.length > 0);
 
     return {
@@ -137,7 +126,6 @@ export class RequestsOperationsService {
     };
   }
 
-  // Departamento conhecido, item não: mostra o que pode ser pedido.
   private askItem(
     department: RequestDepartment,
     conversation: ConversationState,
@@ -167,15 +155,12 @@ export class RequestsOperationsService {
   ): Promise<DispatchResult> {
     const conversation = context.state;
     const departments = await this.execute('requests.catalog', guest);
-    // Departamento citado agora ou na pergunta anterior ("Governança" → "toalhas").
     const mentioned = mentionedDepartment(message, departments);
     const asked = mentioned ? undefined : departments.find(({ id }) => id === previous.departmentId);
     const named = mentioned ?? asked;
     const scope = named ? [named] : departments;
     let matches: MatchedItem[] = matchItems(message, scope);
 
-    // Item de outro departamento com o mesmo nome: busca em todos. Na
-    // resposta a "O que você precisa?" não: a mensagem pode ser outra pergunta.
     if (matches.length === 0 && mentioned) matches = matchItems(message, departments);
 
     if (matches.length === 0 && asked) {
@@ -191,7 +176,6 @@ export class RequestsOperationsService {
       const department = named ?? symptomDepartment(message, departments);
       if (department) return this.askItem(department, conversation, state, 'requests.preview');
 
-      // "Quero fazer uma solicitação": nenhum item citado, então mostra o catálogo.
       if (requestTokens(message).every((token) => REQUEST_WORDS.has(token))) {
         return this.catalog(message, guest, conversation, state);
       }
@@ -206,7 +190,6 @@ export class RequestsOperationsService {
       };
     }
 
-    // Empate pelas mesmas palavras ("toalha" → de banho, de rosto): pergunta qual.
     const tied = matches.filter(({ tied: isTied }) => isTied);
 
     if (tied.length > 1) {
@@ -221,12 +204,10 @@ export class RequestsOperationsService {
       };
     }
 
-    // Uma solicitação por departamento: prepara a primeira e avisa das demais.
     const department = matches[0].department;
     const others = matches.filter((match) => match.department.id !== department.id);
     const items = matches.filter((match) => match.department.id === department.id);
 
-    // A pré-visualização anterior desta conversa deixa de valer (e perde a nota).
     if (previous.pendingPreviewId) {
       await this.execute('requests.cancel', guest, { conversationId: context.conversationId, previewId: previous.pendingPreviewId });
     }
@@ -322,11 +303,9 @@ export class RequestsOperationsService {
     };
   }
 
-  /** Cards no estado atual, montados só a partir do banco. */
   async cards(guest: GuestContext, conversationId: string, previewIds: string[]): Promise<ChatAction[]> {
     if (previewIds.length === 0) return [];
 
-    // A ferramenta aceita até 50 IDs por consulta; conversas longas são lidas em partes.
     const chunks = Array.from({ length: Math.ceil(previewIds.length / 50) }, (_, index) => previewIds.slice(index * 50, index * 50 + 50));
     const states = (await Promise.all(chunks.map((ids) => this.execute('requests.cards', guest, { conversationId, previewIds: ids })))).flat();
 
@@ -351,7 +330,6 @@ export class RequestsOperationsService {
     conversation: ConversationState,
     state: RequestConversationState,
   ): Promise<DispatchResult> {
-    // Inscrições de lazer também são "solicitações" no app (R-LAZ-07).
     const [requests, enrollments] = await Promise.all([
       this.execute('requests.list', guest),
       this.execute('leisure.enrollments', guest),
@@ -394,7 +372,6 @@ export class RequestsOperationsService {
           ? `Sua solicitação simulada de ${selected.category} (${selected.description}) foi registrada em ${selected.createdAt}, ` +
             `protocolo ${selected.protocol}. Ela não chega ao departamento.`
           : `Sua solicitação de ${label(selected)}, aberta em ${selected.createdAt}, está ${statusOf(selected)}.`;
-        // Status pedido: só a solicitação escolhida. Lista com uma só: as inscrições também.
         const listing = intent === 'request.list';
 
         return {
@@ -406,7 +383,6 @@ export class RequestsOperationsService {
       }
     }
 
-    // Resumo por status; os detalhes completos ficam nos cards e em Minhas Solicitações.
     const counts = Object.entries(
       requests.reduce<Record<string, number>>((total, request) => {
         const status = statusOf(request);
@@ -427,10 +403,6 @@ export class RequestsOperationsService {
     };
   }
 
-  /**
-   * A solicitação pedida: pelo assunto ("a da toalha"), pela referência
-   * ("a anterior" → a mais recente) ou a única existente.
-   */
   private select(message: string, requests: GuestRequest[], lastId?: string): GuestRequest | null {
     if (requests.length === 1) return requests[0];
 

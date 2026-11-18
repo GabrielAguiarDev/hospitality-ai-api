@@ -76,7 +76,6 @@ describe('OperationsToolRegistryService', () => {
   const favorites = { forStay: vi.fn(async () => []) };
   const enrollments = { forStay: vi.fn(async () => []) };
 
-  // Sexta-feira, 23/10/2026, 10:30 no resort.
   const clock = { today: () => '2026-10-23', time: () => '10:30', dateAt: () => '2026-10-23', timeAt: () => '10:00' };
 
   function createRegistry(nodeEnv = 'development') {
@@ -367,7 +366,6 @@ describe('OperationsToolRegistryService', () => {
         expect(['catalog', 'guest'], tool.name).toContain(tool.access);
         expect(['snapshot', 'ai_db', 'snapshot+ai_db'], tool.name).toContain(tool.source);
         expect(tool.cards.length, tool.name).toBeGreaterThan(0);
-        // Somente leitura ⇔ modo de leitura; nada grava no snapshot do resort.
         expect(tool.readOnly, tool.name).toBe(tool.mode === 'read');
         if (tool.mode === 'simulated_write') expect(tool.source, tool.name).not.toBe('snapshot');
       }

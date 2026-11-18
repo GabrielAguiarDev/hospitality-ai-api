@@ -24,7 +24,6 @@ describe('llmSettings', () => {
 
     expect(settings.chatModel).toBe('qwen3.5:4b');
     expect(settings.classifierModel).toBe('qwen3.5:4b');
-    // O RAG continua com EmbeddingGemma.
     expect(settings.embedModel).toBe(DEFAULT_EMBED_MODEL);
   });
 
@@ -39,7 +38,6 @@ describe('llmSettings', () => {
       baseUrl: 'http://legacy:11434',
       chatModel: 'qwen3:1.7b',
     });
-    // O nome novo tem prioridade.
     expect(llmSettings(read({ OLLAMA_BASE_URL: 'http://new:11434', OLLAMA_URL: 'http://legacy:11434' })).baseUrl).toBe(
       'http://new:11434',
     );
@@ -57,7 +55,6 @@ describe('llmSettings', () => {
   it('reads keep-alive durations and accepts only the Ollama formats', () => {
     expect(llmSettings(read({ OLLAMA_KEEP_ALIVE: '1h', OLLAMA_EMBED_KEEP_ALIVE: '-1' }))).toMatchObject({
       keepAlive: '1h',
-      // Número de segundos: o Ollama recusa "-1" e "300" como texto (HTTP 400).
       embedKeepAlive: -1,
     });
     expect(llmSettings(read({ OLLAMA_KEEP_ALIVE: '0' })).keepAlive).toBe(0);

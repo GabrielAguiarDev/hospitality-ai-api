@@ -64,7 +64,6 @@ describe('experience search rules', () => {
 
   it('treats only all inclusive experiences as free', () => {
     expect(matchesCatalogFilters(experience({ reservationType: 'allinclusive' }), { free: true })).toBe(true);
-    // Sem preço cadastrado não significa gratuito.
     expect(matchesCatalogFilters(experience({ reservationType: null, prices: [] }), { free: true })).toBe(false);
   });
 

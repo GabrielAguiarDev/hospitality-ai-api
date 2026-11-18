@@ -3,7 +3,6 @@ import type { ResortSnapshotGateway } from './resort-snapshot.gateway.js';
 
 describe('ModulesCatalogService', () => {
   const select = vi.fn<(sql: string) => Promise<unknown[]>>();
-  // O cache de 60 s é por instância: cada teste usa a sua.
   let catalog: ModulesCatalogService;
 
   const sqlOf = (call = 0) => select.mock.calls[call][0];

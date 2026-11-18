@@ -1,34 +1,17 @@
 import type { ChatIntent } from '../chat/chat-intent.types.js';
 
-// Períodos do dia citados pelo hóspede ("de manhã", "à tarde", "à noite").
 export type DayPeriod = 'morning' | 'afternoon' | 'evening';
 
-/**
- * Filtros de uma busca de experiências, preservados entre mensagens
- * para que "E de manhã?" refine a consulta anterior. A data da busca
- * fica em `ExperienceConversationState.date`.
- */
 export interface ExperienceSearchFilters {
   period?: DayPeriod;
-  // Faixa de horário (HH:MM): "depois das 15h", "antes das 10h".
   after?: string;
   before?: string;
-  // Sem cobrança cadastrada (all inclusive).
   free?: boolean;
-  // Com indício de participação de crianças no cadastro.
   forChildren?: boolean;
-  // Somente experiências que aceitam reserva.
   bookable?: boolean;
 }
 
-/**
- * Estado operacional de uma conversa, persistido no banco da IA.
- *
- * Todos os identificadores vêm de consultas do servidor, nunca
- * de texto gerado pelo modelo ou enviado pelo cliente.
- */
 export interface ExperienceConversationState {
-  // Última lista apresentada, na ordem exibida ("a segunda").
   listed?: { id: string; title: string }[];
   listedDate?: string | null;
   selectedId?: string;
@@ -37,85 +20,52 @@ export interface ExperienceConversationState {
   time?: string | null;
   adults?: number;
   children?: number;
-  // A divisão adultos/crianças foi presumida ("2 pessoas").
   partyAssumed?: boolean;
   filters?: ExperienceSearchFilters;
-  // Experiência cuja descrição já foi apresentada (evita repeti-la).
   describedId?: string;
-  // O aviso de que as vagas vêm do snapshot já foi dado nesta conversa.
   snapshotNoticeShown?: boolean;
   pendingPreviewId?: string;
-  // Intenção em andamento: a reserva pediu dados (data, pessoas) e a
-  // próxima operação com esses dados continua a reserva. Qualquer outra
-  // operação de experiência o descarta; conversa e dúvidas intercaladas não.
   awaiting?: 'booking';
 }
 
 export interface RestaurantConversationState {
-  // Última lista apresentada, na ordem exibida.
   listed?: { id: string; name: string }[];
   selectedId?: string;
   selectedName?: string;
   describedId?: string;
-  // Filtros da última lista, para continuações ("E à noite?").
   filters?: RestaurantSearchFilters;
-  // "De qual restaurante?" perguntado para o cardápio: a próxima
-  // referência ("o segundo", um nome) abre o cardápio, não os detalhes.
   awaiting?: 'menu';
 }
 
 export interface RestaurantSearchFilters {
   type?: 'restaurante' | 'bar' | 'alimentacao';
-  // Rótulo da cozinha pedida ("japonesa"), reaplicado nas continuações.
   cuisine?: string;
   reservations?: boolean;
 }
 
-// Programação consultada: "E amanhã?" repete a busca com a nova data.
 export interface EventConversationState {
   date?: string;
   filters?: Pick<ExperienceSearchFilters, 'period' | 'after' | 'before'>;
-  // Somente shows/eventos ou somente lazer, quando a pergunta pediu.
   kind?: 'event' | 'leisure';
-  // Público da recreação (categoria de tb_categorialazer).
   audience?: 'kids' | 'teens' | 'adults' | 'sports';
 }
 
-// Solicitações: pré-visualização pendente e o departamento em conversa.
 export interface RequestConversationState {
-  // Solicitação simulada aguardando "confirmo" (id do card).
   pendingPreviewId?: string;
-  // Departamento citado sem item: a próxima mensagem pode ser só o item.
   departmentId?: string;
-  // Última solicitação apresentada ("e ela?", "a anterior").
   lastRequestId?: string;
 }
 
-/**
- * Última lista de catálogo apresentada (SPA, Boutique, Dicas, ESG, Quiz,
- * favoritos), na ordem dos cards: "o segundo" e "Opção 2" resolvem aqui,
- * sempre para um ID do cadastro. Só vale logo depois da própria lista
- * (lastIntent do mesmo módulo); outro assunto não a reutiliza.
- */
 export interface CatalogConversationState {
   kind: 'spa_service' | 'product' | 'tip' | 'esg' | 'quiz' | 'event';
   listed: { id: string; title: string }[];
 }
 
-/**
- * Pergunta feita pelo Yago e ainda sem resposta ("Quer que eu verifique
- * os horários disponíveis?"). Um "sim" executa `intent` sobre `targetId`.
- * Nunca representa a confirmação de uma reserva: essa usa pendingPreviewId.
- */
 export interface PendingQuestion {
   intent: ChatIntent;
   targetId?: string;
 }
 
-/**
- * Fase da conversa: conversa livre, consulta de conhecimento, operação
- * em andamento, confirmação pendente ou operação concluída.
- */
 export type ConversationPhase =
   | 'conversation'
   | 'knowledge'
@@ -126,7 +76,6 @@ export type ConversationPhase =
 export interface ConversationState {
   phase?: ConversationPhase;
   topic?: 'experience' | 'restaurant' | 'event' | 'reservation' | 'request' | 'module' | 'knowledge';
-  // Última intenção operacional ou de conhecimento (interações sociais não contam).
   lastIntent?: ChatIntent;
   pendingQuestion?: PendingQuestion;
   experience?: ExperienceConversationState;
@@ -138,17 +87,12 @@ export interface ConversationState {
 
 export type PendingConfirmation = { kind: 'experience' | 'request'; id: string };
 
-/**
- * A confirmação por texto ("confirmo") pendente na conversa. Existe no
- * máximo uma: criar uma pré-visualização de um tipo descarta a do outro.
- */
 export function pendingConfirmation(state: ConversationState | undefined): PendingConfirmation | null {
   if (state?.request?.pendingPreviewId) return { kind: 'request', id: state.request.pendingPreviewId };
   if (state?.experience?.pendingPreviewId) return { kind: 'experience', id: state.experience.pendingPreviewId };
   return null;
 }
 
-/** Remove qualquer confirmação por texto pendente, mantendo o resto do estado. */
 export function withoutPendingConfirmation(state: ConversationState): ConversationState {
   return {
     ...state,

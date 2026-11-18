@@ -33,7 +33,6 @@ const RESTAURANTS = [
 
 describe('RestaurantOperationsService', () => {
   const execute = vi.fn();
-  // Sexta-feira, 10:30 no resort.
   const clock = { today: () => '2026-10-23', time: () => '10:30' };
   const service = new RestaurantOperationsService(
     { execute } as unknown as OperationsToolRegistryService,
@@ -208,7 +207,6 @@ describe('RestaurantOperationsService', () => {
       const result = await service.handle('sim', yes, guest, answered('all'));
 
       expect(cards(result.actions)).toHaveLength(20);
-      // O restante não some em silêncio.
       expect(result.reply).toContain('As outras 5 estão na tela de Gastronomia.');
       expect(result.reply).not.toContain('Quer ver todas?');
       expect(result.reply).not.toContain('quer ver todas');
@@ -278,7 +276,6 @@ describe('RestaurantOperationsService', () => {
     it('filters by an evening window and never claims restaurants without hours as open', async () => {
       const result = await service.handle('Quais bares estão abertos à noite?', { ...list, entities: { period: 'evening' } }, guest, ctx);
 
-      // Villagio fecha às 18h; Mirante não tem horário cadastrado.
       expect(cards(result.actions)).toEqual([]);
       expect(result.reply).toContain('Não encontrei bares');
       expect(result.reply).toContain('Não consegui conferir pelo horário cadastrado: Bar Mirante.');
@@ -297,7 +294,6 @@ describe('RestaurantOperationsService', () => {
     it('answers "agora" with the resort clock (10:30)', async () => {
       const result = await service.handle('Tem algo aberto agora?', list, guest, ctx);
 
-      // 10:30: só o bar com 10h às 18h; Gino e a pizzaria abrem às 12h.
       expect(cards(result.actions).map(({ name }) => name)).toEqual(['Bar Villagio']);
       expect(result.reply).toContain('em funcionamento agora');
       expect(result.reply).toContain('Não consegui conferir pelo horário cadastrado: Bar Mirante.');
@@ -324,7 +320,6 @@ describe('RestaurantOperationsService', () => {
       const bookable = await service.handle('O Omakase está aberto à noite?', { ...list, entities: { period: 'evening' } }, guest, ctx);
       expect(bookable.actions?.at(-1)).toMatchObject({ type: 'navigate', params: { restaurantId: 'j1' } });
 
-      // Sem reserva pelo app: a página do restaurante, nunca a tela de reserva.
       const walkIn = await service.handle('O Gino está aberto à noite?', { ...list, entities: { period: 'evening' } }, guest, ctx);
       const screens = walkIn.actions?.flatMap((action) => (action.type === 'navigate' ? [action.screen] : []));
       expect(screens).toEqual(['Restaurant']);
@@ -357,7 +352,6 @@ describe('RestaurantOperationsService', () => {
       const first = await service.handle('Quais bares?', list, guest, ctx);
       const followUp = await service.handle('E com reserva?', { ...list, refine: true }, guest, { ...ctx, state: first.state! });
 
-      // Nenhum bar aceita reserva: o tipo se manteve, sem trocar por restaurantes.
       expect(followUp.reply).toContain('Não encontrei bares com reserva pelo aplicativo');
       expect(followUp.state?.restaurant?.filters).toMatchObject({ type: 'bar', reservations: true });
     });

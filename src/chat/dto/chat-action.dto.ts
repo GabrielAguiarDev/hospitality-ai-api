@@ -9,8 +9,6 @@ export const CHAT_ACTION_TYPES = [
 
 export type ChatActionType = (typeof CHAT_ACTION_TYPES)[number];
 
-// O cliente envia apenas referências; os dados da reserva
-// são lidos da pré-reserva persistida no servidor.
 export class ChatActionDto {
   @IsIn(CHAT_ACTION_TYPES)
   type!: ChatActionType;

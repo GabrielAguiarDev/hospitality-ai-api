@@ -41,11 +41,9 @@ describe('card builders', () => {
     expect(items.map(({ bookingId, status, simulated: isSimulated, people }) => [bookingId, status, isSimulated, people])).toEqual([
       ['r2', 'cancelled', false, 2],
       ['sim-1', 'confirmed', true, 3],
-      // Sem horário, depois dos horários do mesmo dia.
       ['x1', 'confirmed', false, 3],
       ['r1', 'confirmed', false, null],
     ]);
-    // Simulada não tem tela no app oficial; as oficiais abrem Minhas Reservas na aba certa.
     expect(items[1].buttons).toEqual([]);
     expect(items[1].confirmationCode).toBe('SIM-AB12CD34');
     expect(items[2].buttons[0]).toMatchObject({ navigate: { screen: 'MyReservation', params: { tab: 'Experience' } } });
@@ -75,7 +73,6 @@ describe('card builders', () => {
       ['department', 'simulated', [], true, 'SIM-1234'],
       ['leisure', 'denied', ['Adulto'], false, null],
     ]);
-    // "negado" também é o cancelamento feito pelo hóspede (R-LAZ-06).
     expect(items[2].statusLabel).toBe('Negada ou cancelada');
     expect(requestList('Minhas solicitações', items).every(isValidChatAction)).toBe(true);
   });

@@ -6,7 +6,6 @@ import { AppModule } from '../app.module.js';
 import { ReservationsService } from '../operations/reservations.service.js';
 import { RequestsService } from '../operations/requests.service.js';
 
-// Uso: node dist/scripts/test-resort-reservations.js <guestHolderId>
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.createApplicationContext(
     AppModule,
@@ -36,8 +35,6 @@ async function bootstrap(): Promise<void> {
       .get(RequestsService)
       .listForGuest(guest);
 
-    // Não imprime nomes nem identificadores
-    // pessoais de hóspedes.
     console.log(
       `\nReservas encontradas: ${reservations.length}`,
     );

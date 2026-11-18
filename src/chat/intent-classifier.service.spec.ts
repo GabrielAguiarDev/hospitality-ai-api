@@ -17,7 +17,6 @@ import type { ConversationState } from '../contracts/conversation-state.js';
 import type { HistoryEntry, IntentDecision } from './chat-intent.types.js';
 import { IntentClassifierService } from './intent-classifier.service.js';
 
-// Replies in the exact format produced by OperationsAiService.
 const LIST_REPLY = [
   'Encontrei 1 reserva de restaurante no seu cadastro:',
   '',
@@ -107,7 +106,6 @@ describe('IntentClassifierService', () => {
       await expect(service.classify(message)).resolves.toEqual(KNOWLEDGE);
     });
 
-    // O catálogo de restaurantes vem do cadastro, não da busca vetorial.
     it.each(['Quais restaurantes aceitam reserva?', 'Olá, quais restaurantes existem?', 'E os bares?'])(
       'routes the catalog question %j to restaurant.list without the model',
       async (message) => {
@@ -272,8 +270,6 @@ describe('IntentClassifierService', () => {
       });
     });
 
-    // Regression: "qual o horário" was not recognised as a follow-up, so even a
-    // correct model answer was discarded and the question went to RAG.
     it('accepts the model decision for "E qual o horário?" after a reservation reply', async () => {
       fetchMock.mockResolvedValue(classification('reservation.details', 'time'));
 
@@ -386,7 +382,6 @@ describe('IntentClassifierService', () => {
     it('does not route to operations based on the model alone when there is no context', async () => {
       fetchMock.mockResolvedValue(classification('reservation.list', 'none'));
 
-      // O catálogo público é decidido pelas regras; o modelo nunca libera reservas pessoais.
       const decision = await service.classify('Quais são os restaurantes do resort?');
       expect(decision.intent).toBe('restaurant.list');
       expect(fetchMock).not.toHaveBeenCalled();
@@ -471,7 +466,6 @@ describe('IntentClassifierService', () => {
         role: index % 2 === 0 ? 'user' : 'assistant',
         content: `mensagem-${index} ${'x'.repeat(500)}`,
       }));
-      // A última resposta mantém o contexto de reserva que libera o modelo.
       history[7] = { role: 'assistant', content: `mensagem-7 ${PARTY_SIZE_REPLY} ${'x'.repeat(500)}` };
 
       await service.classify('E para quantas pessoas?', history);
@@ -497,8 +491,6 @@ describe('IntentClassifierService', () => {
       expect(messages[1].content).toContain('HISTÓRICO:\n(vazio)');
     });
 
-    // A classificação do modelo não pode liberar operações sozinha,
-    // então ele não é chamado quando não há indício operacional.
     it.each(['O resort tem academia?', 'Qual o horário do spa?'])(
       'does not call Ollama for %j without operational evidence',
       async (message) => {
@@ -647,7 +639,6 @@ describe('IntentClassifierService', () => {
 
     beforeEach(() => {
       vi.useFakeTimers({ toFake: ['Date'] });
-      // Sexta-feira, 23/10/2026, 12h no fuso do resort.
       vi.setSystemTime(new Date('2026-10-23T15:00:00Z'));
     });
 
@@ -686,7 +677,6 @@ describe('IntentClassifierService', () => {
       ['Pode reservar.', 'experience.booking', {}],
       ['E para quantas pessoas?', 'experience.details', {}],
       ['Para quantas pessoas está?', 'experience.details', {}],
-      // Lista apresentada sem experiência escolhida: refina a busca.
       ['E no sábado?', 'experience.search', { date: '2026-10-24' }],
     ])('keeps the experience context for the follow-up %j', async (message, intent, entities) => {
       const decision = await service.classify(message, [], LISTED);
@@ -695,7 +685,6 @@ describe('IntentClassifierService', () => {
       expect(decision.entities).toMatchObject(entities);
     });
 
-    // Mensagens do problema relatado: a lista foi apresentada sem data.
     describe('availability search across experiences', () => {
       const CATALOG: ConversationState = {
         topic: 'experience',
@@ -725,7 +714,6 @@ describe('IntentClassifierService', () => {
         ['Quais são gratuitas?', SEARCHED, 'experience.list', { free: true }],
         ['Tem alguma para crianças?', SEARCHED, 'experience.list', { forChildren: true }],
         ['Tem alguma experiência para crianças?', undefined, 'experience.list', { forChildren: true }],
-        // Negação: lista do catálogo, nunca o filtro "aceitam reserva".
         ['Quais experiências não precisam de reserva?', undefined, 'experience.list', {}],
       ])('classifies %j as %s', async (message, state, intent, entities) => {
         const decision = await service.classify(message, [], state);
@@ -1093,8 +1081,6 @@ describe('IntentClassifierService', () => {
         expect(decision.intent).not.toBe('experience.booking.confirm');
       });
 
-      // Sem pré-reserva, o handler responde que não há nada a confirmar;
-      // fora do contexto de experiência, não há confirmação alguma.
       it('routes a stray confirmation to the experience handler only within an experience context', async () => {
         await expect(service.classify('confirmo', [], LISTED)).resolves.toMatchObject({
           intent: 'experience.booking.confirm',
@@ -1113,7 +1099,6 @@ describe('IntentClassifierService', () => {
     beforeEach(() => {
       fetchMock.mockRejectedValue(connectionError());
       vi.useFakeTimers({ toFake: ['Date'] });
-      // Sexta-feira, 23/10/2026, 12h no fuso do resort.
       vi.setSystemTime(new Date('2026-10-23T15:00:00Z'));
     });
 

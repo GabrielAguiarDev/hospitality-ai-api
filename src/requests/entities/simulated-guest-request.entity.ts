@@ -15,12 +15,6 @@ export interface SimulatedRequestItem {
   quantity: number;
 }
 
-/**
- * Solicitação de hóspede SIMULADA (demonstração). Nunca é enviada ao sistema
- * oficial do resort. O id da linha é também o id do card/pré-visualização.
- * A estadia é identificada por lodging_id + stay_check_in, pois o mesmo
- * alojamento é reutilizado entre estadias.
- */
 @Entity('simulated_guest_requests')
 @Index('idx_guest_requests_owner', ['resortId', 'guestId', 'conversationId'])
 @Index('idx_guest_requests_stay', ['resortId', 'guestId', 'status', 'createdAt'])
@@ -40,7 +34,6 @@ export class SimulatedGuestRequest {
   @Column({ name: 'lodging_id', type: 'int' })
   lodgingId!: number;
 
-  // Check-in da estadia exatamente como GuestStay.checkIn.
   @Column({ name: 'stay_check_in', type: 'varchar', length: 19 })
   stayCheckIn!: string;
 

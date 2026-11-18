@@ -1,10 +1,5 @@
 import type { MigrationInterface, QueryRunner } from 'typeorm';
 
-/**
- * Pré-reservas e reservas simuladas de experiências.
- * Somente no banco interno da IA; o snapshot do resort
- * permanece intocado.
- */
 export class ExperienceBookings1792771200002 implements MigrationInterface {
   name = 'ExperienceBookings1792771200002';
 

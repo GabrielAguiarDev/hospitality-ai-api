@@ -25,10 +25,6 @@ export type WeekdayKey = (typeof WEEKDAYS_EN)[number];
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-/**
- * Datas do resort. Internamente todas as datas são absolutas
- * (YYYY-MM-DD) no fuso configurado em RESORT_TIMEZONE.
- */
 @Injectable()
 export class ResortClock {
   constructor(private readonly configService: ConfigService) {}
@@ -49,7 +45,6 @@ export class ResortClock {
   }
 
   dateAt(instant: Date): string {
-    // en-CA produz o formato YYYY-MM-DD.
     return new Intl.DateTimeFormat('en-CA', {
       timeZone: this.timeZone,
       year: 'numeric',
@@ -58,7 +53,6 @@ export class ResortClock {
     }).format(instant);
   }
 
-  // Hora atual no fuso do resort (HH:MM).
   time(): string {
     return this.timeAt(this.now());
   }

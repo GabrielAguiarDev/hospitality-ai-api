@@ -134,7 +134,6 @@ describe('ResortSnapshotKnowledgeSource', () => {
         'dicas:visao-geral',
       ]),
     );
-    // events grouped by date: two events, one document
     expect(ids.filter((id) => id.startsWith('eventos:'))).toHaveLength(1);
   });
 

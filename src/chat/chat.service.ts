@@ -30,14 +30,11 @@ import { ConversationContextService } from './conversation-context.service.js';
 import type { HistoryEntry } from './chat-intent.types.js';
 import { socialReply } from './social-replies.js';
 
-// Resposta fixa quando o RAG não encontra evidências:
-// o modelo não é chamado para não inventar informações.
 export { CONCURRENT_UPDATE_MESSAGE } from './conversation-context.service.js';
 
 export const NO_EVIDENCE_REPLY =
   'Não encontrei essa informação nas fontes do resort. A recepção pode ajudar com isso.';
 
-// Pergunta sobre um módulo sem resposta nas fontes: diz qual e leva à tela.
 export function moduleFallback(message: string): { reply: string; actions: ChatAction[] } | null {
   const [capability] = selectCapabilities(message, 1);
   return capability
@@ -79,7 +76,6 @@ export class ChatService {
   ): Promise<ChatResponse> {
     const id = conversationId ?? randomUUID();
 
-    // Verifica a existência E a propriedade da conversa.
     if (conversationId) {
       const conversation = await this.conversationsRepository.findOneBy({
         id,
@@ -92,7 +88,6 @@ export class ChatService {
       }
     }
 
-    // Recupera histórico apenas após validar o proprietário.
     const previousMessages = conversationId
       ? await this.messagesRepository.find({
           where: {
@@ -110,7 +105,6 @@ export class ChatService {
         content,
       }));
 
-    // Estado estruturado da conversa, lido pelo dono (resort + hóspede).
     const stored = await this.context.load(conversationId, guest);
     const { state } = stored;
     const today = this.clock.today();
@@ -130,7 +124,6 @@ export class ChatService {
       reply = orchestration.reply;
       actions = sanitizeActions(orchestration.actions);
     } else if (orchestration.mode === 'conversation') {
-      // Interações sociais não chamam o modelo: resposta curta e imediata.
       reply = socialReply(message, orchestration.intent, {
         history,
         pendingBooking: Boolean(pendingConfirmation(state)),
@@ -175,12 +168,10 @@ export class ChatService {
         content: message,
       });
 
-      // Inserção própria: o ID gerado vem direto do banco.
       const assistant = await manager.insert(ChatMessage, {
         conversationId: id,
         role: 'assistant',
         content: reply,
-        // Persistidas para reconstruir o histórico com os cards.
         actions: actions.length ? actions : null,
       });
 
@@ -220,7 +211,6 @@ export class ChatService {
       order: { id: 'ASC' },
     });
 
-    // Cada card aparece uma vez, onde foi criado, com o estado atual.
     const cardIds = [
       ...new Set(
         messages.flatMap(({ actions }) =>
@@ -231,7 +221,6 @@ export class ChatService {
     const current = new Map(
       (await this.experienceOperations.bookingCards(guest, conversationId, cardIds)).map((card) => [card.cardId, card]),
     );
-    // Cards de solicitação: sempre o estado atual do banco, do próprio dono.
     const requestIds = [
       ...new Set(
         messages.flatMap(({ actions }) => (actions ?? []).flatMap((action) => (action.type === 'request.card' ? [action.cardId] : []))),
@@ -254,7 +243,6 @@ export class ChatService {
               if (shown.has(action.cardId)) return [];
               shown.add(action.cardId);
               const fresh = currentRequests.get(action.cardId);
-              // Sem registro atual (outro dono, removido): o card não é exibido.
               return fresh ? [{ ...fresh, notes: action.notes }] : [];
             }
 
@@ -263,9 +251,7 @@ export class ChatService {
 
             shown.add(action.cardId);
             const fresh = current.get(action.cardId);
-            // Os avisos do card original não são guardados no banco de reservas.
             if (fresh) return [{ ...fresh, notes: action.notes }];
-            // Sem estado atual, um card em "preview" não pode manter botões ativos.
             return [
               action.status === 'preview'
                 ? bookingCard({

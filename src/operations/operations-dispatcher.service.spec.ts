@@ -22,7 +22,6 @@ import type { GuestOperationsService } from './guest-operations.service.js';
 import { OperationsDispatcherService } from './operations-dispatcher.service.js';
 
 describe('OperationsDispatcherService', () => {
-  // Contexto fictício utilizado exclusivamente nos testes.
   const GUEST: GuestContext = {
     resortId: 'demo',
     guestId: 'guest-demo-001',
@@ -156,7 +155,6 @@ describe('OperationsDispatcherService', () => {
     expect(result.tool).toBe('reservations.list');
     expect(result.reply).toBe('Reserva encontrada');
 
-    // Verifica que a identidade é propagada corretamente.
     expect(reservations.ask).toHaveBeenCalledWith(
       'Minha reserva',
       GUEST,
@@ -288,7 +286,6 @@ describe('OperationsDispatcherService', () => {
     );
 
     expect(result.tool).toBe('restaurants.list');
-    // Com a conversa, o handler resolve referências ("a segunda") antes de navegar.
     expect(restaurants.handle).toHaveBeenCalledExactlyOnceWith(
       'Quero reservar uma mesa',
       { intent: 'restaurant.booking', detail: 'none' },

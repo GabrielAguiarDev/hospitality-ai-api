@@ -32,7 +32,6 @@ import { TypeOrmModule } from '@nestjs/typeorm';
           'RESORT_DB_NAME',
         ),
 
-        // Snapshot original: nunca modificar sua estrutura.
         synchronize: false,
         migrationsRun: false,
         dropSchema: false,

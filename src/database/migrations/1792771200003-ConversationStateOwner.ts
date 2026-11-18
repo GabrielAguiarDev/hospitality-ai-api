@@ -1,10 +1,5 @@
 import type { MigrationInterface, QueryRunner } from 'typeorm';
 
-/**
- * Propriedade do estado da conversa: o estado passa a ser lido e gravado
- * por conversation_id + resort_id + guest_id. Somente o banco interno da
- * IA é alterado. Idempotente, como a linha de base.
- */
 export class ConversationStateOwner1792771200003 implements MigrationInterface {
   name = 'ConversationStateOwner1792771200003';
 
@@ -38,7 +33,6 @@ export class ConversationStateOwner1792771200003 implements MigrationInterface {
     return Number(rows[0]?.total ?? 0) > 0;
   }
 
-  // DDL no MySQL não é transacional: cada etapa é retomável isoladamente.
   async up(queryRunner: QueryRunner): Promise<void> {
     if (!(await this.column(queryRunner, 'resort_id'))) {
       await queryRunner.query(
@@ -52,7 +46,6 @@ export class ConversationStateOwner1792771200003 implements MigrationInterface {
       );
     }
 
-    // Estados sem dono herdam o dono da conversa (inclusive numa nova tentativa).
     await queryRunner.query(`
       UPDATE chat_conversation_states s
       INNER JOIN chat_conversations c ON c.id = s.conversation_id
@@ -60,7 +53,6 @@ export class ConversationStateOwner1792771200003 implements MigrationInterface {
       WHERE s.resort_id IS NULL OR s.guest_id IS NULL
     `);
 
-    // Defensivo: a FK com ON DELETE CASCADE já impede estados sem conversa.
     await queryRunner.query('DELETE FROM chat_conversation_states WHERE resort_id IS NULL OR guest_id IS NULL');
 
     if ((await this.column(queryRunner, 'resort_id'))?.nullable) {

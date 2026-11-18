@@ -85,7 +85,6 @@ describe('openDuring', () => {
 
   it('is false when the registered intervals do not overlap the window', () => {
     expect(openDuring(restaurant({ openingHours: '10h às 18h' }), evening)).toBe(false);
-    // [from, to): fechar às 18h não cobre 18h.
     expect(openDuring(restaurant({ openingHours: '10h às 18h' }), { from: '18:00', to: '18:01' })).toBe(false);
   });
 
@@ -100,7 +99,6 @@ describe('openDuring', () => {
     const base = restaurant({ openingHours: null, reservationTimes: ['19:00', '21:30'] });
 
     expect(openDuring(base, evening)).toBe(true);
-    // Sem turno na faixa, o cadastro não prova que está fechado: não se afirma nada.
     expect(openDuring(base, morning)).toBeNull();
   });
 

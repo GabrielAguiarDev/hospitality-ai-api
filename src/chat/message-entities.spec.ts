@@ -11,7 +11,6 @@ import {
   extractTimeRange,
 } from './message-entities.js';
 
-// 2026-10-23 is a Friday.
 const TODAY = '2026-10-23';
 
 describe('extractDate', () => {
@@ -122,8 +121,6 @@ describe('extractEntities', () => {
   });
 
   it('"na segunda" yields the date', () => {
-    // Note: ordinal is also reported for "na segunda" (ambiguous by design);
-    // the date must be resolved.
     expect(extractEntities('na segunda', TODAY).date).toBe('2026-10-26');
   });
 
@@ -183,7 +180,6 @@ describe('extractTimeRange', () => {
     ['depois das 14h e antes das 17h', { after: '14:00', before: '17:00' }],
     ['depois das 8 da noite', { after: '20:00' }],
     ['antes das 4 da tarde', { before: '16:00' }],
-    // Idade não é horário.
     ['para crianças a partir dos 5 anos', {}],
     ['depois de amanhã', {}],
     ['às 15h', {}],
@@ -200,10 +196,8 @@ describe('extractSearchCues', () => {
     ['Qual tem reserva pra amanhã?', { bookable: true }],
     ['Quais posso reservar de manhã?', { bookable: true }],
     ['Quais têm vagas amanhã?', { bookable: true }],
-    // Composição do grupo não é filtro de catálogo.
     ['para 2 crianças', {}],
     ['Tenho alguma reserva?', {}],
-    // Negação: o hóspede quer as que dispensam reserva.
     ['Quais experiências não precisam de reserva?', {}],
     ['Tem alguma sem reserva?', {}],
   ])('%s -> %j', (text, expected) => {
@@ -212,7 +206,6 @@ describe('extractSearchCues', () => {
 });
 
 describe('temporal entities', () => {
-  // 2026-10-24 is a Saturday.
   it('"próximo sábado" said on a Saturday is the following week', () => {
     expect(extractDate('próximo sábado', '2026-10-24')).toBe('2026-10-31');
     expect(extractDate('sábado', '2026-10-24')).toBe('2026-10-24');

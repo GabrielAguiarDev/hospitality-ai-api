@@ -35,7 +35,6 @@ const card = (status: 'preview' | 'confirmed' | 'expired' | 'cancelled' = 'previ
     ...over,
   });
 
-// Altera o card já montado para simular um servidor com defeito.
 const tampered = (status: 'preview' | 'confirmed' | 'expired' | 'cancelled', over: Record<string, unknown>): ChatAction =>
   ({ ...card(status), ...over }) as ChatAction;
 

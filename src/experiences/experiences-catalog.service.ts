@@ -59,7 +59,6 @@ export interface StayExperienceReservation {
   title: string;
   date: string;
   time: string | null;
-  // Valores do snapshot: pago | pendente | cancelado.
   status: string;
   participants: number;
 }
@@ -112,9 +111,6 @@ function remainingOf(capacity: number | null, booked: number): number | null {
   return capacity === null ? null : Math.max(0, capacity - booked);
 }
 
-/**
- * Leituras de experiências, disponibilidades e preços do snapshot.
- */
 @Injectable()
 export class ExperiencesCatalogService {
   constructor(private readonly snapshot: ResortSnapshotGateway) {}
@@ -172,7 +168,6 @@ export class ExperiencesCatalogService {
     return rows.map((row) => this.toInfo(row));
   }
 
-  // Inclui experiências inativas para informar o motivo ao hóspede.
   async findById(experienceId: string): Promise<ExperienceInfo | null> {
     const rows = await this.snapshot.select<ExperienceRow>(
       `
@@ -187,7 +182,6 @@ export class ExperiencesCatalogService {
     return rows[0] ? this.toInfo(rows[0]) : null;
   }
 
-  // Inclui inativas para reconhecer pedidos por experiências desativadas.
   async listAll(): Promise<ExperienceInfo[]> {
     const rows = await this.snapshot.select<ExperienceRow>(
       `
@@ -201,11 +195,6 @@ export class ExperiencesCatalogService {
     return rows.map((row) => this.toInfo(row));
   }
 
-  /**
-   * Vagas cadastradas para a data, descontando somente as reservas
-   * ativas do snapshot. Reservas simuladas são descontadas pelo
-   * ExperienceAvailabilityService.
-   */
   async findSlots(
     date: string,
     experienceId?: string,
@@ -251,7 +240,6 @@ export class ExperiencesCatalogService {
     for (const row of rows) {
       const hourly = Number(row.hourly) === 1;
 
-      // Horários desativados não representam vagas.
       if (hourly && (!row.slotId || Number(row.slotActive) !== 1)) {
         continue;
       }
@@ -295,7 +283,6 @@ export class ExperiencesCatalogService {
     return slots;
   }
 
-  // Reservas de experiências registradas no sistema oficial para a estadia.
   async listStayReservations(stay: GuestStay): Promise<StayExperienceReservation[]> {
     const rows = await this.snapshot.select<{
       id: string;
@@ -345,11 +332,6 @@ export class ExperiencesCatalogService {
     }));
   }
 
-  /**
-   * Participantes de reservas não canceladas. O snapshot não tem um
-   * campo único de participantes: usa-se o maior valor entre
-   * adultos + crianças e hóspedes vinculados (mínimo de 1).
-   */
   private async countSnapshotBookings(
     availabilityIds: string[],
   ): Promise<BookedCount[]> {

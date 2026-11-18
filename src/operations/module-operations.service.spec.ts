@@ -51,7 +51,6 @@ describe('ModuleOperationsService', () => {
     execute.mockClear();
   });
 
-  // Intl usa espaço sem quebra entre "R$" e o valor; os textos esperados usam espaço comum.
   const plain = <T extends { reply: string }>(result: T): T => ({ ...result, reply: result.reply.replaceAll('\u00a0', ' ') });
 
   const ask = async (message: string, intent: ModuleIntent, state = {}) =>
@@ -151,7 +150,6 @@ describe('ModuleOperationsService', () => {
     it('does not match a product on a single weak word of its name', async () => {
       data['boutique.list'] = [{ id: '9', name: 'Boia de piscina inflável', category: 'Praia', price: 30 }];
 
-      // "piscina" é 1 de 3 palavras do nome: uma pergunta de horário não vira produto.
       await expect(service.findProducts('Que horas abre a piscina?', GUEST)).resolves.toBeNull();
       await expect(service.findProducts('A piscina é aquecida?', GUEST)).resolves.toBeNull();
     });
@@ -178,8 +176,6 @@ describe('ModuleOperationsService', () => {
       expect(result.reply).toContain('50 min R$ 250,00; 30 min R$ 180,00');
     });
 
-    // Defesa em profundidade: o catálogo já troca 0 por null (ver modules-catalog.service.spec.ts),
-    // mas o handler também não deveria exibir "R$ 0,00" se um preço 0 chegasse até ele.
     it('does not print "R$ 0,00" if a zero price ever reaches the handler', async () => {
       data['spa.list'] = [{ id: '1', name: 'Massagem Relaxante', category: 'Massagens', price: 0, details: '50 min R$ 250,00' }];
 

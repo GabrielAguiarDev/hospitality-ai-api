@@ -11,22 +11,15 @@ export interface ExperienceInfo {
   description: string;
   notes: string;
   active: boolean;
-  // possuireserva_experiencia = 'sim'
   bookable: boolean;
   reservationType: ExperienceReservationType | null;
   minimumAge: number | null;
   minimumAgeAlone: number | null;
   requiresGuardian: boolean;
-  // Horário-limite de marcação cadastrado (HH:MM). Informativo:
-  // a semântica exata não pode ser confirmada pelo snapshot.
   bookingCutoff: string | null;
   prices: ExperiencePrice[];
 }
 
-/**
- * Vaga registrada no snapshot. A capacidade cadastrada é total;
- * o saldo desconta reservas ativas do snapshot e reservas simuladas.
- */
 export interface ExperienceSlot {
   experienceId: string;
   availabilityId: string;

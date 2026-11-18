@@ -27,7 +27,6 @@ import { ResortClock } from '../resort/resort-clock.service.js';
 export interface OrchestrationContext {
   conversationId: string;
   state: ConversationState;
-  // Data atual no resort (YYYY-MM-DD).
   today?: string;
 }
 
@@ -47,7 +46,6 @@ export type OrchestrationResult =
   | {
       mode: 'conversation';
       intent: ConversationIntent;
-      // "Não" a uma pergunta do Yago.
       declinesPending?: boolean;
       documents: [];
       state?: ConversationState;
@@ -63,10 +61,6 @@ function topicOf(decision: IntentDecision): ConversationState['topic'] {
   return 'knowledge';
 }
 
-/**
- * "E a academia?" logo depois de "Que horas abre o spa?": sozinha, a
- * continuação não encontra documentos; a busca leva a pergunta anterior.
- */
 function retrievalQuery(message: string, history: HistoryEntry[], state: ConversationState): string {
   const text = normalizeText(message);
 
@@ -78,15 +72,9 @@ function retrievalQuery(message: string, history: HistoryEntry[], state: Convers
   return previous ? `${previous} ${message}` : message;
 }
 
-/**
- * Muda o assunto sem perder a experiência selecionada, mas
- * descarta a confirmação por texto de uma pré-reserva pendente.
- */
 function withTopic(state: ConversationState, topic: ConversationState['topic']): ConversationState {
   const cleared = withoutPendingConfirmation(state);
 
-  // A pendência do próprio assunto continua: "confirmo" chega ao seu handler,
-  // que decide (qualquer outra interação do domínio também a descarta).
   return {
     ...cleared,
     topic,
@@ -115,7 +103,6 @@ export class ChatOrchestratorService {
     const classified = context
       ? await this.classifier.classify(message, history, context.state)
       : await this.classifier.classify(message, history);
-    // Referências ("essa", "sim") são resolvidas antes de qualquer ferramenta.
     const decision = context ? this.context.resolve(message, classified, context.state) : classified;
 
     this.logger.log(
@@ -126,8 +113,6 @@ export class ChatOrchestratorService {
         `${decision.refine ? ' (refinamento)' : ''}${decision.answersPending ? ' (resposta à pergunta pendente)' : ''}`,
     );
 
-    // 1. Interações sociais: sem RAG e sem ferramentas. O estado segue
-    // intacto para que "Obrigado!" não descarte uma pré-reserva pendente.
     if (isConversationIntent(decision.intent)) {
       return {
         mode: 'conversation',
@@ -138,13 +123,10 @@ export class ChatOrchestratorService {
       };
     }
 
-    // 2. Todas as operações passam pelo Dispatcher.
     if (decision.intent !== 'knowledge.search') {
       const result = context
         ? await this.dispatcher.dispatch(message, decision, guest, {
             conversationId: context.conversationId,
-            // Outro assunto descarta a confirmação por texto da pré-reserva:
-            // um "sim" a "Quer ver todas?" nunca confirma a reserva.
             state: withTopic(context.state, topicOf(decision)),
           })
         : await this.dispatcher.dispatch(message, decision, guest);
@@ -171,8 +153,6 @@ export class ChatOrchestratorService {
       };
     }
 
-    // 3. Consultas de conhecimento continuam no RAG. Datas relativas
-    // são convertidas para datas absolutas antes da busca.
     const date = context?.today
       ? (decision.entities?.date ?? extractDate(message, context.today))
       : undefined;
@@ -186,9 +166,7 @@ export class ChatOrchestratorService {
         )
       : await this.retrievalService.search(message, guest.resortId);
 
-    // Sem evidências: um produto citado pelo nome ainda pode estar na Boutique.
     if (documents.length === 0) {
-      // Outro assunto: o estado chega sem as confirmações por texto pendentes.
       const product = await this.dispatcher.findProducts(
         message,
         guest,

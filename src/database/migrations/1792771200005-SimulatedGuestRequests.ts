@@ -1,10 +1,5 @@
 import type { MigrationInterface, QueryRunner } from 'typeorm';
 
-/**
- * Solicitações de hóspede simuladas (demonstração).
- * Nunca são enviadas ao sistema oficial do resort.
- * Somente no banco interno da IA; o snapshot do resort permanece intocado.
- */
 export class SimulatedGuestRequests1792771200005 implements MigrationInterface {
   name = 'SimulatedGuestRequests1792771200005';
 

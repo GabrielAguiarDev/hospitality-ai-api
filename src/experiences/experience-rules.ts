@@ -4,7 +4,6 @@ import type {
   PartyComposition,
 } from './experience.types.js';
 
-// Limite de participantes por reserva simulada no MVP.
 export const MAX_PARTY_SIZE = 10;
 
 export type BookingRuleCode =
@@ -33,8 +32,6 @@ export interface BookingRuleInput {
   time: string | null;
   party: PartyComposition;
   today: string;
-  // Hora atual no fuso do resort (HH:MM). Horários de hoje já
-  // passados nunca são reservados.
   now?: string;
   stay: { checkIn: string; checkOut: string };
 }
@@ -57,11 +54,6 @@ function capacityKnown(slot: ExperienceSlot): boolean {
   );
 }
 
-/**
- * Regras verificáveis no snapshot. Não decide nada que o banco
- * não represente (ex.: idade dos participantes não é validada,
- * apenas informada).
- */
 export function evaluateBooking(input: BookingRuleInput): BookingRuleResult {
   const { experience, party, date } = input;
 
@@ -137,8 +129,6 @@ export function evaluateBooking(input: BookingRuleInput): BookingRuleResult {
     (slot) => slot.experienceId === experience.id && slot.date === date,
   );
 
-  // Hoje: o horário-limite de marcação cadastrado vale para o próprio dia
-  // (leitura conservadora; o snapshot não confirma a regra exata).
   if (date === input.today && input.now) {
     const now = input.now;
 
@@ -210,7 +200,6 @@ export function evaluateBooking(input: BookingRuleInput): BookingRuleResult {
     }
   }
 
-  // Ordem determinística: a vaga com maior saldo conhecido primeiro.
   const available = candidates
     .filter((slot) => fits(slot, party))
     .sort((a, b) => (b.remaining ?? -1) - (a.remaining ?? -1) || a.availabilityId.localeCompare(b.availabilityId));

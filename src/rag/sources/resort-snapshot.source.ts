@@ -12,7 +12,6 @@ import type { KnowledgeDocument } from '../knowledge.service.js';
 
 import { RESORT_SNAPSHOT_SOURCE, type KnowledgeSource } from './knowledge-source.js';
 
-// EmbeddingGemma aceita até 2048 tokens; mantém margem.
 const MAX_CONTENT = 1800;
 const EVENT_WINDOW_DAYS = 14;
 
@@ -89,12 +88,6 @@ function doc(id: string, title: string, category: string, lines: (string | null 
   };
 }
 
-/**
- * Conhecimento público do resort extraído do snapshot.
- *
- * Nunca inclui hóspedes, reservas, solicitações, pedidos ou
- * colaboradores: somente catálogos e informações institucionais.
- */
 @Injectable()
 export class ResortSnapshotKnowledgeSource implements KnowledgeSource {
   readonly name = RESORT_SNAPSHOT_SOURCE;
@@ -108,7 +101,6 @@ export class ResortSnapshotKnowledgeSource implements KnowledgeSource {
   ) {}
 
   async load(resortId: string): Promise<KnowledgeDocument[]> {
-    // O snapshot pertence somente ao resort desta instância.
     if (resortId !== requireConfiguredResortId(this.configService.get<string>('RESORT_ID'))) {
       return [];
     }
@@ -123,7 +115,6 @@ export class ResortSnapshotKnowledgeSource implements KnowledgeSource {
       this.tipDocuments(),
     ]);
 
-    // IDs únicos dentro da fonte.
     const unique = new Map<string, KnowledgeDocument>();
 
     for (const document of groups.flat()) {
@@ -307,7 +298,6 @@ export class ResortSnapshotKnowledgeSource implements KnowledgeSource {
     return documents;
   }
 
-  // Somente a janela próxima: eventos passados deixam de ser indexados.
   private async eventDocuments(): Promise<KnowledgeDocument[]> {
     const today = this.clock.today();
     const until = ResortClock.addDays(today, EVENT_WINDOW_DAYS);

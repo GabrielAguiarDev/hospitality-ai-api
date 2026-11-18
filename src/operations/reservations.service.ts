@@ -14,16 +14,10 @@ export interface RestaurantReservation {
   id: string;
   restaurantId: string | null;
   restaurant: string;
-  // Data no formato dd/mm/aaaa.
   date: string;
-  // Horário do turno reservado (HH:MM), quando cadastrado.
   time: string | null;
-  // Compatibilidade: "dd/mm/aaaa HH:MM" ou apenas a data.
   reservedAt: string;
-  // Quantidade de pedidos de pratos registrados (um por pessoa).
-  // null quando não há pedidos para inferir os participantes.
   partySize: number | null;
-  // Valores do snapshot: aprovada | cancelada.
   status: string;
 }
 
@@ -37,10 +31,6 @@ interface ReservationRow {
   diners: number | string | null;
 }
 
-/**
- * Reservas de restaurante reais do snapshot, restritas à
- * hospedagem atual do titular.
- */
 @Injectable()
 export class ReservationsService {
   constructor(

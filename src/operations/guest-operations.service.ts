@@ -21,10 +21,6 @@ const NEXT_CUE = /\bproxim[ao]s?\b/;
 
 const MAX_NAMED = 3;
 
-/**
- * Dados pessoais da estadia: Minhas Reservas (restaurantes e experiências)
- * e Meus Favoritos. Somente leitura; a estadia vem sempre do servidor.
- */
 @Injectable()
 export class GuestOperationsService {
   constructor(
@@ -53,10 +49,6 @@ export class GuestOperationsService {
     return item.time ? `${day} às ${item.time}` : day;
   }
 
-  /**
-   * "Tenho alguma reserva amanhã?", "Qual minha próxima reserva?",
-   * "Mostre minhas reservas gastronômicas".
-   */
   async bookings(message: string, decision: IntentDecision, guest: GuestContext, context?: DispatchContext): Promise<DispatchResult> {
     const [restaurants, experiences] = await Promise.all([
       this.execute('reservations.list', guest),
@@ -76,8 +68,6 @@ export class GuestOperationsService {
     const tab = kind === 'experience' ? 'Experience' : 'Gastronomy';
     const screen = navigateAction('MyReservation', 'Abrir Minhas Reservas', { tab });
 
-    // Sem filtro e só restaurantes: o texto de sempre, que as perguntas
-    // seguintes ("E para quantas pessoas?") continuam reconhecendo.
     if (!kind && !date && !next && experiences.official.length === 0 && experiences.simulated.length === 0) {
       return {
         tool: 'reservations.list',
@@ -127,7 +117,6 @@ export class GuestOperationsService {
     const conversation = context?.state ?? {};
     const events = navigateAction('Events', 'Abrir Eventos');
 
-    // Favoritar e remover acontecem na tela: o lembrete é agendado pelo app (G6).
     if (decision.intent === 'favorite.manage') {
       return {
         tool: 'favorites.list',
@@ -153,7 +142,6 @@ export class GuestOperationsService {
       };
     }
 
-    // A posição se refere à lista que o hóspede viu (IDs guardados), não a uma recalculada.
     const ordinal = decision.entities?.ordinal;
     const seen = conversation.lastIntent === 'favorite.list' && conversation.catalog?.kind === 'event' ? conversation.catalog.listed : undefined;
     const reference = ordinal !== undefined && seen?.length ? seen[ordinal === -1 ? seen.length - 1 : ordinal - 1] : undefined;
@@ -162,7 +150,6 @@ export class GuestOperationsService {
     const state: ConversationState = {
       ...conversation,
       topic: 'event',
-      // Um item escolhido não substitui a lista que o hóspede tem na tela.
       catalog: chosen && seen ? { kind: 'event', listed: seen } : { kind: 'event', listed: listed.slice(0, 20).map(({ eventId, title }) => ({ id: eventId, title })) },
     };
 

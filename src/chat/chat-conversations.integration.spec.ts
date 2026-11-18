@@ -53,19 +53,9 @@ import { EXTERNAL_REPLY } from './social-replies.js';
 import { ChatService } from './chat.service.js';
 import { IntentClassifierService } from './intent-classifier.service.js';
 
-/**
- * Conversas completas (3 a 6 mensagens na mesma conversa) sobre
- * experiências. O pipeline é real; somente as bordas são simuladas:
- * Ollama, snapshot, banco interno, ChromaDB e persistência das reservas.
- * O OperationsToolRegistryService é real, então os filtros da busca
- * são aplicados de fato sobre as vagas abaixo.
- */
-
-// Identidades de teste (UUIDs fictícios, nunca hóspedes reais).
 const GUEST: GuestContext = { resortId: 'demo', guestId: '0a0b0c0d-1111-4222-8333-444455556666' };
 const OTHER_GUEST: GuestContext = { resortId: 'demo', guestId: '0f0e0d0c-9999-4888-8777-666655554444' };
 
-// Sexta-feira, 23/10/2026, 12:00 no resort: "amanhã" é sábado, 24/10/2026.
 const TODAY = '2026-10-23';
 const TOMORROW = '2026-10-24';
 
@@ -85,12 +75,10 @@ const base: Omit<ExperienceInfo, 'id' | 'title'> = {
   prices: [],
 };
 
-// Valores e regras iguais aos do snapshot de demonstração.
 const CITY_TOUR: ExperienceInfo = {
   ...base,
   id: 'exp-city',
   title: 'Cidade Histórica / City Tour',
-  // Texto no formato do cadastro real: longo, com emoji e preços em lista.
   description:
     'O Resort organiza passeios ao Centro Histórico de Porto Seguro, um verdadeiro museu a céu aberto. ' +
     'O Centro Histórico está localizado na parte alta da cidade e oferece uma vista espetacular. ' +
@@ -138,11 +126,9 @@ const slot = (experienceId: string, time: string | null, over: Partial<Experienc
   ...over,
 });
 
-// Quarta-feira, 28/10/2026: só o City Tour tem vaga (como no snapshot real).
 const ONLY_CITY_DATE = '2026-10-28';
 
 const RESTAURANT_BASE = { description: '', location: null, minimumAge: null, reservationTimes: [] };
-// Programação do dia: dois shows e uma atividade semanal de lazer.
 const EVENTS: Omit<ResortEvent, 'date'>[] = [
   { id: 'evt-circo', kind: 'event', title: 'Show de Circo', time: '22:00', location: 'Teatro', category: null, description: null },
   { id: 'evt-mpb', kind: 'event', title: 'Música ao vivo', time: '23:00', location: 'Lounge Bar Park', category: null, description: 'O melhor da MPB.' },
@@ -160,7 +146,7 @@ const RESTAURANTS = [
 
 const TOMORROW_SLOTS = [
   slot(CITY_TOUR.id, '08:00'),
-  slot(CITY_TOUR.id, '14:00', { remaining: 0 }), // esgotado
+  slot(CITY_TOUR.id, '14:00', { remaining: 0 }),
   slot(JAQUEIRA.id, '09:00'),
   slot(TRAPEZIO.id, '16:00'),
 ];
@@ -195,7 +181,6 @@ describe('Experience conversations (multi-turn)', () => {
     preview: vi.fn<ExperienceBookingService['preview']>(),
     confirm: confirmBooking,
     cancelPreview: vi.fn(async () => true),
-    // Estado persistido do card: confirmado depois de booking.confirm.
     cards: vi.fn<ExperienceBookingService['cards']>(async (_guest, _conversationId, previewIds) =>
       previewIds.map((previewId) => {
         const confirmed = confirmBooking.mock.calls.some((call) => call[3] === previewId);
@@ -219,7 +204,6 @@ describe('Experience conversations (multi-turn)', () => {
       .map(([, init]) => parseBody(init))
       .filter((body) => (kind === 'classifier' ? Boolean(body.format) : !body.format && !body.tools));
 
-  // Ferramentas executadas pelo Registry real, com os argumentos recebidos.
   let registryCalls: { name: string; input: unknown }[];
 
   async function converse(
@@ -239,7 +223,6 @@ describe('Experience conversations (multi-turn)', () => {
     return { id: id!, replies };
   }
 
-  // Cards da resposta, por tipo.
   const cardOf = <T extends ChatAction>(response: ChatResponse, type: T['type']) =>
     response.actions.find((action) => action.type === type) as T | undefined;
   const experienceCards = (response: ChatResponse) => cardOf<ExperienceOptionsAction>(response, 'experience.options')?.options ?? [];
@@ -257,8 +240,6 @@ describe('Experience conversations (multi-turn)', () => {
     }
 
     fetchMock = installFetchMock();
-    // O modelo de classificação está indisponível: os fluxos abaixo
-    // precisam ser resolvidos pelas regras determinísticas.
     fetchMock.mockImplementation(async (_url, init) =>
       parseBody(init).format ? jsonResponse({ error: 'model unavailable' }, 503) : ollamaChat('resposta livre'),
     );
@@ -377,7 +358,6 @@ describe('Experience conversations (multi-turn)', () => {
       'Qual experiência tem reserva para amanhã de manhã?',
     ]);
 
-    // 1. Catálogo sem data, pedindo a data.
     expect(replies[0].reply).toBe(
       'Separei 4 experiências: Cidade Histórica / City Tour, Reserva da Jaqueira, Trapézio Voador 4+Anos e mais 1. Para qual data quer que eu verifique as vagas?',
     );
@@ -389,14 +369,12 @@ describe('Experience conversations (multi-turn)', () => {
       ['Mágica da Mente', expect.stringMatching(/^Sem necessidade de reserva/)],
     ]);
 
-    // 2. Busca de vagas em várias experiências, só as que aceitam reserva.
     expect(replies[1].reply).not.toContain('Não identifiquei');
     expect(replies[1].reply).toContain('sábado, 24/10/2026');
     expect(replies[1].reply).toContain(
       'há vagas registradas em 3 experiências: Cidade Histórica / City Tour, Reserva da Jaqueira e Trapézio Voador 4+Anos.',
     );
     noList(replies[1].reply);
-    // Horários e vagas ficam nos cards.
     expect(experienceCards(replies[1]).map(({ title, times }) => [title, times])).toEqual([
       ['Cidade Histórica / City Tour', ['08:00']],
       ['Reserva da Jaqueira', ['09:00']],
@@ -404,12 +382,10 @@ describe('Experience conversations (multi-turn)', () => {
     ]);
     expect(experienceCards(replies[1])[0].summary).toContain('10 vaga');
     expect(replies[1].actions.every(isValidChatAction)).toBe(true);
-    // Horário esgotado não é oferecido; experiência sem reserva não entra.
     expect(replies[1].reply).not.toContain('14:00');
     expect(replies[1].reply).not.toContain('Mágica da Mente');
     expect(replies[1].reply).toContain('snapshot');
 
-    // 3. Mesma busca, restrita à manhã.
     expect(replies[2].reply).not.toContain('Não identifiquei');
     expect(replies[2].reply).toContain('sábado, 24/10/2026, de manhã');
     expect(replies[2].reply).toContain('Cidade Histórica / City Tour e Reserva da Jaqueira');
@@ -453,18 +429,15 @@ describe('Experience conversations (multi-turn)', () => {
     expect(experienceCards(replies[0])[2]).toMatchObject({ title: 'Trapézio Voador 4+Anos', times: ['16:00'] });
     expect(replies[0].reply).toContain('Sem necessidade de reserva: Mágica da Mente.');
 
-    // "E de manhã?" mantém a data e acrescenta o período.
     expect(replies[1].reply).toContain('sábado, 24/10/2026, de manhã');
     expect(replies[1].reply).not.toContain('Trapézio');
     expect(listCalls()[1]).toEqual({ date: TOMORROW, period: 'morning' });
 
-    // "a segunda" é a segunda opção da lista refinada, não segunda-feira.
     expect(replies[2].reply).toContain('Reserva da Jaqueira');
     expect(replies[2].reply).toContain('Adulto: R$');
 
     expect(replies[3].reply).toMatch(/Reserva da Jaqueira para 2 adultos: R\$\s?240,00/);
 
-    // A pré-reserva usa a data e o único horário da manhã, ambos já informados.
     expect(booking.preview).toHaveBeenCalledExactlyOnceWith(GUEST, expect.objectContaining({ lodgingId: 9001 }), {
       conversationId: id,
       experienceId: JAQUEIRA.id,
@@ -484,7 +457,6 @@ describe('Experience conversations (multi-turn)', () => {
     expect(booking.confirm).not.toHaveBeenCalled();
     expect(stateOf(id)?.experience?.pendingPreviewId).toBe(PREVIEW_ID);
 
-    // Só a confirmação explícita registra a reserva simulada.
     const confirmed = await chat.sendMessage('confirmo', GUEST, id);
     expect(booking.confirm).toHaveBeenCalledOnce();
     expect(confirmed.reply).toContain('confirmada');
@@ -508,9 +480,7 @@ describe('Experience conversations (multi-turn)', () => {
         ],
       },
     ]);
-    // A mensagem do botão seleciona a mesma opção.
     expect(replies[2].reply).toContain('Reserva da Jaqueira');
-    // Detalhes compactos: sem a linha "Reserva: necessária." (o card já diz).
     expect(replies[2].reply).not.toContain('Reserva: necessária.');
     expect(replies[2].reply.split('\n')[0]).toMatch(/^Reserva da Jaqueira: /);
   });
@@ -523,17 +493,14 @@ describe('Experience conversations (multi-turn)', () => {
       'Tem alguma para crianças?',
     ]);
 
-    // À tarde: o City Tour das 14h está esgotado; só o Trapézio tem vaga.
     expect(replies[1].reply).toContain('sábado, 24/10/2026, à tarde');
     expect(replies[1].reply).toContain('há vagas registradas em 1 experiência: Trapézio Voador 4+Anos.');
     expect(experienceCards(replies[1])).toEqual([expect.objectContaining({ title: 'Trapézio Voador 4+Anos', times: ['16:00'] })]);
     expect(replies[1].reply).not.toContain('City Tour');
 
-    // Gratuitas: mantém data e período.
     expect(replies[2].reply).toContain('sem cobrança cadastrada (all inclusive)');
     expect(replies[2].reply).toContain('Trapézio Voador 4+Anos');
 
-    // Para crianças: idade mínima informada a partir do cadastro.
     expect(replies[3].reply).toContain('Trapézio Voador 4+Anos');
     expect(experienceCards(replies[3])[0].summary).toContain('a partir de 4 anos');
 
@@ -587,7 +554,6 @@ describe('Experience conversations (multi-turn)', () => {
     const { replies } = await converse(['Quais experiências têm vagas amanhã para 12 pessoas?', 'E para 2 adultos e 1 criança?']);
 
     expect(replies[0].reply).toContain('até 10 pessoas');
-    // O grupo acima do limite nunca chega à ferramenta.
     expect(listCalls().some((input) => (input as { adults?: number }).adults === 12)).toBe(false);
     expect(replies[1].reply).toContain('sábado, 24/10/2026');
   });
@@ -599,7 +565,6 @@ describe('Experience conversations (multi-turn)', () => {
       'Pode reservar.',
     ]);
 
-    // O grupo da busca não é perguntado de novo.
     expect(replies[0].reply).toContain('há vagas registradas para 2 adultos em 2 experiências: Cidade Histórica / City Tour e Reserva da Jaqueira.');
     expect(booking.preview).toHaveBeenCalledWith(
       GUEST,
@@ -608,7 +573,6 @@ describe('Experience conversations (multi-turn)', () => {
     );
     expect(replies[2].reply).toContain('Preparei a pré-reserva');
 
-    // Uma nova data para a experiência escolhida não herda "de manhã".
     const sunday = await chat.sendMessage('Quero reservar a Reserva da Jaqueira no domingo para 2 adultos', GUEST, replies[0].conversationId);
     expect(sunday.reply).not.toContain('de manhã');
     expect(store.states.get(replies[0].conversationId)?.state.experience?.filters).toEqual({ bookable: true });
@@ -619,7 +583,6 @@ describe('Experience conversations (multi-turn)', () => {
 
     expect(replies[0].reply).toContain('Não encontrei vagas');
     expect(replies[0].reply).toContain('Posso consultar outro período ou outra data.');
-    // A lista vazia não encerra o contexto: a busca continua refinável.
     expect(replies[1].reply).toContain('sábado, 24/10/2026, de manhã');
     expect(experienceCards(replies[1]).map(({ title, times }) => [title, times])).toEqual([
       ['Cidade Histórica / City Tour', ['08:00']],
@@ -640,10 +603,8 @@ describe('Experience conversations (multi-turn)', () => {
 
     expect(replies[1].reply).toContain('Não identifiquei');
     expect(replies[2].reply).toContain('Cidade Histórica / City Tour');
-    // Com uma experiência escolhida, o período refina os horários dela.
     expect(replies[3].reply).toContain('Não há horários registrados para Cidade Histórica / City Tour');
     expect(replies[3].reply).toContain('08:00');
-    // Sem horário no período, nada é presumido nem pré-reservado.
     expect(replies[4].reply).toContain('Não há horários registrados para Cidade Histórica / City Tour à noite');
     expect(booking.preview).not.toHaveBeenCalled();
     expect(stateOf(id)?.experience?.pendingPreviewId).toBeUndefined();
@@ -653,12 +614,10 @@ describe('Experience conversations (multi-turn)', () => {
     const first = await chat.sendMessage('Quais experiências têm vagas amanhã de manhã?', GUEST);
     const other = await chat.sendMessage('Quais experiências posso fazer?', OTHER_GUEST);
 
-    // Outro hóspede não acessa a conversa do primeiro.
     await expect(chat.sendMessage('Gostei da segunda.', OTHER_GUEST, first.conversationId)).rejects.toThrow(
       NotFoundException,
     );
 
-    // Na própria conversa, "a segunda" refere-se à lista dele (catálogo sem data).
     const otherSelection = await chat.sendMessage('Gostei da segunda.', OTHER_GUEST, other.conversationId);
     expect(otherSelection.reply).toContain('Reserva da Jaqueira');
 
@@ -713,7 +672,6 @@ describe('Experience conversations (multi-turn)', () => {
       expect(replies[1].reply).toContain('Quer que eu verifique os horários de quarta-feira, 28/10/2026?');
       expect(stateOf(id)?.pendingQuestion).toBeUndefined();
 
-      // A resposta executa a consulta de horários, sem repetir a descrição.
       expect(replies[2].reply).toContain('Cidade Histórica / City Tour em quarta-feira, 28/10/2026:');
       expect(replies[2].reply).toContain('às 08:00');
       expect(replies[2].reply).not.toContain('Centro Histórico de Porto Seguro');
@@ -738,7 +696,6 @@ describe('Experience conversations (multi-turn)', () => {
       expect(registryCalls).toHaveLength(calls);
       expect(stateOf(first.conversationId)?.pendingQuestion).toBeUndefined();
 
-      // Sem pergunta pendente, um "sim" isolado não aciona ferramentas nem o classificador.
       await chat.sendMessage('Sim', GUEST, first.conversationId);
       expect(registryCalls).toHaveLength(calls);
       expect(modelCalls('classifier')).toHaveLength(0);
@@ -750,7 +707,6 @@ describe('Experience conversations (multi-turn)', () => {
         'E como é essa experiência?',
         'Sim, para 2 adultos',
       ]);
-      // "Sim, para 2 adultos" traz informação nova: segue o fluxo normal (vagas para o grupo).
       expect(replies[2].reply).toContain('Se quiser, posso preparar a reserva simulada.');
       expect(stateOf(id)?.pendingQuestion).toEqual({ intent: 'experience.booking', targetId: CITY_TOUR.id });
 
@@ -775,7 +731,6 @@ describe('Experience conversations (multi-turn)', () => {
         expect(reply.reply).not.toContain('Não encontrei essa informação');
         expect(reply.reply).toBe('Encontrei 3 restaurantes: Gino Praia Gastronomia, Restaurante Central e Omakase.');
         noList(reply.reply);
-        // A lista vai no card; bares e lanches não entram.
         expect(restaurantCards(reply).map(({ name, acceptsReservations }) => [name, acceptsReservations])).toEqual([
           ['Gino Praia Gastronomia', true],
           ['Restaurante Central', false],
@@ -787,11 +742,9 @@ describe('Experience conversations (multi-turn)', () => {
         expect(reply.actions.at(-1)).toEqual({ type: 'navigate', label: 'Abrir Gastronomia', screen: 'Gastronomy', params: {} });
       }
 
-      // A experiência anterior não é reutilizada.
       expect(replies[4].reply).toContain('Restaurante Central é um restaurante do resort');
       expect(replies[4].reply).not.toContain('City Tour');
       expect(replies[5].reply).toContain('Restaurante Central não trabalha com reservas pelo aplicativo');
-      // Sem reserva pelo app: a página do restaurante, não a tela de reserva.
       expect(replies[5].actions).toEqual([
         { type: 'navigate', label: 'Ver restaurante', screen: 'Restaurant', params: { restaurantId: 'rest-central' } },
       ]);
@@ -829,7 +782,6 @@ describe('Experience conversations (multi-turn)', () => {
       ]);
 
       const first = replies[1].reply;
-      // Resumo em frases inteiras, sem emoji nem a lista de preços do texto bruto.
       expect(first).toContain('Centro Histórico de Porto Seguro');
       expect(first).not.toContain('💰');
       expect(first).not.toContain('Crianças de 5 a 10 anos');
@@ -859,7 +811,6 @@ describe('Experience conversations (multi-turn)', () => {
       const otherGuest = await chat.sendMessage('Sim.', OTHER_GUEST);
 
       expect(registryCalls).toHaveLength(calls);
-      // Sem pergunta pendente, um "sim" é só um reconhecimento: resposta fixa, sem modelo.
       expect(sameGuestOtherConversation.reply).toMatch(/^(Combinado|Certo)!/);
       expect(otherGuest.reply).toMatch(/^(Combinado|Certo)!/);
       expect(sameGuestOtherConversation.actions).toEqual([]);
@@ -967,7 +918,6 @@ describe('Experience conversations (multi-turn)', () => {
 
       const thanks = await chat.sendMessage('Muito legal! Me ajudou muito, obrigado.', GUEST, id);
 
-      // Resposta fixa e curta: nem o modelo nem a pré-reserva voltam à conversa.
       expect(thanks.reply).toMatch(/^(Por nada|Imagina|Disponha)!/);
       expect(thanks.reply).not.toContain('pré-reserva');
       expect(thanks.actions).toEqual([]);
@@ -1019,10 +969,8 @@ describe('Experience conversations (multi-turn)', () => {
       const cards = history.messages.flatMap((message) => message.actions ?? []).filter((action) => action.type === 'experience.booking.card');
 
       expect(cards).toEqual([expect.objectContaining({ cardId: PREVIEW_ID, status: 'confirmed' })]);
-      // O card fica na mensagem da pré-reserva; a da confirmação só tem o texto.
       const withCard = history.messages.findIndex((message) => (message.actions ?? []).length > 0 && message.content.includes('Preparei'));
       expect(withCard).toBeGreaterThan(-1);
-      // Avisos do card original são preservados.
       expect(cards[0]).toMatchObject({ notes: expect.arrayContaining([expect.stringContaining('simulada')]) });
     });
 
@@ -1080,10 +1028,8 @@ describe('Experience conversations (multi-turn)', () => {
     it('keeps useful context after a booking without being stuck on it', async () => {
       const { id } = await book();
 
-      // Referência útil: a experiência escolhida continua disponível.
       const price = await chat.sendMessage('Quanto custa para 3 adultos?', GUEST, id);
       expect(price.reply).toMatch(/Reserva da Jaqueira para 3 adultos: R\$\s?360,00/);
-      // Um novo "confirmo" não reutiliza a reserva concluída.
       const again = await chat.sendMessage('confirmo', GUEST, id);
       expect(again.reply).toContain('Não há uma pré-reserva aguardando confirmação');
       expect(booking.confirm).toHaveBeenCalledOnce();
@@ -1120,7 +1066,6 @@ describe('Experience conversations (multi-turn)', () => {
     it('never claims a restaurant without registered hours is open at night', async () => {
       const { replies } = await converse(['Quais restaurantes tem?', 'E à noite?']);
 
-      // Central tem jantar das 19h às 22h; Gino e Omakase não têm horário cadastrado.
       expect(restaurantCards(replies[1]).map(({ name }) => name)).toEqual(['Restaurante Central']);
       expect(replies[1].reply).toContain('Não consegui conferir pelo horário cadastrado: Gino Praia Gastronomia e Omakase.');
     });
@@ -1149,7 +1094,6 @@ describe('Experience conversations (multi-turn)', () => {
     it('answers a named restaurant with a direct yes/no about opening hours', async () => {
       const { replies } = await converse(['O Bar Mirante está aberto agora?']);
 
-      // 12:00 no resort; funcionamento 09h às 21h.
       expect(replies[0].reply).toBe('Sim, Bar Mirante está em funcionamento agora. Funcionamento: 09h às 21h.');
       expect(restaurantCards(replies[0])).toHaveLength(1);
     });
@@ -1157,7 +1101,6 @@ describe('Experience conversations (multi-turn)', () => {
     it('answers "Tem restaurante aberto agora?" from the catalog (12:00): only registered hours count', async () => {
       const { replies } = await converse(['Tem restaurante aberto agora?']);
 
-      // Almoço do Central: 12h às 15h; Gino e Omakase sem horário cadastrado.
       expect(restaurantCards(replies[0]).map(({ name }) => name)).toEqual(['Restaurante Central']);
       expect(replies[0].reply).toContain('Não consegui conferir pelo horário cadastrado');
       expect(replies[0].reply).toContain('em funcionamento agora');
@@ -1226,7 +1169,6 @@ describe('Experience conversations (multi-turn)', () => {
       expect(fetchMock.mock.calls).toHaveLength(fetches);
       expect(embeddings.embed).not.toHaveBeenCalled();
       expect(thanks.reply).not.toBe(bye.reply);
-      // A lista anterior continua disponível para "a segunda".
       const second = await chat.sendMessage('a segunda', GUEST, first.conversationId);
       expect(second.reply).toContain('Restaurante Central é um restaurante');
     });
@@ -1295,7 +1237,6 @@ describe('Experience conversations (multi-turn)', () => {
     const sentences = (reply: string) => reply.split(/(?<=[.!?])\s+/).filter(Boolean);
     const requestCards = (response: ChatResponse) => response.actions.filter((action) => action.type === 'request.card') as GuestRequestCardAction[];
     const requestToolCalls = () => registryCalls.map(({ name }) => name).filter((name) => name.startsWith('requests.'));
-    // Caminhos determinísticos: nenhuma chamada ao Ollama (classificação ou geração) nem ao RAG.
     const expectNoModelNoRag = () => {
       expect(fetchMock).not.toHaveBeenCalled();
       expect(embeddings.embed).not.toHaveBeenCalled();
@@ -1314,7 +1255,6 @@ describe('Experience conversations (multi-turn)', () => {
         'E a minha solicitação anterior?',
       ]);
 
-      // Preview: um card com botões, nada gravado como confirmado.
       expect(replies[0].reply).toBe(
         'Preparei a solicitação simulada para Governança: Toalha de banho. Confirme no card ou responda "confirmo".',
       );
@@ -1324,12 +1264,10 @@ describe('Experience conversations (multi-turn)', () => {
       expect(replies[0].actions.every(isValidChatAction)).toBe(true);
       short(replies[0].reply);
 
-      // Agradecimento: lembrete curto, sem tocar na pendência.
       expect(replies[1].reply).toContain('A solicitação continua aguardando: confirme pelo card ou responda "confirmo".');
       expect(replies[1].actions).toEqual([]);
       short(replies[1].reply);
 
-      // "confirmo": protocolo SIM-, card confirmado.
       const protocol = requestFakes.rows.get(preview.cardId)?.protocol;
       expect(replies[2].reply).toMatch(/protocolo SIM-[0-9A-F]{8}/);
       expect(replies[2].reply).toContain('Ela não foi enviada ao departamento');
@@ -1339,7 +1277,6 @@ describe('Experience conversations (multi-turn)', () => {
       expect(replies[2].actions.every(isValidChatAction)).toBe(true);
       expect(stateOf(id)?.request?.pendingPreviewId).toBeUndefined();
 
-      // A solicitação simulada aparece no histórico da estadia.
       expect(replies[3].reply).toContain('simulada');
       expect(replies[3].reply).toContain(protocol);
       expect(replies[3].reply).toContain('Toalha de banho');
@@ -1391,7 +1328,6 @@ describe('Experience conversations (multi-turn)', () => {
       for (const { reply } of replies) short(reply);
       expectNoModelNoRag();
 
-      // Depois de descartar, "confirmo" não ressuscita a solicitação.
       const late = await chat.sendMessage('confirmo', GUEST, id);
       expect(late.reply).toContain('Não há uma solicitação aguardando confirmação');
       expect(requestFakes.rows.get(card.cardId)?.status).toBe('cancelled');
@@ -1452,7 +1388,6 @@ describe('Experience conversations (multi-turn)', () => {
       const created = await chat.sendMessage('Preciso de toalhas', GUEST, id);
       const [card] = requestCards(created);
       expect(card.status).toBe('preview');
-      // A confirmação por texto agora é só da solicitação.
       expect(stateOf(id)?.request?.pendingPreviewId).toBe(card.cardId);
       expect(stateOf(id)?.experience?.pendingPreviewId).toBeUndefined();
 
@@ -1463,7 +1398,6 @@ describe('Experience conversations (multi-turn)', () => {
       expect(booking.confirm).not.toHaveBeenCalled();
       expect(confirmed.actions.some(({ type }) => type === 'experience.booking.card')).toBe(false);
 
-      // O botão do card da experiência continua válido: ela é confirmada pelo POST /chat/actions.
       const viaButton = await actions.execute(
         { type: 'experience.booking.confirm', conversationId: id, previewId: PREVIEW_ID },
         GUEST,
@@ -1484,7 +1418,6 @@ describe('Experience conversations (multi-turn)', () => {
       expect(stateOf(id)?.request?.pendingPreviewId).toBeUndefined();
       const text = await chat.sendMessage('confirmo', GUEST, id);
 
-      // Nunca confirma a solicitação por texto depois de mudar de assunto.
       expect(requestFakes.rows.get(pendingRequest!)?.status).not.toBe('confirmed');
       expect(requestCards(text)).toEqual([]);
     });
@@ -1530,7 +1463,6 @@ describe('Experience conversations (multi-turn)', () => {
 
       it('another guest card ids are not returned by history: the card is dropped for a stolen id', async () => {
         const { previewId } = await preparedRequest();
-        // O hóspede B cria a própria conversa e não consegue "trazer" o card do A.
         const mine = await chat.sendMessage('Obrigado!', GUEST_B);
         const history = await chat.getMessages(mine.conversationId, GUEST_B);
 
@@ -1540,7 +1472,6 @@ describe('Experience conversations (multi-turn)', () => {
       it('another conversation of the same guest cannot confirm the preview by text', async () => {
         const { id, previewId } = await preparedRequest();
 
-        // Conversa nova, sem estado: "confirmo" não é uma operação e segue para o RAG (sem fontes).
         embeddings.embed.mockResolvedValue([[0.1, 0.2]]);
         knowledge.searchByVector.mockResolvedValue([]);
 
@@ -1575,7 +1506,6 @@ describe('Experience conversations (multi-turn)', () => {
 
         expect(replies[0].reply).toMatch(/^Qual deles: .*Toalha de banho.* ou .*Toalha de rosto/);
         expect(replies[0].actions.some(({ type }) => type === 'request.card')).toBe(false);
-        // Escolhida a opção, a solicitação é preparada e só então confirmada.
         expect(requestCards(replies[1])[0]?.summary.items).toEqual([{ itemId: '35', name: 'Toalha de rosto', quantity: 1 }]);
         expect(requestCards(replies[2])[0]?.status).toBe('confirmed');
         expect(stateOf(id)?.request?.pendingPreviewId).toBeUndefined();
@@ -1643,7 +1573,6 @@ describe('Experience conversations (multi-turn)', () => {
       const history = await chat.getMessages(id, GUEST);
       const cards = history.messages.flatMap(({ actions: list }) => list.filter((action) => action.type === 'request.card')) as GuestRequestCardAction[];
 
-      // Um card só, onde foi criado, já confirmado.
       expect(cards).toHaveLength(1);
       expect(cards[0]).toMatchObject({ status: 'confirmed', confirm: null });
       expect(history.messages[1].actions.some(({ type }) => type === 'request.card')).toBe(true);
@@ -1653,7 +1582,6 @@ describe('Experience conversations (multi-turn)', () => {
       const { replies } = await converse(['Quais produtos tem na boutique?', 'Quanto custa a massagem relaxante?', 'Tem quiz hoje?', 'O que vocês fazem de ESG?']);
 
       expect(replies[0].reply).toMatch(/^A Boutique tem 3 produtos em Praia e Vestuário\./);
-      // Catálogo curto: cards dos produtos + o botão da tela.
       expect(replies[0].actions).toEqual([
         expect.objectContaining({ type: 'catalog.list', kind: 'product' }),
         expect.objectContaining({ type: 'navigate', screen: 'Boutique' }),
@@ -1664,7 +1592,6 @@ describe('Experience conversations (multi-turn)', () => {
         expect.objectContaining({ type: 'catalog.list', kind: 'spa_service' }),
         expect.objectContaining({ screen: 'Spa' }),
       ]);
-      // Nenhum quiz ou texto ESG no cadastro: só o botão da tela.
       expect(replies[2].reply).toContain('Não há quiz ativo');
       expect(replies[2].actions).toEqual([expect.objectContaining({ screen: 'Quiz' })]);
       expect(replies[3].actions).toEqual([expect.objectContaining({ screen: 'Esg' })]);
@@ -1696,7 +1623,6 @@ describe('Experience conversations (multi-turn)', () => {
     });
   });
   describe('concierge across the app modules (menus, my bookings, my requests, favorites, catalog follow-ups)', () => {
-    // Linhas do snapshot por tabela; as demais consultas devolvem vazio.
     function snapshot(rows: Record<string, unknown[]>) {
       resortQuery.mockImplementation(async (sql: string) => {
         if (/FROM tb_hospede h/.test(sql)) return [STAY_ROW];
@@ -1733,14 +1659,12 @@ describe('Experience conversations (multi-turn)', () => {
       const listed = experienceCards(replies[0]);
       expect(listed.length).toBeGreaterThanOrEqual(2);
       const second = listed[1];
-      // A segunda opção do card é a experiência detalhada e reservada.
       expect(replies[1].reply).toContain(second.title);
       const previewCall = booking.preview.mock.calls.at(-1)!;
       expect(previewCall[2]).toMatchObject({ experienceId: second.experienceId, date: TOMORROW, party: { adults: 2, children: 0 } });
 
       const preview = replies.flatMap(({ actions: list }) => list).find((action) => action.type === 'experience.booking.card');
       expect(preview).toMatchObject({ cardId: PREVIEW_ID, status: 'preview' });
-      // A confirmação usa o mesmo card (atualizado no lugar), nunca outro.
       expect(confirmBooking).toHaveBeenCalledOnce();
       expect(confirmBooking.mock.calls[0][3]).toBe(PREVIEW_ID);
       const confirmed = cardOf<ChatAction>(replies[4], 'experience.booking.card');
@@ -1765,18 +1689,15 @@ describe('Experience conversations (multi-turn)', () => {
 
       const second = restaurantCards(replies[0])[1];
       expect(replies[1].reply).toContain(`${second.name} é um restaurante`);
-      // Sem reserva pelo app: a página do restaurante.
       expect(navigations(replies[1])).toContainEqual({ screen: 'Restaurant', params: { restaurantId: second.restaurantId } });
 
       const menu = cardOf<MenuViewAction>(replies[2], 'menu.view')!;
       expect(menu).toMatchObject({ restaurantId: second.restaurantId, restaurantName: second.name, totalDishes: 3 });
-      // Categoria sem pratos não aparece; imagem só como arquivo na pasta "menu".
       expect(menu.categories.map(({ name }) => name)).toEqual(['Entrada', 'Sobremesa']);
       expect(menu.categories[0].dishes.map(({ imagePath }) => imagePath)).toEqual(['menu/a1b2.jpg', null]);
       expect(menu.categories[0].dishes[1].serves).toBe(2);
       expect(isValidChatAction(menu)).toBe(true);
       expect(replies[2].reply).toBe(`Este é o cardápio de ${second.name}: 3 pratos em Entrada e Sobremesa.`);
-      // O cardápio consultado é o do restaurante da conversa, por ID.
       expect(resortQuery.mock.calls.filter(([sql]) => /FROM tb_catcardapio c/.test(sql)).map(([, parameters]) => parameters)).toEqual([[second.restaurantId]]);
       expect(stateOf(id)?.restaurant?.selectedId).toBe(second.restaurantId);
       expect(embeddings.embed).not.toHaveBeenCalled();
@@ -1788,7 +1709,6 @@ describe('Experience conversations (multi-turn)', () => {
 
       expect(replies[0].reply).toMatch(/^De qual restaurante você quer ver o cardápio\?/);
       expect(replies[0].actions.some((action) => action.type === 'menu.view')).toBe(false);
-      // A resposta à pergunta abre o cardápio do restaurante escolhido.
       const third = restaurantCards(replies[0])[2];
       expect(cardOf<MenuViewAction>(replies[1], 'menu.view')?.restaurantId).toBe(third.restaurantId);
       expect(replies[2].reply).toBe('Em Sobremesa, Omakase tem Tiramisù. Os pratos são escolhidos na reserva, pelo app.');
@@ -1860,7 +1780,6 @@ describe('Experience conversations (multi-turn)', () => {
       const { replies } = await converse(['Mostre meus favoritos', 'o segundo', 'Adicione essa experiência aos favoritos']);
 
       const favorites = cardOf<CatalogListAction>(replies[0], 'catalog.list')!;
-      // Dois hóspedes da estadia com o mesmo evento: um card só.
       expect(favorites).toMatchObject({ kind: 'event', label: 'Seus favoritos' });
       expect(favorites.items.map(({ id, position, badges }) => [id, position, badges])).toEqual([
         ['evt-circo', 1, ['Favorito']],
@@ -1869,7 +1788,6 @@ describe('Experience conversations (multi-turn)', () => {
       expect(replies[1].reply).toBe('Música ao vivo: domingo, 25/10 às 23:00.');
       expect(replies[2].reply).toContain('Pelo chat ainda não consigo favoritar');
       expect(navigations(replies[2]).map(({ screen }) => screen)).toEqual(['Events', 'MyFavorites']);
-      // Somente leitura: nenhuma consulta de escrita chega ao snapshot nem ao banco interno.
       for (const [sql] of resortQuery.mock.calls) expect(sql).toMatch(/^\s*SELECT/);
     });
 
@@ -1882,7 +1800,6 @@ describe('Experience conversations (multi-turn)', () => {
       expect(spa.items[1].buttons).toContainEqual({ kind: 'message', label: 'Ver detalhes', message: 'Opção 2' });
       expect(replies[1].reply).toContain('Drenagem Linfática: R$');
       expect(replies[1].reply).toContain('O agendamento é feito pelo SPA.');
-      // "o segundo" depois da lista de restaurantes é o restaurante, não o serviço do SPA.
       expect(replies[3].reply).toContain(`${restaurantCards(replies[2])[1].name} é um restaurante`);
       expect(stateOf(id)?.topic).toBe('restaurant');
     });

@@ -15,9 +15,7 @@ import type { DispatchContext, DispatchResult } from './operations.types.js';
 const MAX_CARDS = 30;
 const MAX_HIGHLIGHTS = 3;
 
-// Somente shows e eventos, ou somente a recreação semanal.
 const EVENTS_ONLY = /\b(?:eventos?|shows?|apresentac(?:ao|oes)|musica ao vivo|ao vivo|festas?|atrac(?:ao|oes))\b/;
-// Público citado → categorias de lazer ("4 a 7 anos", "Teens", "Adulto", "Sports").
 const AUDIENCES: { key: NonNullable<EventConversationState['audience']>; cue: RegExp; category: RegExp; label: string }[] = [
   { key: 'kids', cue: /\b(?:criancas?|infantil|infantis|kids|filhos?|pequenos)\b/, category: /^\d+ a (?:[1-9]|1[01]) anos$/, label: 'para crianças' },
   { key: 'teens', cue: /\b(?:teens?|adolescentes?|jovens)\b/, category: /\bteens?\b/, label: 'para adolescentes' },
@@ -26,7 +24,6 @@ const AUDIENCES: { key: NonNullable<EventConversationState['audience']>; cue: Re
 ];
 
 const LEISURE_ONLY = /\b(?:recreac(?:ao|oes)|atividades(?: de lazer)?|lazer)\b/;
-// Palavras genéricas não identificam um evento pelo nome.
 const GENERIC = /\b(?:show|shows|evento|eventos|hoje|amanha|noite|tarde|manha|programacao|que|horas|onde|vai|ter|tem)\b/g;
 
 function dayLabel(date: string, today: string): string {
@@ -59,10 +56,6 @@ function eventsAction(date: string, events: ResortEvent[]): ChatAction[] {
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 
-/**
- * Eventos, shows e programação de lazer de um dia, lidos do snapshot.
- * O texto é um resumo curto; a programação completa vai no card.
- */
 @Injectable()
 export class EventOperationsService {
   constructor(
@@ -70,11 +63,6 @@ export class EventOperationsService {
     private readonly clock: ResortClock,
   ) {}
 
-  /**
-   * "Quero participar dessa atividade": a inscrição exige responsável,
-   * ficha e termo (R-LAZ-04), então o chat leva à tela de Lazer e mostra
-   * as inscrições que a estadia já tem. Nada é gravado.
-   */
   async enroll(guest: GuestContext, context: DispatchContext): Promise<DispatchResult> {
     const result = await this.registry.execute('leisure.enrollments', guest, {});
 
@@ -106,7 +94,6 @@ export class EventOperationsService {
     const entities = decision.entities ?? {};
     const today = this.clock.today();
     const date = entities.date ?? (decision.refine ? previous.date : undefined) ?? today;
-    // Uma continuação ("E amanhã?") mantém o período anterior; um novo período o substitui.
     const ownWindow = entities.period || entities.after || entities.before;
     const filters: NonNullable<EventConversationState['filters']> = ownWindow
       ? entities.period
@@ -123,11 +110,8 @@ export class EventOperationsService {
 
     const text = normalizeText(message);
     const asked = EVENTS_ONLY.test(text) && !LEISURE_ONLY.test(text) ? 'event' : LEISURE_ONLY.test(text) && !EVENTS_ONLY.test(text) ? 'leisure' : null;
-    // "Quais shows amanhã?" → "E à noite?" continua só com shows.
     const audience = AUDIENCES.find(({ cue }) => cue.test(text)) ?? (decision.refine ? AUDIENCES.find(({ key }) => key === previous.audience) : undefined);
-    // Público só existe nas atividades de lazer.
     const kind = audience ? 'leisure' : (asked ?? (decision.refine ? (previous.kind ?? null) : null));
-    // Hoje, o que já passou não é oferecido.
     const now = date === today ? this.clock.time() : null;
     const upcoming = result.data.events.filter(
       (event) =>
@@ -144,7 +128,6 @@ export class EventOperationsService {
       event: { date, ...(Object.keys(filters).length ? { filters } : {}), ...(kind ? { kind } : {}), ...(audience ? { audience: audience.key } : {}) },
     };
 
-    // "Que horas é o show de circo?": responde sobre o evento citado.
     const named = matchByName(text.replace(GENERIC, ' '), upcoming.map((event) => ({ ...event, name: event.title })));
 
     if (named.length >= 1 && named.length <= 2) {

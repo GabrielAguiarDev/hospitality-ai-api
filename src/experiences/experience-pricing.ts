@@ -26,14 +26,6 @@ function kindOf(category: string): PriceKind {
 
 const toCents = (value: number): number => Math.round(value * 100);
 
-/**
- * Calcula o valor no backend a partir das tarifas cadastradas.
- *
- * Regra verificada no snapshot: reservas pagas somam
- * adultos × tarifa "Adulto" + crianças × tarifa "Criança".
- * Quando a regra não pode ser aplicada com segurança,
- * o total é null e a observação explica o motivo.
- */
 export function quoteExperience(
   experience: Pick<ExperienceInfo, 'reservationType' | 'prices'>,
   party: PartyComposition,
